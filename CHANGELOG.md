@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Renamed the Python project metadata and GitHub repository display name to `ForgeFlag`.
 - Added a CTF Dockerfile with common Web, Pwn, Reverse, Crypto, and Forensics tools.
 - Added a scoped `ToolRunner` catalog for allowlisted CTF command wrappers.
 - Added an optional ForgeFlag MCP server exposing structured CTF tool wrappers.
