@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+import shutil
+import tempfile
+import unittest
+from pathlib import Path
+
+from forgeflag.safety import ScopePolicy
+from forgeflag.tools.ctf import file_identify, strings_extract
+from forgeflag.tools.runner import ToolRunner
+
+
+class ToolRunnerTest(unittest.TestCase):
+    def test_inventory_contains_scoped_network_tool(self) -> None:
+        runner = ToolRunner(ScopePolicy())
+        inventory = runner.inventory()
+
+        nmap = next(row for row in inventory if row["name"] == "nmap_tcp_basic")
+        self.assertEqual(nmap["category"], "recon")
+        self.assertTrue(nmap["active_network"])
+
+    def test_network_tool_refuses_without_active_scope(self) -> None:
+        runner = ToolRunner(ScopePolicy(allowed_hosts=("127.0.0.1",), active_probe=False))
+
+        result = runner.run("nmap_tcp_basic", ["-p", "80", "127.0.0.1"], target="127.0.0.1")
+
+        self.assertEqual(result.status, "refused")
+        self.assertIn("active probing is disabled", result.evidence[0])
+
+    def test_unknown_tool_is_rejected(self) -> None:
+        runner = ToolRunner(ScopePolicy())
+
+        result = runner.run("shell")
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("not in the ForgeFlag catalog", result.evidence[0])
+
+    @unittest.skipUnless(shutil.which("file"), "file command is not available")
+    def test_file_identify_local_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "note.txt"
+            artifact.write_text("flag{local_artifact}\n", encoding="utf-8")
+
+            result = file_identify(str(artifact))
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("returncode=0", result.evidence)
+
+    @unittest.skipUnless(shutil.which("strings"), "strings command is not available")
+    def test_strings_extract_local_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "blob.bin"
+            artifact.write_bytes(b"\x00\x01visible-ctf-string\x00")
+
+            result = strings_extract(str(artifact), min_length=6)
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("visible-ctf-string", result.raw["stdout"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+

@@ -7,6 +7,8 @@ from pathlib import Path
 from forgeflag.domain import Challenge, ChallengeCategory, RunConfig
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
+from forgeflag.safety import ScopePolicy
+from forgeflag.tools.runner import ToolRunner
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     findings = subparsers.add_parser("findings", help="Show findings for one challenge")
     findings.add_argument("challenge_id")
+
+    subparsers.add_parser("tools", help="List configured CTF tool wrappers and local availability")
 
     return parser
 
@@ -99,10 +103,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
 
+    if args.command == "tools":
+        print(json.dumps(ToolRunner(ScopePolicy()).inventory(), ensure_ascii=False, indent=2))
+        return 0
+
     parser.error(f"unknown command: {args.command}")
     return 2
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

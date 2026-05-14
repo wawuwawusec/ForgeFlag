@@ -11,9 +11,12 @@ requires-python = ">=3.11"
 authors = [{ name = "ForgeFlag Team" }]
 dependencies = []
 
+[project.optional-dependencies]
+mcp = ["mcp[cli]>=1.0,<2"]
+
 [project.scripts]
 forgeflag = "forgeflag.cli:main"
+forgeflag-mcp = "forgeflag.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

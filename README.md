@@ -9,6 +9,7 @@ The project starts with the architecture discussed for a full-coverage competiti
 - `Harness`: prevents loops, records budget use, and forces strategy changes when work stalls.
 - `Solvers`: pluggable workers for `recon`, `web`, `pwn`, `reverse`, `crypto`, `forensics`, `misc`, and infrastructure-style lab tasks.
 - `Verifier`: accepts only evidence-backed flag candidates before submission.
+- `MCP tools`: optional allowlisted wrappers around common CTF tools.
 
 This repository is intentionally scoped for CTFs, labs, and authorized competitions. It is not designed for unauthorized scanning or exploitation.
 
@@ -29,7 +30,26 @@ Without installing the package, run commands with `PYTHONPATH=src`, or use:
 ```bash
 make test
 make smoke
+PYTHONPATH=src python3 -m forgeflag.cli tools
 ```
+
+## Tooling
+
+Build the CTF tool container:
+
+```bash
+docker build -f docker/Dockerfile.ctf -t forgeflag-ctf .
+```
+
+Run the optional MCP server:
+
+```bash
+pip install -e '.[mcp]'
+export FORGEFLAG_ALLOWED_HOSTS=127.0.0.1,challenge.local
+forgeflag-mcp
+```
+
+See [docs/mcp.md](docs/mcp.md) for the current MCP tool list.
 
 ## Current Milestone
 
