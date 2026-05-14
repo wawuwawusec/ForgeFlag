@@ -1,12 +1,40 @@
 from __future__ import annotations
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
 from forgeflag.domain import Challenge, ChallengeCategory, RunConfig
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
+
+
+class FlagHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        body = b"""
+        <!doctype html>
+        <html>
+          <head><title>ForgeFlag Test</title></head>
+          <body>
+            <a href="/hint">hint</a>
+            <form method="post" action="/login">
+              <input name="username">
+              <input name="password" type="password">
+            </form>
+            <p>flag{scoped_web_solver}</p>
+          </body>
+        </html>
+        """
+        self.send_response(200)
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
 
 
 class WorkflowTest(unittest.TestCase):
@@ -60,6 +88,39 @@ class WorkflowTest(unittest.TestCase):
 
                 findings = notebook.findings_for(f"{category.value}-01")
                 self.assertGreaterEqual(len(findings), 2)
+
+    def test_web_solver_extracts_and_verifies_scoped_flag(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), FlagHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            target = f"http://127.0.0.1:{server.server_port}/"
+            with tempfile.TemporaryDirectory() as tmp:
+                notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+                notebook.add_challenge(
+                    Challenge(
+                        challenge_id="web-flag",
+                        category=ChallengeCategory.WEB,
+                        target=target,
+                        tags=("web", "login"),
+                    )
+                )
+
+                summary = Manager(
+                    notebook,
+                    RunConfig(active_probe=True, allowed_hosts=("127.0.0.1",)),
+                ).run_challenge("web-flag")
+                findings = notebook.findings_for("web-flag")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{scoped_web_solver}"])
+        self.assertTrue(any(f.finding == "Analyzed scoped HTTP response structure" for f in findings))
+        web_finding = next(f for f in findings if f.finding == "Analyzed scoped HTTP response structure")
+        self.assertEqual(web_finding.evidence["html"]["title"], "ForgeFlag Test")
+        self.assertEqual(web_finding.evidence["html"]["forms"][0]["method"], "post")
 
 
 if __name__ == "__main__":

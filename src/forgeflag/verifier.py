@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from forgeflag.domain import Finding
-
-
-FLAG_PATTERN = re.compile(r"(?i)\b(?:flag|ctf)\{[^{}\s]{3,128}\}")
+from forgeflag.flags import FLAG_PATTERN
 
 
 @dataclass(frozen=True)
@@ -26,4 +23,3 @@ class Verifier:
             else:
                 rejected.append(candidate)
         return VerificationResult(tuple(accepted), tuple(rejected))
-
