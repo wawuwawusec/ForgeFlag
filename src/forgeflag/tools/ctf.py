@@ -39,6 +39,23 @@ def tshark_pcap_summary(path: str, packet_limit: int = 50, scope: ScopePolicy | 
     return runner.run("tshark", ["-r", path, "-c", str(packet_limit)])
 
 
+def tshark_traffic_analysis(path: str, scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("tshark", ["-r", path, "-q", "-z", "io,phs", "-z", "conv,tcp", "-z", "conv,udp"])
+
+
+def tshark_flag_scan(
+    path: str,
+    needle: str = "flag{",
+    packet_limit: int = 50,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    packet_limit = max(1, min(packet_limit, 200))
+    needle = _tshark_contains_literal(needle)
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("tshark", ["-r", path, "-Y", f'frame contains "{needle}"', "-x", "-c", str(packet_limit)])
+
+
 def nmap_tcp_basic(target: str, ports: str = "1-1024", scope: ScopePolicy | None = None) -> ToolResult:
     runner = ToolRunner(scope or ScopePolicy())
     return runner.run("nmap_tcp_basic", ["-p", ports, target], target=target)
@@ -50,3 +67,7 @@ def ensure_existing_file(path: str) -> str:
         raise FileNotFoundError(f"file not found: {resolved}")
     return str(resolved)
 
+
+def _tshark_contains_literal(value: str) -> str:
+    cleaned = "".join(char for char in value if char.isprintable() and char not in {'"', "\\"})
+    return cleaned[:64] or "flag{"

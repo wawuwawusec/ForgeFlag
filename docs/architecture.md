@@ -18,11 +18,31 @@ The agent layer is split into a manager and specialist solvers. Each solver owns
 
 ### Manager
 
-The manager dispatches a challenge to solvers based on category and tags, then asks the verifier to inspect flag candidates.
+The manager dispatches a challenge to solvers based on category and tags, then asks the verifier to inspect flag candidates. During a run, it can also consume `llm_solver_plan` observations and insert suggested solvers into the remaining queue without letting the LLM execute tools directly.
 
 ### Shared Notebook
 
-The notebook is the durable blackboard. It stores challenges, findings, tool runs, and run summaries in SQLite.
+The notebook is the durable blackboard. It stores challenges, attachment paths, findings, distilled observations, tool runs, and run summaries in SQLite.
+
+### Observer
+
+The observer filters noisy solver output into high-value observations. The manager reloads these observations before each solver call, so later solvers inherit concise progress signals without reading every raw finding or tool log.
+
+### LLM Planning
+
+`LLMSolver` is optional and disabled unless an LLM provider is configured. It may return free-form strategy text or compact JSON with `summary`, `suggested_solvers`, `next_actions`, and `tool_hints`; the observer promotes structured plans into shared observations for the manager to use in solver scheduling.
+
+### IDA MCP Adapter
+
+IDA MCP support is optional and disabled by default. When `FORGEFLAG_IDA_MCP_ENABLED=true`, the manager injects a read-only IDA adapter into `ReverseSolver` and `PwnSolver`. Those solvers use registered binary attachments only, call the configured MCP command, and write structured function names, strings, tool-call evidence, and flag candidates to the notebook.
+
+### Replay Report
+
+When the verifier accepts a flag, the report builder traces the shortest evidence path from accepted flag back to matching findings and observations. The latest report is stored in the run summary and can be retrieved with `forgeflag report <challenge_id>`.
+
+### Artifact Workspace
+
+Local challenge attachments are copied into `.forgeflag/artifacts/<challenge_id>/` before solver runs. Solvers consume these managed paths instead of arbitrary shell input, keeping artifact access auditable and scoped to registered files.
 
 ### Harness
 
@@ -39,7 +59,12 @@ class Solver:
     def solve(self, context: SolverContext) -> SolverResult: ...
 ```
 
+Forensics and traffic are split by artifact type. `ForensicsSolver` owns broad local artifact triage; `TrafficSolver` owns packet capture workflows and may also run on forensics challenges when PCAP attachments are present.
+
+## NSFOCUS AI Team Alignment
+
+ForgeFlag follows the same broad control/communication/execution split described in public NSFOCUS AI CTF writeups: `Manager` handles global scheduling, SQLite notebook plus observations provide non-blocking shared memory, solvers perform specialist execution, and `Harness` guards long-running work from repetitive loops.
+
 ## Safety Boundary
 
 ForgeFlag requires an explicit scope policy for active target interaction. Only authorized CTF targets and lab hosts should be allowed.
-

@@ -78,6 +78,16 @@ if FastMCP is not None:
         return _result_payload(ctf.tshark_pcap_summary(ctf.ensure_existing_file(path), packet_limit, _scope_from_env()))
 
     @mcp.tool()
+    def tshark_traffic_analysis(path: str) -> dict[str, Any]:
+        """Summarize PCAP protocol hierarchy and TCP/UDP conversations."""
+        return _result_payload(ctf.tshark_traffic_analysis(ctf.ensure_existing_file(path), _scope_from_env()))
+
+    @mcp.tool()
+    def tshark_flag_scan(path: str, needle: str = "flag{", packet_limit: int = 50) -> dict[str, Any]:
+        """Scan PCAP frames for a printable flag-like payload marker."""
+        return _result_payload(ctf.tshark_flag_scan(ctf.ensure_existing_file(path), needle, packet_limit, _scope_from_env()))
+
+    @mcp.tool()
     def nmap_tcp_basic(target: str, ports: str = "1-1024") -> dict[str, Any]:
         """Run a basic TCP scan against an explicitly allowlisted CTF target."""
         return _result_payload(ctf.nmap_tcp_basic(target, ports, _scope_from_env(active_probe=True)))
@@ -93,4 +103,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

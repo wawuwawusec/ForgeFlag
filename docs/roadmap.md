@@ -27,22 +27,33 @@
 
 - File triage.
 - Strings and symbol extraction.
-- Headless decompiler adapters.
+- Optional read-only IDA MCP adapter for function, string, and decompiler pivots.
 - Constraint recovery notes.
 
 ## Milestone 5: Pwn Solver
 
 - Binary protection checks.
+- Optional read-only IDA MCP adapter for function and input-flow triage.
 - Crash reproduction.
 - Offset discovery.
 - Pwntools exploit workspace generation.
 
 ## Milestone 6: Forensics Solver
 
+- Artifact workspace registration.
+- Initial file, strings, binwalk, and exiftool triage.
+- Evidence-backed flag candidate extraction from local artifacts.
 - File carving.
-- PCAP extraction.
 - Steganography workflows.
 - Memory image triage.
+
+## Milestone 6a: Traffic Solver
+
+- Dedicated `traffic` category and `TrafficSolver`.
+- Initial PCAP summary, protocol hierarchy, conversation stats, and payload marker scanning.
+- DNS query summary.
+- HTTP object extraction.
+- TCP stream extraction by stream id.
 
 ## Milestone 7: Competition Operations
 
@@ -50,4 +61,3 @@
 - Flag submission queue.
 - Multi-challenge parallel scheduler.
 - Full audit export.
-

@@ -4,9 +4,11 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+from forgeflag.domain import ToolResult
 from forgeflag.safety import ScopePolicy
-from forgeflag.tools.ctf import file_identify, strings_extract
+from forgeflag.tools.ctf import file_identify, strings_extract, tshark_flag_scan, tshark_traffic_analysis
 from forgeflag.tools.runner import ToolRunner
 
 
@@ -57,7 +59,36 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertEqual(result.status, "success")
         self.assertIn("visible-ctf-string", result.raw["stdout"])
 
+    def test_tshark_traffic_analysis_uses_protocol_and_conversation_stats(self) -> None:
+        expected = ToolResult(tool="tshark", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = tshark_traffic_analysis("/tmp/capture.pcap")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "tshark",
+            ["-r", "/tmp/capture.pcap", "-q", "-z", "io,phs", "-z", "conv,tcp", "-z", "conv,udp"],
+        )
+
+    def test_tshark_flag_scan_limits_packet_count_and_searches_payload_bytes(self) -> None:
+        expected = ToolResult(tool="tshark", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = tshark_flag_scan("/tmp/capture.pcap", needle="flag{", packet_limit=999)
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "tshark",
+            ["-r", "/tmp/capture.pcap", "-Y", 'frame contains "flag{"', "-x", "-c", "200"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
