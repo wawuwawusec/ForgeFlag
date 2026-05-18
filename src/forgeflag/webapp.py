@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlparse
 
 from forgeflag.artifacts import ArtifactWorkspace
 from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
+from forgeflag.llm import build_llm_provider
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.safety import ScopePolicy
@@ -67,6 +68,9 @@ def create_handler(db_path: str | Path):
                 payload = self._read_json()
                 if path == "/api/challenges":
                     self._send_json(self.handle_create_challenge(payload))
+                    return
+                if path == "/api/llm/test":
+                    self._send_json(self.handle_test_llm(payload))
                     return
                 challenge_id, suffix = _challenge_route(path)
                 if challenge_id and suffix == "run":
@@ -132,6 +136,23 @@ def create_handler(db_path: str | Path):
                 llm_config=_llm_config(payload),
             )
             return Manager(cls.notebook, config=config).run_challenge(challenge_id)
+
+        @classmethod
+        def handle_test_llm(cls, payload: dict[str, Any]) -> dict[str, Any]:
+            config = _llm_config({**payload, "llm_enabled": True})
+            if not config.enabled:
+                raise ValueError("LLM config is disabled or missing model")
+            provider = build_llm_provider(config)
+            response = provider.generate(
+                "You are ForgeFlag. Reply briefly for a connection test.",
+                "Return a short confirmation that the model connection works.",
+            )
+            return {
+                "status": "ok",
+                "provider": provider.name,
+                "model": provider.model,
+                "content_sample": response.content[:300],
+            }
 
         @classmethod
         def handle_findings(cls, challenge_id: str) -> list[dict[str, Any]]:
@@ -291,6 +312,8 @@ INDEX_HTML = r"""<!doctype html>
     .inline-check input { width: auto; }
     .llm-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .llm-settings[hidden] { display: none; }
+    .llm-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .llm-status { color: var(--muted); font-size: 12px; }
     .category-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 16px; }
     .category-pill { background: white; color: var(--ink); border-color: var(--line); display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; }
     .category-pill.active { background: var(--accent); color: white; border-color: var(--accent); }
@@ -377,6 +400,12 @@ INDEX_HTML = r"""<!doctype html>
             <label>Timeout Seconds</label>
             <input id="llmTimeout" type="number" min="1" value="30">
           </div>
+          <div class="llm-actions">
+            <button class="secondary" id="llmSaveConfig">保存配置</button>
+            <button class="secondary" id="llmTestBtn">测试大模型</button>
+            <label class="inline-check"><input id="llmRememberKey" type="checkbox"> 记住 API Key</label>
+            <span class="llm-status" id="llmConfigStatus">配置未保存</span>
+          </div>
         </div>
       </div>
       <div class="tabs" style="margin-top:18px">
@@ -396,6 +425,7 @@ INDEX_HTML = r"""<!doctype html>
     const $ = (id) => document.getElementById(id);
     const status = (text) => $("status").textContent = text;
     const show = (data) => $("output").textContent = JSON.stringify(data, null, 2);
+    const LLM_CONFIG_KEY = "forgeflag.llm.config.v1";
     categories.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; $("category").appendChild(o); });
     function syncLLMSettings() {
       $("llmSettings").hidden = !$("llmEnabled").checked;
@@ -404,6 +434,49 @@ INDEX_HTML = r"""<!doctype html>
       $("llmModel").placeholder = zhipu ? "glm-4.7" : "gpt-4.1";
       $("llmApiKey").placeholder = zhipu ? "ZAI_API_KEY" : "sk-...";
       $("llmBaseUrl").placeholder = zhipu ? "https://open.bigmodel.cn/api/paas/v4" : "https://api.openai.com/v1";
+    }
+    function llmPayload() {
+      const llmEnabled = $("llmEnabled").checked;
+      return {
+        llm_enabled: llmEnabled,
+        llm_provider: llmEnabled ? $("llmProvider").value : "disabled",
+        llm_model: $("llmModel").value.trim(),
+        llm_api_key: $("llmApiKey").value.trim(),
+        llm_base_url: $("llmBaseUrl").value.trim(),
+        llm_timeout_seconds: $("llmTimeout").value
+      };
+    }
+    function saveLLMConfig() {
+      const payload = llmPayload();
+      const saved = {
+        llm_enabled: payload.llm_enabled,
+        llm_provider: payload.llm_provider,
+        llm_model: payload.llm_model,
+        llm_base_url: payload.llm_base_url,
+        llm_timeout_seconds: payload.llm_timeout_seconds,
+        remember_key: $("llmRememberKey").checked,
+        llm_api_key: $("llmRememberKey").checked ? payload.llm_api_key : ""
+      };
+      localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify(saved));
+      $("llmConfigStatus").textContent = saved.remember_key ? "配置已保存到本浏览器（含 Key）" : "配置已保存到本浏览器（不含 Key）";
+    }
+    function restoreLLMConfig() {
+      const raw = localStorage.getItem(LLM_CONFIG_KEY);
+      if (!raw) return syncLLMSettings();
+      try {
+        const saved = JSON.parse(raw);
+        $("llmEnabled").checked = !!saved.llm_enabled;
+        $("llmProvider").value = saved.llm_provider || "zhipu";
+        $("llmModel").value = saved.llm_model || "";
+        $("llmBaseUrl").value = saved.llm_base_url || "";
+        $("llmTimeout").value = saved.llm_timeout_seconds || "30";
+        $("llmRememberKey").checked = !!saved.remember_key;
+        $("llmApiKey").value = saved.remember_key ? (saved.llm_api_key || "") : "";
+        $("llmConfigStatus").textContent = saved.remember_key ? "已载入本浏览器配置（含 Key）" : "已载入本浏览器配置（不含 Key）";
+      } catch {
+        $("llmConfigStatus").textContent = "本地配置读取失败";
+      }
+      syncLLMSettings();
     }
     function categoryCounts(challenges) {
       const counts = Object.fromEntries(["all", ...categories].map(c => [c, 0]));
@@ -487,20 +560,22 @@ INDEX_HTML = r"""<!doctype html>
     async function runSelected() {
       if (!state.selected) return status("select a challenge first");
       status("running...");
-      const llmEnabled = $("llmEnabled").checked;
       const payload = {
         active_probe: $("activeProbe").checked,
         allowed_hosts: $("allowedHosts").value,
-        llm_enabled: llmEnabled,
-        llm_provider: llmEnabled ? $("llmProvider").value : "disabled",
-        llm_model: $("llmModel").value.trim(),
-        llm_api_key: $("llmApiKey").value.trim(),
-        llm_base_url: $("llmBaseUrl").value.trim(),
-        llm_timeout_seconds: $("llmTimeout").value
+        ...llmPayload()
       };
       const res = await api(`/api/challenges/${encodeURIComponent(state.selected)}/run`, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(payload) });
       state.lastSummary = res;
       status(res.status || "done");
+      show(res);
+    }
+    async function testLLM() {
+      if (!$("llmEnabled").checked) $("llmEnabled").checked = true;
+      syncLLMSettings();
+      $("llmConfigStatus").textContent = "正在测试...";
+      const res = await api("/api/llm/test", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(llmPayload()) });
+      $("llmConfigStatus").textContent = `测试成功：${res.provider} ${res.model || ""}`;
       show(res);
     }
     async function loadTab(tab) {
@@ -513,10 +588,12 @@ INDEX_HTML = r"""<!doctype html>
     $("saveBtn").onclick = () => saveChallenge().catch(e => { status("error"); show({error:e.message}); });
     $("refreshBtn").onclick = () => refresh().catch(e => show({error:e.message}));
     $("runBtn").onclick = () => runSelected().catch(e => { status("error"); show({error:e.message}); });
+    $("llmSaveConfig").onclick = () => saveLLMConfig();
+    $("llmTestBtn").onclick = () => testLLM().catch(e => { $("llmConfigStatus").textContent = "测试失败"; show({error:e.message}); });
     $("llmEnabled").onchange = syncLLMSettings;
     $("llmProvider").onchange = () => { if ($("llmProvider").value === "disabled") $("llmEnabled").checked = false; syncLLMSettings(); };
     document.querySelectorAll(".tabs button").forEach(btn => btn.onclick = () => loadTab(btn.dataset.tab).catch(e => show({error:e.message})));
-    syncLLMSettings();
+    restoreLLMConfig();
     refresh().catch(e => show({error:e.message}));
   </script>
 </body>

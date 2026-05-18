@@ -74,6 +74,10 @@ class WebAppApiTest(unittest.TestCase):
 
         self.assertIn('id="llmEnabled"', html)
         self.assertIn('id="llmApiKey"', html)
+        self.assertIn('id="llmSaveConfig"', html)
+        self.assertIn('id="llmTestBtn"', html)
+        self.assertIn('id="llmRememberKey"', html)
+        self.assertIn('id="llmConfigStatus"', html)
         self.assertIn('<option value="zhipu">智谱 GLM</option>', html)
         self.assertIn("大模型分析", html)
 
@@ -145,6 +149,36 @@ class WebAppApiTest(unittest.TestCase):
         self.assertEqual(llm_config.model, "glm-4.7")
         self.assertEqual(llm_config.api_key, "zhipu-web-ui")
         self.assertEqual(llm_config.base_url, "https://open.bigmodel.cn/api/paas/v4")
+
+    def test_llm_test_endpoint_uses_runtime_config_without_returning_key(self) -> None:
+        class FakeProvider:
+            name = "zhipu"
+            model = "glm-4.7"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str):
+                from forgeflag.llm import LLMResponse
+
+                return LLMResponse(content="GLM test ok", raw={"request_id": "fake"})
+
+        handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
+
+        with patch("forgeflag.webapp.build_llm_provider", return_value=FakeProvider()):
+            response = handler_cls.handle_test_llm(
+                {
+                    "llm_enabled": True,
+                    "llm_provider": "zhipu",
+                    "llm_model": "glm-4.7",
+                    "llm_api_key": "sensitive-token",
+                }
+            )
+
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(response["provider"], "zhipu")
+        self.assertEqual(response["model"], "glm-4.7")
+        self.assertEqual(response["content_sample"], "GLM test ok")
+        self.assertNotIn("api_key", response)
+        self.assertNotIn("sensitive-token", json.dumps(response))
 
 
 if __name__ == "__main__":

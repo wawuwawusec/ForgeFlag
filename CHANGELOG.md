@@ -24,5 +24,5 @@
 - Added structured LLM solve plans and dynamic solver queue insertion from `llm_solver_plan` observations.
 - Added `.env.example` and a local artifact-based `make smoke` workflow.
 - Added `scripts/forgeflag-control` for one-command local start, stop, status, restart, and smoke workflows.
-- Added a local Web UI with challenge creation, attachment upload, category filtering, per-run LLM settings, run, findings, observations, report, and tools views.
+- Added a local Web UI with challenge creation, attachment upload, category filtering, per-run LLM settings, browser-local config saving, LLM connection testing, run, findings, observations, report, and tools views.
 - Added optional read-only IDA MCP configuration and adapter hooks for `ReverseSolver` and `PwnSolver`.

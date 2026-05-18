@@ -57,7 +57,8 @@ Implemented so far:
 - Local Web UI:
   - challenge creation and attachment upload
   - category workspace filters for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra queues
-  - per-run LLM provider/model/API key controls; entered keys are used for the run request and not stored in SQLite
+  - per-run LLM provider/model/API key controls, browser-local non-secret config saving, optional local key remembering, and `/api/llm/test`
+  - entered LLM keys are used for run/test requests and are never stored in SQLite
   - run, findings, observations, replay report, and tools views
 - CTF Dockerfile:
   - `docker/Dockerfile.ctf`
@@ -84,7 +85,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 46 tests OK
+- Tests passed: 47 tests OK
 
 Useful commands:
 
