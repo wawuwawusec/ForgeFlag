@@ -15,6 +15,7 @@
 - Added artifact workspace registration under `.forgeflag/artifacts`.
 - Added challenge attachment paths to the notebook and CLI.
 - Upgraded `ForensicsSolver` to triage local attachments with `file`, `strings`, `binwalk`, and `exiftool`, then return evidence-backed flag candidates.
+- Added PNG IHDR consistency analysis that detects height/CRC mismatches and writes repaired PNG artifacts.
 - Added PCAP traffic-analysis wrappers, MCP tools, solver integration, and ForgeFlag skill guidance.
 - Split PCAP analysis into a dedicated `TrafficSolver` and `traffic` challenge category.
 - Added Observer-distilled shared observations and per-solver context injection.

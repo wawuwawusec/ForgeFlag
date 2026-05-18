@@ -42,6 +42,7 @@
 
 - Artifact workspace registration.
 - Initial file, strings, binwalk, and exiftool triage.
+- PNG IHDR height/CRC mismatch repair.
 - Evidence-backed flag candidate extraction from local artifacts.
 - File carving.
 - Steganography workflows.

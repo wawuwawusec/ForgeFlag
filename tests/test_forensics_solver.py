@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import binascii
 import shutil
+import struct
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -92,6 +95,72 @@ class ForensicsSolverTest(unittest.TestCase):
         flag_scan.assert_not_called()
         self.assertNotIn("tshark_traffic_analysis", finding.evidence["tool_statuses"])
         self.assertNotIn("tshark_flag_scan", finding.evidence["tool_statuses"])
+
+    def test_forensics_solver_detects_png_ihdr_height_mismatch_and_writes_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "ihdr.png"
+            attachment.write_bytes(_png_with_wrong_declared_height(width=2, actual_height=3, declared_height=9))
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="ihdr-forensics",
+                    category=ChallengeCategory.FORENSICS,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.forensics.ctf.file_identify",
+                    return_value=ToolResult(tool="file", target=None, status="success", raw={"stdout": "PNG image data"}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.strings_extract",
+                    return_value=ToolResult(tool="strings", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.binwalk_scan",
+                    return_value=ToolResult(tool="binwalk", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.exiftool_read",
+                    return_value=ToolResult(tool="exiftool", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                Manager(notebook, RunConfig(), solvers=[ForensicsSolver()]).run_challenge("ihdr-forensics")
+                finding = next(
+                    f for f in notebook.findings_for("ihdr-forensics") if f.finding == "Triaged forensic attachment"
+                )
+
+            png_evidence = finding.evidence["png_ihdr"]
+            self.assertEqual(png_evidence["declared_height"], 9)
+            self.assertEqual(png_evidence["derived_height"], 3)
+            self.assertFalse(png_evidence["ihdr_crc_ok"])
+            self.assertTrue(Path(png_evidence["repaired_path"]).is_file())
+
+
+def _png_with_wrong_declared_height(width: int, actual_height: int, declared_height: int) -> bytes:
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", binascii.crc32(kind + body) & 0xFFFFFFFF)
+
+    rows = []
+    for y in range(actual_height):
+        rgba = bytes([255, 255 - y, 0, 255]) * width
+        rows.append(b"\x00" + rgba)
+    idat = zlib.compress(b"".join(rows))
+    correct_ihdr = struct.pack(">IIBBBBB", width, actual_height, 8, 6, 0, 0, 0)
+    wrong_ihdr = struct.pack(">IIBBBBB", width, declared_height, 8, 6, 0, 0, 0)
+    correct_crc = struct.pack(">I", binascii.crc32(b"IHDR" + correct_ihdr) & 0xFFFFFFFF)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + struct.pack(">I", len(wrong_ihdr))
+        + b"IHDR"
+        + wrong_ihdr
+        + correct_crc
+        + chunk(b"IDAT", idat)
+        + chunk(b"IEND", b"")
+    )
 
 
 if __name__ == "__main__":
