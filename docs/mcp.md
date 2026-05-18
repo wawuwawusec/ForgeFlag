@@ -30,7 +30,8 @@ Current MCP tools:
 - `binwalk_scan`
 - `exiftool_read`
 - `tshark_pcap_summary`
+- `tshark_traffic_analysis`
+- `tshark_flag_scan`
 - `nmap_tcp_basic`
 
 Network-capable tools refuse to run unless the target host is listed in `FORGEFLAG_ALLOWED_HOSTS`.
-

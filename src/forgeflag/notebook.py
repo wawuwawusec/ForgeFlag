@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from forgeflag.domain import Challenge, ChallengeCategory, Finding, FindingStatus, ToolResult, utc_now
+from forgeflag.domain import Challenge, ChallengeCategory, Finding, FindingStatus, Observation, ToolResult, utc_now
 
 
 class SQLiteNotebook:
@@ -38,6 +38,7 @@ class SQLiteNotebook:
                     target text,
                     description text,
                     tags_json text not null,
+                    attachment_paths_json text not null default '[]',
                     created_at text not null
                 );
 
@@ -68,6 +69,17 @@ class SQLiteNotebook:
                     created_at text not null
                 );
 
+                create table if not exists observations (
+                    id integer primary key autoincrement,
+                    challenge_id text not null,
+                    source text not null,
+                    kind text not null,
+                    summary text not null,
+                    evidence_json text not null,
+                    created_at text not null,
+                    foreign key(challenge_id) references challenges(challenge_id)
+                );
+
                 create table if not exists runs (
                     id integer primary key autoincrement,
                     challenge_id text not null,
@@ -77,20 +89,27 @@ class SQLiteNotebook:
                 );
                 """
             )
+            columns = {
+                row["name"]
+                for row in conn.execute("pragma table_info(challenges)").fetchall()
+            }
+            if "attachment_paths_json" not in columns:
+                conn.execute("alter table challenges add column attachment_paths_json text not null default '[]'")
 
     def add_challenge(self, challenge: Challenge) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 insert into challenges (
-                    challenge_id, category, title, target, description, tags_json, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?)
+                    challenge_id, category, title, target, description, tags_json, attachment_paths_json, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(challenge_id) do update set
                     category = excluded.category,
                     title = excluded.title,
                     target = excluded.target,
                     description = excluded.description,
-                    tags_json = excluded.tags_json
+                    tags_json = excluded.tags_json,
+                    attachment_paths_json = excluded.attachment_paths_json
                 """,
                 (
                     challenge.challenge_id,
@@ -99,6 +118,7 @@ class SQLiteNotebook:
                     challenge.target,
                     challenge.description,
                     json.dumps(challenge.tags, ensure_ascii=False),
+                    json.dumps(challenge.attachment_paths, ensure_ascii=False),
                     challenge.created_at,
                 ),
             )
@@ -149,6 +169,33 @@ class SQLiteNotebook:
             ).fetchall()
         return [self._finding_from_row(row) for row in rows]
 
+    def add_observation(self, observation: Observation) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                insert into observations (
+                    challenge_id, source, kind, summary, evidence_json, created_at
+                ) values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation.challenge_id,
+                    observation.source,
+                    observation.kind,
+                    observation.summary,
+                    json.dumps(observation.evidence, ensure_ascii=False, sort_keys=True),
+                    observation.created_at,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def observations_for(self, challenge_id: str) -> list[Observation]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select * from observations where challenge_id = ? order by id",
+                (challenge_id,),
+            ).fetchall()
+        return [self._observation_from_row(row) for row in rows]
+
     def add_tool_result(self, challenge_id: str | None, result: ToolResult) -> int:
         with self._connect() as conn:
             cursor = conn.execute(
@@ -183,6 +230,16 @@ class SQLiteNotebook:
             )
             return int(cursor.lastrowid)
 
+    def latest_run_summary(self, challenge_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "select summary_json from runs where challenge_id = ? order by id desc limit 1",
+                (challenge_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["summary_json"])
+
     def _challenge_from_row(self, row: sqlite3.Row) -> Challenge:
         return Challenge(
             challenge_id=row["challenge_id"],
@@ -191,6 +248,7 @@ class SQLiteNotebook:
             target=row["target"],
             description=row["description"],
             tags=tuple(json.loads(row["tags_json"])),
+            attachment_paths=tuple(json.loads(row["attachment_paths_json"])),
             created_at=row["created_at"],
         )
 
@@ -204,5 +262,15 @@ class SQLiteNotebook:
             confidence=float(row["confidence"]),
             next_action=row["next_action"],
             status=FindingStatus(row["status"]),
+            created_at=row["created_at"],
+        )
+
+    def _observation_from_row(self, row: sqlite3.Row) -> Observation:
+        return Observation(
+            challenge_id=row["challenge_id"],
+            source=row["source"],
+            kind=row["kind"],
+            summary=row["summary"],
+            evidence=json.loads(row["evidence_json"]),
             created_at=row["created_at"],
         )

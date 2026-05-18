@@ -4,11 +4,13 @@ import argparse
 import json
 from pathlib import Path
 
-from forgeflag.domain import Challenge, ChallengeCategory, RunConfig
+from forgeflag.artifacts import ArtifactWorkspace
+from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.safety import ScopePolicy
 from forgeflag.tools.runner import ToolRunner
+from forgeflag.webapp import run_webapp
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--target")
     add.add_argument("--description")
     add.add_argument("--tag", action="append", default=[])
+    add.add_argument("--attachment", action="append", default=[], help="Local challenge artifact to copy into the workspace")
 
     subparsers.add_parser("list", help="List challenges")
 
@@ -33,11 +36,24 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--allow-host", action="append", default=[])
     run.add_argument("--active-probe", action="store_true", help="Enable scoped active probing")
     run.add_argument("--max-iterations", type=int, default=20)
+    run.add_argument("--llm-provider", choices=["disabled", "openai", "zhipu"], help="Optional LLM provider for strategy planning")
+    run.add_argument("--llm-model", help="Model name for the configured LLM provider")
+    run.add_argument("--llm-base-url", help="Override the provider API base URL")
 
     findings = subparsers.add_parser("findings", help="Show findings for one challenge")
     findings.add_argument("challenge_id")
 
+    observations = subparsers.add_parser("observations", help="Show distilled shared observations for one challenge")
+    observations.add_argument("challenge_id")
+
+    report = subparsers.add_parser("report", help="Show the latest replay report for one challenge")
+    report.add_argument("challenge_id")
+
     subparsers.add_parser("tools", help="List configured CTF tool wrappers and local availability")
+
+    web = subparsers.add_parser("web", help="Start the local ForgeFlag web UI")
+    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument("--port", type=int, default=8080)
 
     return parser
 
@@ -52,6 +68,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "add-challenge":
+        artifact_workspace = ArtifactWorkspace(Path(args.db).parent / "artifacts")
+        attachment_paths = tuple(
+            str(artifact_workspace.register_file(args.challenge_id, attachment).workspace_path)
+            for attachment in args.attachment
+        )
         challenge = Challenge(
             challenge_id=args.challenge_id,
             category=ChallengeCategory(args.category),
@@ -59,9 +80,19 @@ def main(argv: list[str] | None = None) -> int:
             target=args.target,
             description=args.description,
             tags=tuple(args.tag),
+            attachment_paths=attachment_paths,
         )
         notebook.add_challenge(challenge)
-        print(json.dumps({"status": "ok", "challenge_id": challenge.challenge_id}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "challenge_id": challenge.challenge_id,
+                    "attachment_paths": list(challenge.attachment_paths),
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
 
     if args.command == "list":
@@ -72,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
                 "title": challenge.title,
                 "target": challenge.target,
                 "tags": list(challenge.tags),
+                "attachment_paths": list(challenge.attachment_paths),
             }
             for challenge in notebook.list_challenges()
         ]
@@ -79,10 +111,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
+        llm_config = _llm_config_from_args(args)
         config = RunConfig(
             max_iterations=args.max_iterations,
             active_probe=args.active_probe,
             allowed_hosts=tuple(args.allow_host),
+            llm_config=llm_config,
         )
         summary = Manager(notebook, config=config).run_challenge(args.challenge_id)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -103,12 +137,47 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
 
+    if args.command == "observations":
+        rows = [
+            {
+                "source": observation.source,
+                "kind": observation.kind,
+                "summary": observation.summary,
+                "evidence": observation.evidence,
+                "created_at": observation.created_at,
+            }
+            for observation in notebook.observations_for(args.challenge_id)
+        ]
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "report":
+        summary = notebook.latest_run_summary(args.challenge_id)
+        replay_report = (summary or {}).get("replay_report")
+        print(json.dumps(replay_report or {}, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "tools":
         print(json.dumps(ToolRunner(ScopePolicy()).inventory(), ensure_ascii=False, indent=2))
         return 0
 
+    if args.command == "web":
+        run_webapp(Path(args.db), host=args.host, port=args.port)
+        return 0
+
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _llm_config_from_args(args: argparse.Namespace) -> LLMConfig:
+    base = LLMConfig.from_env()
+    return LLMConfig(
+        provider=args.llm_provider or base.provider,
+        model=args.llm_model or base.model,
+        api_key=base.api_key,
+        base_url=args.llm_base_url or base.base_url,
+        timeout_seconds=base.timeout_seconds,
+    )
 
 
 if __name__ == "__main__":

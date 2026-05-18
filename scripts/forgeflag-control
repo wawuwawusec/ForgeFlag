@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_DIR="$ROOT_DIR/.forgeflag"
+PID_FILE="$STATE_DIR/mcp.pid"
+LOG_FILE="$STATE_DIR/mcp.log"
+WEB_PID_FILE="$STATE_DIR/web.pid"
+WEB_LOG_FILE="$STATE_DIR/web.log"
+WEB_SCREEN="forgeflag-web"
+MCP_SCREEN="forgeflag-mcp"
+DB_PATH="${FORGEFLAG_DB:-$STATE_DIR/notebook.sqlite}"
+WEB_HOST="${FORGEFLAG_WEB_HOST:-127.0.0.1}"
+WEB_PORT="${FORGEFLAG_WEB_PORT:-8080}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
+FORGEFLAG_BIN="$ROOT_DIR/.venv/bin/forgeflag"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/forgeflag-control <command> [options]
+
+Commands:
+  start [--no-web] [--mcp]  Prepare venv, initialize notebook, start Web UI by default, optionally start MCP
+  stop                Stop background Web UI and MCP server if they are running
+  restart [--mcp]     Stop, then start
+  status              Show notebook, CLI, tool, and MCP status
+  smoke               Run the local offline smoke test
+
+Environment:
+  FORGEFLAG_DB        Notebook path, default .forgeflag/notebook.sqlite
+  FORGEFLAG_ALLOWED_HOSTS  Comma-separated allowlist for MCP network tools
+  FORGEFLAG_WEB_HOST       Web UI host, default 127.0.0.1
+  FORGEFLAG_WEB_PORT       Web UI port, default 8080
+  PYTHON_BIN          Python executable used to create .venv, default python3
+EOF
+}
+
+ensure_state_dir() {
+  mkdir -p "$STATE_DIR"
+}
+
+load_env() {
+  if [[ -f "$ROOT_DIR/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/.env"
+    set +a
+  fi
+}
+
+ensure_venv() {
+  if [[ ! -x "$VENV_PYTHON" ]]; then
+    "$PYTHON_BIN" -m venv "$ROOT_DIR/.venv"
+  fi
+  "$VENV_PYTHON" -m pip install -e "$ROOT_DIR" >/dev/null
+}
+
+init_notebook() {
+  "$FORGEFLAG_BIN" --db "$DB_PATH" init >/dev/null
+}
+
+is_mcp_running() {
+  [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+is_web_running() {
+  [[ -f "$WEB_PID_FILE" ]] && kill -0 "$(cat "$WEB_PID_FILE")" 2>/dev/null
+}
+
+start_web() {
+  if is_web_running; then
+    echo "Web UI already running pid=$(cat "$WEB_PID_FILE") url=http://$WEB_HOST:$WEB_PORT/"
+    return
+  fi
+  : > "$WEB_LOG_FILE"
+  if command -v screen >/dev/null 2>&1; then
+    screen -S "$WEB_SCREEN" -X quit >/dev/null 2>&1 || true
+    screen -dmS "$WEB_SCREEN" /bin/zsh -lc "cd '$ROOT_DIR' && exec '$FORGEFLAG_BIN' --db '$DB_PATH' web --host '$WEB_HOST' --port '$WEB_PORT' >> '$WEB_LOG_FILE' 2>&1"
+    sleep 1
+    pgrep -f "forgeflag.*web --host $WEB_HOST --port $WEB_PORT" | head -n 1 > "$WEB_PID_FILE" || true
+  else
+    (
+      cd "$ROOT_DIR"
+      nohup "$FORGEFLAG_BIN" --db "$DB_PATH" web --host "$WEB_HOST" --port "$WEB_PORT" >>"$WEB_LOG_FILE" 2>&1 </dev/null &
+      echo $! > "$WEB_PID_FILE"
+    )
+  fi
+  sleep 1
+  if is_web_running; then
+    echo "Web UI started pid=$(cat "$WEB_PID_FILE") url=http://$WEB_HOST:$WEB_PORT/ log=$WEB_LOG_FILE"
+  else
+    echo "Web UI failed to start; see $WEB_LOG_FILE" >&2
+    rm -f "$WEB_PID_FILE"
+    return 1
+  fi
+}
+
+start_mcp() {
+  if is_mcp_running; then
+    echo "MCP already running pid=$(cat "$PID_FILE")"
+    return
+  fi
+  : > "$LOG_FILE"
+  if command -v screen >/dev/null 2>&1; then
+    screen -S "$MCP_SCREEN" -X quit >/dev/null 2>&1 || true
+    screen -dmS "$MCP_SCREEN" /bin/zsh -lc "cd '$ROOT_DIR' && export PATH='/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin':\$PATH && exec '$VENV_PYTHON' -c 'from forgeflag.mcp_server import mcp; mcp.run(transport=\"streamable-http\")' >> '$LOG_FILE' 2>&1"
+    sleep 1
+    pgrep -f "forgeflag.mcp_server|streamable-http" | head -n 1 > "$PID_FILE" || true
+  else
+    (
+      cd "$ROOT_DIR"
+      export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+      nohup "$VENV_PYTHON" -c 'from forgeflag.mcp_server import mcp; mcp.run(transport="streamable-http")' >>"$LOG_FILE" 2>&1 </dev/null &
+      echo $! > "$PID_FILE"
+    )
+  fi
+  sleep 1
+  if is_mcp_running; then
+    echo "MCP started pid=$(cat "$PID_FILE") log=$LOG_FILE"
+  else
+    echo "MCP failed to start; see $LOG_FILE" >&2
+    rm -f "$PID_FILE"
+    return 1
+  fi
+}
+
+stop_mcp() {
+  if ! [[ -f "$PID_FILE" ]]; then
+    echo "MCP not running"
+    return
+  fi
+  local pid
+  pid="$(cat "$PID_FILE")"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid"
+    for _ in 1 2 3 4 5; do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+    echo "MCP stopped pid=$pid"
+  else
+    echo "MCP pid file was stale pid=$pid"
+  fi
+  rm -f "$PID_FILE"
+  screen -S "$MCP_SCREEN" -X quit >/dev/null 2>&1 || true
+}
+
+stop_web() {
+  if ! [[ -f "$WEB_PID_FILE" ]]; then
+    echo "Web UI not running"
+    return
+  fi
+  local pid
+  pid="$(cat "$WEB_PID_FILE")"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid"
+    for _ in 1 2 3 4 5; do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+    echo "Web UI stopped pid=$pid"
+  else
+    echo "Web UI pid file was stale pid=$pid"
+  fi
+  rm -f "$WEB_PID_FILE"
+  screen -S "$WEB_SCREEN" -X quit >/dev/null 2>&1 || true
+}
+
+status() {
+  ensure_state_dir
+  echo "root=$ROOT_DIR"
+  echo "db=$DB_PATH"
+  if [[ -x "$FORGEFLAG_BIN" ]]; then
+    echo "cli=installed"
+  else
+    echo "cli=missing"
+  fi
+  if [[ -f "$DB_PATH" ]]; then
+    echo "notebook=ready"
+  else
+    echo "notebook=missing"
+  fi
+  if is_mcp_running; then
+    echo "mcp=running pid=$(cat "$PID_FILE") log=$LOG_FILE"
+  else
+    echo "mcp=stopped"
+  fi
+  if is_web_running; then
+    echo "web=running pid=$(cat "$WEB_PID_FILE") url=http://$WEB_HOST:$WEB_PORT/ log=$WEB_LOG_FILE"
+  else
+    echo "web=stopped url=http://$WEB_HOST:$WEB_PORT/"
+  fi
+  if [[ -x "$FORGEFLAG_BIN" ]]; then
+    "$FORGEFLAG_BIN" tools
+  fi
+}
+
+start() {
+  local with_mcp="false"
+  local with_web="true"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mcp) with_mcp="true" ;;
+      --no-web) with_web="false" ;;
+      *) echo "unknown start option: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+  done
+  ensure_state_dir
+  load_env
+  ensure_venv
+  init_notebook
+  echo "ForgeFlag ready db=$DB_PATH"
+  if [[ "$with_web" == "true" ]]; then
+    start_web
+  fi
+  if [[ "$with_mcp" == "true" ]]; then
+    start_mcp
+  fi
+}
+
+command="${1:-}"
+shift || true
+
+case "$command" in
+  start) start "$@" ;;
+  stop) ensure_state_dir; stop_web; stop_mcp ;;
+  restart) ensure_state_dir; stop_web; stop_mcp; start "$@" ;;
+  status) load_env; status ;;
+  smoke) ensure_venv; make -C "$ROOT_DIR" smoke ;;
+  -h|--help|help|"") usage ;;
+  *) echo "unknown command: $command" >&2; usage; exit 2 ;;
+esac

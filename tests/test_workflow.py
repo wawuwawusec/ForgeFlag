@@ -6,9 +6,10 @@ import threading
 import unittest
 from pathlib import Path
 
-from forgeflag.domain import Challenge, ChallengeCategory, RunConfig
+from forgeflag.domain import Challenge, ChallengeCategory, Finding, RunConfig, SolverResult
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
+from forgeflag.solvers.base import SolverContext
 
 
 class FlagHandler(BaseHTTPRequestHandler):
@@ -78,6 +79,7 @@ class WorkflowTest(unittest.TestCase):
                 ChallengeCategory.REVERSE,
                 ChallengeCategory.CRYPTO,
                 ChallengeCategory.FORENSICS,
+                ChallengeCategory.TRAFFIC,
                 ChallengeCategory.MISC,
                 ChallengeCategory.INFRA,
             ]
@@ -117,10 +119,58 @@ class WorkflowTest(unittest.TestCase):
 
         self.assertEqual(summary["status"], "flag_found")
         self.assertEqual(summary["accepted_flags"], ["flag{scoped_web_solver}"])
+        self.assertEqual(summary["replay_report"]["flags"][0]["flag"], "flag{scoped_web_solver}")
+        self.assertTrue(summary["replay_report"]["flags"][0]["path"])
         self.assertTrue(any(f.finding == "Analyzed scoped HTTP response structure" for f in findings))
         web_finding = next(f for f in findings if f.finding == "Analyzed scoped HTTP response structure")
         self.assertEqual(web_finding.evidence["html"]["title"], "ForgeFlag Test")
         self.assertEqual(web_finding.evidence["html"]["forms"][0]["method"], "post")
+
+    def test_manager_observer_injects_prior_solver_observations(self) -> None:
+        class ProducerSolver:
+            name = "ProducerSolver"
+            supported_categories = {ChallengeCategory.MISC}
+
+            def solve(self, context: SolverContext) -> SolverResult:
+                finding = Finding(
+                    challenge_id=context.challenge.challenge_id,
+                    solver=self.name,
+                    finding="Recovered archive password candidate",
+                    evidence={"candidate": "blue-team"},
+                    confidence=0.91,
+                    next_action="Try password against nested archive.",
+                )
+                context.notebook.add_finding(finding)
+                return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
+        class ConsumerSolver:
+            name = "ConsumerSolver"
+            supported_categories = {ChallengeCategory.MISC}
+
+            def solve(self, context: SolverContext) -> SolverResult:
+                finding = Finding(
+                    challenge_id=context.challenge.challenge_id,
+                    solver=self.name,
+                    finding="Consumed injected observations",
+                    evidence={"observation_summaries": [observation.summary for observation in context.observations]},
+                    confidence=0.8,
+                )
+                context.notebook.add_finding(finding)
+                return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="observer-01", category=ChallengeCategory.MISC))
+
+            summary = Manager(notebook, RunConfig(), solvers=[ProducerSolver(), ConsumerSolver()]).run_challenge(
+                "observer-01"
+            )
+            observations = notebook.observations_for("observer-01")
+            consumer = next(f for f in notebook.findings_for("observer-01") if f.solver == "ConsumerSolver")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(observations[0].summary, "Recovered archive password candidate")
+        self.assertIn("Recovered archive password candidate", consumer.evidence["observation_summaries"])
 
 
 if __name__ == "__main__":

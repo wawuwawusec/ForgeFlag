@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from forgeflag.domain import Challenge, ChallengeCategory, SolverResult
+from forgeflag.domain import Challenge, ChallengeCategory, Observation, SolverResult
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.safety import ScopePolicy
 
@@ -13,6 +13,7 @@ class SolverContext:
     challenge: Challenge
     notebook: SQLiteNotebook
     scope: ScopePolicy
+    observations: tuple[Observation, ...] = ()
 
 
 class Solver(Protocol):
@@ -21,4 +22,3 @@ class Solver(Protocol):
 
     def solve(self, context: SolverContext) -> SolverResult:
         ...
-
