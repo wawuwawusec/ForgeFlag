@@ -32,6 +32,21 @@ class DisabledLLMProvider:
         return LLMResponse(content="", raw={"status": "disabled"})
 
 
+class UnavailableLLMProvider:
+    enabled = True
+
+    def __init__(self, name: str, model: str | None, error: str) -> None:
+        self.name = name
+        self.model = model
+        self.error = error
+
+    def generate(self, instructions: str, prompt: str) -> LLMResponse:
+        return LLMResponse(
+            content=f"LLM planning unavailable: {self.error}",
+            raw={"status": "unavailable", "error": self.error},
+        )
+
+
 class OpenAIResponsesProvider:
     name = "openai"
 

@@ -569,6 +569,7 @@ INDEX_HTML = r"""<!doctype html>
       state.lastSummary = res;
       status(res.status || "done");
       show(res);
+      await loadTab("findings");
     }
     async function testLLM() {
       if (!$("llmEnabled").checked) $("llmEnabled").checked = true;

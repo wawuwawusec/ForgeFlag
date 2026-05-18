@@ -19,7 +19,13 @@ class LLMSolver:
         if not self.provider.enabled:
             return SolverResult(self.name, context.challenge.challenge_id, "disabled")
 
-        response = self.provider.generate(_instructions(), _prompt(context))
+        try:
+            response = self.provider.generate(_instructions(), _prompt(context))
+        except Exception as exc:  # noqa: BLE001 - LLM planning must not block scoped tool solvers.
+            return self._unavailable_result(context, str(exc))
+        if response.raw.get("status") == "unavailable":
+            return self._unavailable_result(context, str(response.raw.get("error") or response.content))
+
         plan = _parse_plan(response.content)
         evidence: dict[str, Any] = {
             "provider": self.provider.name,
@@ -40,6 +46,23 @@ class LLMSolver:
         )
         context.notebook.add_finding(finding)
         return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
+    def _unavailable_result(self, context: SolverContext, error: str) -> SolverResult:
+        finding = Finding(
+            challenge_id=context.challenge.challenge_id,
+            solver=self.name,
+            finding="LLM planning unavailable",
+            evidence={
+                "provider": self.provider.name,
+                "model": self.provider.model,
+                "error": error,
+            },
+            hypothesis="The configured LLM could not be used, so ForgeFlag should continue with deterministic solvers.",
+            confidence=0.2,
+            next_action="Fix the LLM configuration or disable 大模型分析, then rerun if model guidance is needed.",
+        )
+        context.notebook.add_finding(finding)
+        return SolverResult(self.name, context.challenge.challenge_id, "config_error", (finding,))
 
 
 def _instructions() -> str:

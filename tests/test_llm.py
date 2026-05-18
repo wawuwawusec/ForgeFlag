@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -216,6 +217,24 @@ class LLMSolverTest(unittest.TestCase):
             ).run_challenge("llm-dispatch")
 
         self.assertEqual([row["solver"] for row in summary["solvers"]], ["LLMSolver", "ExtraSolver"])
+
+    def test_manager_continues_when_runtime_llm_config_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-missing-key", category=ChallengeCategory.MISC))
+
+            summary = Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="zhipu", model="glm-4.7")),
+            ).run_challenge("llm-missing-key")
+            findings = notebook.findings_for("llm-missing-key")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertIn({"solver": "LLMSolver", "status": "config_error", "findings": 1}, summary["solvers"])
+        self.assertIn({"solver": "MiscSolver", "status": "placeholder", "findings": 1}, summary["solvers"])
+        llm_finding = next(finding for finding in findings if finding.solver == "LLMSolver")
+        self.assertEqual(llm_finding.finding, "LLM planning unavailable")
+        self.assertIn("ZAI_API_KEY", llm_finding.evidence["error"])
 
 
 if __name__ == "__main__":

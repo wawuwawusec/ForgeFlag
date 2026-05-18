@@ -27,6 +27,7 @@ Implemented so far:
   - `ZhipuChatCompletionsProvider` uses `/chat/completions` at `https://open.bigmodel.cn/api/paas/v4`
   - `LLMSolver` writes scoped strategy guidance; it does not submit unverified flag candidates
   - structured JSON plans become `llm_solver_plan` observations and can insert suggested solvers into the remaining queue
+  - LLM provider/config failures are recorded as `LLMSolver` `config_error` findings and do not block deterministic solvers
 - Optional IDA MCP binary-analysis layer:
   - `IDAMCPConfig` reads `FORGEFLAG_IDA_MCP_ENABLED`, `FORGEFLAG_IDA_MCP_COMMAND`, `FORGEFLAG_IDA_MCP_READ_ONLY`, and `FORGEFLAG_IDA_MCP_TIMEOUT_SECONDS`
   - `ReverseSolver` and `PwnSolver` call the adapter only for registered binary attachments
@@ -63,7 +64,7 @@ Implemented so far:
   - category workspace filters for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra queues
   - per-run LLM provider/model/API key controls, browser-local non-secret config saving, optional local key remembering, and `/api/llm/test`
   - entered LLM keys are used for run/test requests and are never stored in SQLite
-  - run, findings, observations, replay report, and tools views
+  - run, auto-loaded findings, observations, replay report, and tools views
 - CTF Dockerfile:
   - `docker/Dockerfile.ctf`
 - Project skill template:
@@ -89,7 +90,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 49 tests OK
+- Tests passed: 51 tests OK
 
 Useful commands:
 

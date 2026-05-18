@@ -67,6 +67,13 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("分类工作台", html)
         self.assertIn("categoryCounts", html)
 
+    def test_run_button_loads_findings_after_summary(self) -> None:
+        handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
+
+        html = handler_cls.render_index()
+
+        self.assertIn('await loadTab("findings")', html)
+
     def test_index_contains_llm_runtime_controls(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
 

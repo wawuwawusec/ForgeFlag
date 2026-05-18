@@ -3,7 +3,7 @@ from __future__ import annotations
 from forgeflag.domain import ChallengeCategory, RunConfig
 from forgeflag.harness import Harness
 from forgeflag.ida import IDAAdapter, build_ida_adapter
-from forgeflag.llm import build_llm_provider
+from forgeflag.llm import UnavailableLLMProvider, build_llm_provider
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.observer import Observer
 from forgeflag.report import ReportBuilder
@@ -43,7 +43,14 @@ class Manager:
 
     def _default_solvers(self) -> list[Solver]:
         solvers: list[Solver] = [ReconSolver()]
-        llm_provider = build_llm_provider(self.config.llm_config)
+        try:
+            llm_provider = build_llm_provider(self.config.llm_config)
+        except ValueError as exc:
+            llm_provider = UnavailableLLMProvider(
+                self.config.llm_config.provider,
+                self.config.llm_config.model,
+                str(exc),
+            )
         if llm_provider.enabled:
             solvers.append(LLMSolver(llm_provider))
         solvers.extend(

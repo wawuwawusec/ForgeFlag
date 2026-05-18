@@ -23,7 +23,8 @@
 - Added automatic replay reports for accepted flags and a `forgeflag report` CLI command.
 - Added `LLMConfig`, provider adapters, optional OpenAI Responses and 智谱 GLM chat-completions adapters, and `LLMSolver` strategy planning.
 - Added structured LLM solve plans and dynamic solver queue insertion from `llm_solver_plan` observations.
+- Changed LLM planning failures to non-blocking findings so deterministic solvers still run when a web-run LLM key or model is misconfigured.
 - Added `.env.example` and a local artifact-based `make smoke` workflow.
 - Added `scripts/forgeflag-control` for one-command local start, stop, status, restart, and smoke workflows.
-- Added a local Web UI with challenge creation, attachment upload, category filtering, per-run LLM settings, browser-local config saving, LLM connection testing, run, findings, observations, report, and tools views.
+- Added a local Web UI with challenge creation, attachment upload, category filtering, per-run LLM settings, browser-local config saving, LLM connection testing, run, auto-loaded findings, observations, report, and tools views.
 - Added optional read-only IDA MCP configuration and adapter hooks for `ReverseSolver` and `PwnSolver`.
