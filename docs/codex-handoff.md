@@ -43,7 +43,10 @@ Implemented so far:
   - challenge attachment paths persist in SQLite
 - Scoped ForensicsSolver workflow:
   - local attachment triage with `file`, `strings`, `binwalk`, and `exiftool`
+- Reusable image puzzle analysis:
   - PNG IHDR height/CRC mismatch detection with repaired PNG artifact output
+  - `ForensicsSolver` uses it after local artifact triage
+  - `MiscSolver` uses it directly for misc image puzzles before broader puzzle triage
 - Scoped TrafficSolver workflow:
   - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, and `tshark_flag_scan`
   - structured tool evidence in notebook
@@ -86,7 +89,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 48 tests OK
+- Tests passed: 49 tests OK
 
 Useful commands:
 

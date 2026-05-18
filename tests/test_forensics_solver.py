@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import binascii
 import shutil
-import struct
 import tempfile
 import unittest
-import zlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +10,7 @@ from forgeflag.domain import Challenge, ChallengeCategory, RunConfig, ToolResult
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.solvers import ForensicsSolver
+from tests.png_fixtures import png_with_wrong_declared_height
 
 
 @unittest.skipUnless(shutil.which("file") and shutil.which("strings"), "file and strings commands are required")
@@ -100,7 +98,7 @@ class ForensicsSolverTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             attachment = root / "ihdr.png"
-            attachment.write_bytes(_png_with_wrong_declared_height(width=2, actual_height=3, declared_height=9))
+            attachment.write_bytes(png_with_wrong_declared_height(width=2, actual_height=3, declared_height=9))
             notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
             notebook.add_challenge(
                 Challenge(
@@ -138,30 +136,6 @@ class ForensicsSolverTest(unittest.TestCase):
             self.assertEqual(png_evidence["derived_height"], 3)
             self.assertFalse(png_evidence["ihdr_crc_ok"])
             self.assertTrue(Path(png_evidence["repaired_path"]).is_file())
-
-
-def _png_with_wrong_declared_height(width: int, actual_height: int, declared_height: int) -> bytes:
-    def chunk(kind: bytes, body: bytes) -> bytes:
-        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", binascii.crc32(kind + body) & 0xFFFFFFFF)
-
-    rows = []
-    for y in range(actual_height):
-        rgba = bytes([255, 255 - y, 0, 255]) * width
-        rows.append(b"\x00" + rgba)
-    idat = zlib.compress(b"".join(rows))
-    correct_ihdr = struct.pack(">IIBBBBB", width, actual_height, 8, 6, 0, 0, 0)
-    wrong_ihdr = struct.pack(">IIBBBBB", width, declared_height, 8, 6, 0, 0, 0)
-    correct_crc = struct.pack(">I", binascii.crc32(b"IHDR" + correct_ihdr) & 0xFFFFFFFF)
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + struct.pack(">I", len(wrong_ihdr))
-        + b"IHDR"
-        + wrong_ihdr
-        + correct_crc
-        + chunk(b"IDAT", idat)
-        + chunk(b"IEND", b"")
-    )
-
 
 if __name__ == "__main__":
     unittest.main()

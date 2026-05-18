@@ -42,7 +42,7 @@
 
 - Artifact workspace registration.
 - Initial file, strings, binwalk, and exiftool triage.
-- PNG IHDR height/CRC mismatch repair.
+- Reusable PNG IHDR height/CRC mismatch repair shared with misc image puzzles.
 - Evidence-backed flag candidate extraction from local artifacts.
 - File carving.
 - Steganography workflows.
@@ -55,6 +55,13 @@
 - DNS query summary.
 - HTTP object extraction.
 - TCP stream extraction by stream id.
+
+## Milestone 6b: Misc Solver
+
+- Route image puzzles through reusable PNG structure analysis before generic puzzle triage.
+- Archive triage.
+- Encoding and transform detection.
+- Steganography handoff hints.
 
 ## Milestone 7: Competition Operations
 
