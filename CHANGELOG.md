@@ -40,3 +40,4 @@
 - Added hash/password triage with hashcat and John dictionary wrapper hooks, without automatic cracking by default.
 - Added image/stego hint triage for PNG text chunks, PNG trailing data, and JPEG comments/APP markers.
 - Added registered artifact summaries in the CLI and Web UI, including existence, size, and SHA256.
+- Hardened `scripts/forgeflag-control` PID handling and Web UI startup so one-command start/stop is more reliable.

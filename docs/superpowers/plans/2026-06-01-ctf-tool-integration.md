@@ -221,3 +221,17 @@ Summarize registered attachment paths with name, managed path, existence, size, 
 - [x] **Step 2: Expose summaries in CLI and Web UI**
 
 Add `forgeflag artifacts <challenge_id>` and a Web UI Artifacts tab so operators can confirm uploaded/registered files before running solvers.
+
+### Phase 11: Local Lifecycle Reliability
+
+**Files:**
+- Modify: `scripts/forgeflag-control`
+- Test: `tests/test_control_script.py`
+
+- [x] **Step 1: Harden PID handling**
+
+Validate PID files before using them. Remove invalid or stale PID files from status checks and make stop tolerate missing or malformed state.
+
+- [x] **Step 2: Stabilize Web UI startup**
+
+Start the Web UI with `.venv/bin/python -m forgeflag.cli`, store the managed Python process PID, and use a detached screen session when available so the service survives the launching shell.

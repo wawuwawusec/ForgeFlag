@@ -42,7 +42,7 @@ scripts/forgeflag-control smoke
 scripts/forgeflag-control stop
 ```
 
-`start` launches the Web UI at [http://127.0.0.1:8080/](http://127.0.0.1:8080/) by default. The Web UI includes a category workspace so Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra challenges can be filtered separately before running solvers. Start the optional MCP server only when you need it:
+`start` launches the Web UI at [http://127.0.0.1:8080/](http://127.0.0.1:8080/) by default and records a managed PID under `.forgeflag/web.pid`. The Web UI includes a category workspace so Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra challenges can be filtered separately before running solvers. Start the optional MCP server only when you need it:
 
 ```bash
 FORGEFLAG_ALLOWED_HOSTS=127.0.0.1,localhost scripts/forgeflag-control start --mcp

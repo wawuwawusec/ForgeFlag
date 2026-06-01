@@ -97,6 +97,10 @@ Implemented so far:
   - per-run LLM provider/model/API key controls, browser-local non-secret config saving, optional local key remembering, and `/api/llm/test`
   - entered LLM keys are used for run/test requests and are never stored in SQLite
   - run, auto-loaded findings, observations, artifact summaries, replay report, tools, and catalog views
+- One-command lifecycle script:
+  - `scripts/forgeflag-control start/status/smoke/stop`
+  - Web UI start uses `.venv/bin/python -m forgeflag.cli` and stores the managed Python process PID in `.forgeflag/web.pid`
+  - status cleans invalid/stale PID files and reports managed Web/MCP state
 - CTF Dockerfile:
   - `docker/Dockerfile.ctf`
   - default `forgeflag-core` / `forgeflag-default` image keeps heavyweight tools out of the base venv
@@ -127,7 +131,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 106 tests OK
+- Tests passed: 108 tests OK
 
 Useful commands:
 
