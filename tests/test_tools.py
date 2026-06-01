@@ -14,8 +14,10 @@ from forgeflag.tools.ctf import (
     ropper_scan,
     strings_extract,
     tshark_flag_scan,
+    tshark_dns_summary,
     tshark_http_artifact_scan,
     tshark_http_requests,
+    tshark_tcp_streams,
     tshark_traffic_analysis,
 )
 from forgeflag.tools.runner import ToolRunner
@@ -128,6 +130,37 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertIn('http.file_data contains "f1ag"', display_filter)
         self.assertIn('http.file_data contains "&#102;"', display_filter)
         self.assertIn("http.file_data", args)
+
+    def test_tshark_dns_summary_extracts_dns_fields(self) -> None:
+        expected = ToolResult(tool="tshark", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = tshark_dns_summary("/tmp/capture.pcap")
+
+        self.assertIs(result, expected)
+        args = runner.run.call_args.args[1]
+        self.assertIn("dns", args)
+        self.assertIn("dns.qry.name", args)
+        self.assertIn("dns.txt", args)
+
+    def test_tshark_tcp_streams_extracts_stream_fields(self) -> None:
+        expected = ToolResult(tool="tshark", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = tshark_tcp_streams("/tmp/capture.pcap", packet_limit=999)
+
+        self.assertIs(result, expected)
+        args = runner.run.call_args.args[1]
+        self.assertIn("tcp", args)
+        self.assertIn("tcp.stream", args)
+        self.assertIn("-c", args)
+        self.assertIn("500", args)
 
     def test_ropgadget_scan_uses_binary_argument_and_depth_limit(self) -> None:
         expected = ToolResult(tool="ROPgadget", target=None, status="success")

@@ -57,14 +57,15 @@ Implemented so far:
   - `ForensicsSolver` uses it after local artifact triage
   - `MiscSolver` uses it directly for misc image puzzles before broader puzzle triage
 - Scoped TrafficSolver workflow:
-  - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, `tshark_flag_scan`, `tshark_http_requests`, and `tshark_http_artifact_scan`
+  - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, `tshark_flag_scan`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, and `tshark_http_artifact_scan`
   - HTTP artifact payload decoding via shared transform candidates before flag extraction
+  - DNS query/TXT/rcode summary and TCP stream shortlist evidence
   - support for common CTF typo markers such as `f1ag{...}`
   - structured tool evidence in notebook
   - flag candidate extraction from packet capture output
 - CTF tool layer:
   - allowlisted `ToolRunner`
-  - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `nmap_tcp_basic`
+  - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `nmap_tcp_basic`
   - `forgeflag tools` CLI inventory
 - Curated CTF project catalog:
   - `forgeflag catalog` and `forgeflag catalog --category <category>`
@@ -105,7 +106,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 68 tests OK
+- Tests passed: 74 tests OK
 
 Useful commands:
 

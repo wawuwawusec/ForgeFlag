@@ -84,11 +84,11 @@ Record checksec, strings, gadget availability, and IDA MCP output in a compact f
 - Modify: `src/forgeflag/solvers/traffic.py`
 - Test: `tests/test_traffic_analysis.py`
 
-- [ ] **Step 1: Add DNS summary extraction**
+- [x] **Step 1: Add DNS summary extraction**
 
 Extract query names, TXT answers, long labels, and repeated failed lookups using typed tshark fields.
 
-- [ ] **Step 2: Add TCP stream shortlist**
+- [x] **Step 2: Add TCP stream shortlist**
 
 Rank streams by HTTP clues, printable payload hints, and flag-like transform candidates.
 

@@ -56,6 +56,73 @@ def tshark_traffic_analysis(path: str, scope: ScopePolicy | None = None) -> Tool
     return runner.run("tshark", ["-r", path, "-q", "-z", "io,phs", "-z", "conv,tcp", "-z", "conv,udp"])
 
 
+def tshark_dns_summary(path: str, scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run(
+        "tshark",
+        [
+            "-r",
+            path,
+            "-Y",
+            "dns",
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+            "-e",
+            "dns.qry.name",
+            "-e",
+            "dns.a",
+            "-e",
+            "dns.txt",
+            "-e",
+            "dns.flags.rcode",
+            "-E",
+            "separator=|",
+            "-E",
+            "occurrence=f",
+        ],
+    )
+
+
+def tshark_tcp_streams(path: str, packet_limit: int = 500, scope: ScopePolicy | None = None) -> ToolResult:
+    packet_limit = max(1, min(packet_limit, 500))
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run(
+        "tshark",
+        [
+            "-r",
+            path,
+            "-Y",
+            "tcp",
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+            "-e",
+            "tcp.stream",
+            "-e",
+            "ip.src",
+            "-e",
+            "tcp.srcport",
+            "-e",
+            "ip.dst",
+            "-e",
+            "tcp.dstport",
+            "-e",
+            "_ws.col.Protocol",
+            "-e",
+            "_ws.col.Info",
+            "-E",
+            "separator=|",
+            "-E",
+            "occurrence=f",
+            "-c",
+            str(packet_limit),
+        ],
+    )
+
+
 def tshark_http_requests(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     runner = ToolRunner(scope or ScopePolicy())
     return runner.run(

@@ -39,6 +39,20 @@ class McpToolTest(unittest.TestCase):
         self.assertEqual(payload["status"], "success")
         self.assertEqual(payload["evidence"], ["http clue"])
 
+    def test_tshark_dns_summary_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pcap = Path(tmp) / "capture.pcap"
+            pcap.write_bytes(b"not a real pcap for wrapper dispatch")
+            with patch(
+                "forgeflag.mcp_server.ctf.tshark_dns_summary",
+                return_value=ToolResult(tool="tshark", target=None, status="success", evidence=["dns clue"]),
+            ):
+                payload = mcp_server.tshark_dns_summary(str(pcap))
+
+        self.assertEqual(payload["tool"], "tshark")
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["evidence"], ["dns clue"])
+
     def test_ropgadget_scan_mcp_tool_returns_structured_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             binary = Path(tmp) / "pwn"

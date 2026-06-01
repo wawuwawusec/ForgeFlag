@@ -6,6 +6,7 @@ from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
+from forgeflag.traffic_analysis import dns_summary_from_tshark, tcp_stream_shortlist
 from forgeflag.transforms import transform_candidates
 
 
@@ -70,6 +71,8 @@ class TrafficSolver:
             ("tshark_pcap_summary", ctf.tshark_pcap_summary(pcap_path, packet_limit=50, scope=context.scope)),
             ("tshark_traffic_analysis", ctf.tshark_traffic_analysis(pcap_path, context.scope)),
             ("tshark_flag_scan", ctf.tshark_flag_scan(pcap_path, scope=context.scope)),
+            ("tshark_dns_summary", ctf.tshark_dns_summary(pcap_path, context.scope)),
+            ("tshark_tcp_streams", ctf.tshark_tcp_streams(pcap_path, scope=context.scope)),
             ("tshark_http_requests", ctf.tshark_http_requests(pcap_path, context.scope)),
             ("tshark_http_artifact_scan", ctf.tshark_http_artifact_scan(pcap_path, context.scope)),
         ]
@@ -82,6 +85,12 @@ class TrafficSolver:
         )
         decoded_http_artifacts = _decoded_http_artifacts(
             str(dict(labeled_results)["tshark_http_artifact_scan"].raw.get("stdout", ""))
+        )
+        dns_summary = dns_summary_from_tshark(str(dict(labeled_results)["tshark_dns_summary"].raw.get("stdout", "")))
+        tcp_streams = tcp_stream_shortlist(
+            str(dict(labeled_results)["tshark_tcp_streams"].raw.get("stdout", "")),
+            http_requests_output=str(dict(labeled_results)["tshark_http_requests"].raw.get("stdout", "")),
+            decoded_payloads=decoded_http_artifacts,
         )
         flags = extract_flags("\n".join([combined_output, *decoded_http_artifacts]))
         flag_candidates.extend(flags)
@@ -96,6 +105,8 @@ class TrafficSolver:
                 "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
                 "http_requests": _interesting_lines(str(dict(labeled_results)["tshark_http_requests"].raw.get("stdout", ""))),
                 "decoded_http_artifacts": decoded_http_artifacts[:20],
+                "dns_summary": dns_summary,
+                "tcp_streams": tcp_streams,
                 "flag_candidates": list(flags),
             },
             hypothesis=_traffic_hypothesis(flags),

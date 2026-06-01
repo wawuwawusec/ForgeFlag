@@ -93,6 +93,16 @@ if FastMCP is not None:
         return _result_payload(ctf.tshark_traffic_analysis(ctf.ensure_existing_file(path), _scope_from_env()))
 
     @mcp.tool()
+    def tshark_dns_summary(path: str) -> dict[str, Any]:
+        """Extract DNS query, answer, TXT, and response-code fields from a local PCAP artifact."""
+        return _result_payload(ctf.tshark_dns_summary(ctf.ensure_existing_file(path), _scope_from_env()))
+
+    @mcp.tool()
+    def tshark_tcp_streams(path: str, packet_limit: int = 500) -> dict[str, Any]:
+        """Extract TCP stream metadata from a local PCAP artifact."""
+        return _result_payload(ctf.tshark_tcp_streams(ctf.ensure_existing_file(path), packet_limit, _scope_from_env()))
+
+    @mcp.tool()
     def tshark_http_requests(path: str) -> dict[str, Any]:
         """Extract HTTP request metadata from a local PCAP artifact."""
         return _result_payload(ctf.tshark_http_requests(ctf.ensure_existing_file(path), _scope_from_env()))

@@ -44,6 +44,14 @@ class TrafficSolverTest(unittest.TestCase):
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "flag{pcap_payload}"}),
                 ),
                 patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
                     "forgeflag.solvers.traffic.ctf.tshark_http_requests",
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
                 ),
@@ -96,6 +104,14 @@ class TrafficSolverTest(unittest.TestCase):
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
                 ),
                 patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "456|16|10.0.0.2|4444|10.0.0.3|80|HTTP|POST /upload/example1.php HTTP/1.1"}),
+                ),
+                patch(
                     "forgeflag.solvers.traffic.ctf.tshark_http_requests",
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "456|16|POST|/upload/example1.php|Java"}),
                 ),
@@ -110,6 +126,66 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(summary["status"], "flag_found")
         self.assertEqual(summary["accepted_flags"], ["f1ag{si11yb0yemmm}"])
         self.assertIn("f1ag{si11yb0yemmm}", finding.evidence["decoded_http_artifacts"][0])
+        self.assertEqual(finding.evidence["tcp_streams"][0]["stream_id"], "16")
+
+    def test_traffic_solver_summarizes_dns_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "capture.pcap"
+            attachment.write_bytes(b"pcap fixture placeholder")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-dns",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+            dns_stdout = "\n".join(
+                [
+                    "12|short.example.com|||0",
+                    "13|covertcovertcovertcovert.example.com|||3",
+                    "14|txt.example.com||flag{dns_txt}|0",
+                ]
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "DNS"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "dns frames"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": dns_stdout}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-dns")
+                finding = next(f for f in notebook.findings_for("traffic-dns") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{dns_txt}"])
+        self.assertIn("flag{dns_txt}", finding.evidence["dns_summary"]["txt_answers"])
+        self.assertEqual(finding.evidence["dns_summary"]["rcode_counts"]["3"], 1)
 
     def test_traffic_solver_skips_non_pcap_attachments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
