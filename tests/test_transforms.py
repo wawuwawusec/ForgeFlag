@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+import unittest
+
+from forgeflag.transforms import transform_candidates
+
+
+class TransformTest(unittest.TestCase):
+    def test_transform_candidates_decodes_hex_flag(self) -> None:
+        candidates = transform_candidates("666c61677b6865785f666c61677d")
+
+        self.assertIn("flag{hex_flag}", {candidate.value for candidate in candidates})
+
+    def test_transform_candidates_chains_url_and_html_entities(self) -> None:
+        encoded = (
+            "%26%23102%3B%26%23108%3B%26%2397%3B%26%23103%3B%26%23123%3B"
+            "%26%23117%3B%26%23114%3B%26%23108%3B%26%23125%3B"
+        )
+
+        candidates = transform_candidates(encoded)
+
+        self.assertIn("flag{url}", {candidate.value for candidate in candidates})
+        flag_candidate = next(candidate for candidate in candidates if candidate.value == "flag{url}")
+        self.assertEqual(flag_candidate.recipe, ("url_decode", "html_unescape"))
+
+
+if __name__ == "__main__":
+    unittest.main()

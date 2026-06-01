@@ -34,6 +34,29 @@ class MiscSolverTest(unittest.TestCase):
             self.assertEqual(finding.evidence["png_ihdr"]["derived_height"], 3)
             self.assertTrue(Path(finding.evidence["png_ihdr"]["repaired_path"]).is_file())
 
+    def test_misc_solver_decodes_flag_from_text_attachment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "note.txt"
+            attachment.write_text("Jmx0OyEtdm9pZC0tJmd0OyBmbGFnJTdCbWlzY190cmFuc2Zvcm0lN0Q=", encoding="utf-8")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-transform",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-transform")
+            finding = next(f for f in notebook.findings_for("misc-transform") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{misc_transform}"])
+        self.assertEqual(finding.finding, "Decoded misc transform candidates")
+        recipes = {tuple(candidate["recipe"]) for candidate in finding.evidence["transform_candidates"]}
+        self.assertIn(("base64_decode", "html_unescape", "url_decode"), recipes)
+
 
 if __name__ == "__main__":
     unittest.main()

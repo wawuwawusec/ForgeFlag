@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import html
 from pathlib import Path
-from urllib.parse import unquote_plus
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
+from forgeflag.transforms import transform_candidates
 
 
 class TrafficSolver:
@@ -131,24 +130,18 @@ def _decoded_http_artifacts(output: str) -> list[str]:
         payload = parts[-1].strip()
         if not payload:
             continue
-        text = _decode_hex_text(payload)
-        if not text:
-            text = payload
-        normalized = html.unescape(unquote_plus(text))
-        snippet = _compact_text(normalized)
-        if snippet:
-            decoded.append(snippet)
+        flag_snippets: list[str] = []
+        other_snippets: list[str] = []
+        for candidate in transform_candidates(payload):
+            for flag in extract_flags(candidate.value):
+                flag_snippets.append(flag)
+            snippet = _compact_text(candidate.value)
+            if snippet:
+                other_snippets.append(snippet)
+        for snippet in [*flag_snippets, *other_snippets]:
+            if snippet not in decoded:
+                decoded.append(snippet)
     return decoded
-
-
-def _decode_hex_text(value: str) -> str:
-    if len(value) % 2 or not value:
-        return ""
-    try:
-        raw = bytes.fromhex(value)
-    except ValueError:
-        return ""
-    return raw.decode("utf-8", errors="replace")
 
 
 def _interesting_lines(output: str, limit: int = 40) -> list[str]:

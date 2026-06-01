@@ -34,6 +34,10 @@ Implemented so far:
   - default config is disabled and keeps existing placeholder behavior
 - Harness loop controls.
 - Solver interface and starter solvers for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra.
+- CyberChef-style transform pipeline:
+  - `forgeflag.transforms.transform_candidates`
+  - bounded transform chaining for hex, Base64, URL decoding, and HTML entity decoding
+  - shared by CryptoSolver, MiscSolver, and TrafficSolver
 - Scoped WebSolver workflow:
   - allowlist-gated HTTP probing
   - HTML title/link/form parsing
@@ -50,7 +54,7 @@ Implemented so far:
   - `MiscSolver` uses it directly for misc image puzzles before broader puzzle triage
 - Scoped TrafficSolver workflow:
   - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, `tshark_flag_scan`, `tshark_http_requests`, and `tshark_http_artifact_scan`
-  - HTTP artifact payload decoding for hex, URL encoding, and HTML entities before flag extraction
+  - HTTP artifact payload decoding via shared transform candidates before flag extraction
   - support for common CTF typo markers such as `f1ag{...}`
   - structured tool evidence in notebook
   - flag candidate extraction from packet capture output
@@ -97,7 +101,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 59 tests OK
+- Tests passed: 63 tests OK
 
 Useful commands:
 

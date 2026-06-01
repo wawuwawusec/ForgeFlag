@@ -30,3 +30,4 @@
 - Added a local Web UI with challenge creation, attachment upload, category filtering, per-run LLM settings, browser-local config saving, LLM connection testing, run, auto-loaded findings, observations, report, and tools views.
 - Added optional read-only IDA MCP configuration and adapter hooks for `ReverseSolver` and `PwnSolver`.
 - Added a curated CTF project catalog available from `forgeflag catalog`, `/api/project-catalog`, and the Web UI Catalog tab.
+- Added a CyberChef-style transform pipeline for hex, Base64, URL decoding, and HTML entity decoding, then integrated it into CryptoSolver, MiscSolver, and TrafficSolver.
