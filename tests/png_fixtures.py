@@ -26,3 +26,19 @@ def png_with_wrong_declared_height(width: int, actual_height: int, declared_heig
         + chunk(b"IDAT", idat)
         + chunk(b"IEND", b"")
     )
+
+
+def png_with_text_and_trailing_data(text: str, trailing: bytes = b"") -> bytes:
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", binascii.crc32(kind + body) & 0xFFFFFFFF)
+
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    row = b"\x00" + bytes([255, 255, 255, 255])
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"tEXt", b"Comment\x00" + text.encode("latin-1", errors="replace"))
+        + chunk(b"IDAT", zlib.compress(row))
+        + chunk(b"IEND", b"")
+        + trailing
+    )

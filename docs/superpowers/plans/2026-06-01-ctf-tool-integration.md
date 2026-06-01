@@ -184,3 +184,22 @@ CryptoSolver and MiscSolver record hash evidence before transform decoding so sh
 - [x] **Step 3: Add bounded cracking wrappers**
 
 Expose hashcat and John dictionary wrappers through the allowlisted tool catalog and MCP server. Solvers recommend these tools but do not automatically run password cracking.
+
+### Phase 9: Image and Stego Hint Triage
+
+**Files:**
+- Modify: `src/forgeflag/image.py`
+- Modify: `src/forgeflag/solvers/forensics.py`
+- Modify: `src/forgeflag/solvers/misc.py`
+- Modify: `tests/png_fixtures.py`
+- Test: `tests/test_image.py`
+- Test: `tests/test_forensics_solver.py`
+- Test: `tests/test_misc_solver.py`
+
+- [x] **Step 1: Summarize lightweight image stego hints**
+
+Detect PNG text chunks, PNG data appended after IEND, JPEG comment segments, and JPEG APP markers. Keep previews bounded and structured for notebook evidence.
+
+- [x] **Step 2: Integrate image hints into solvers**
+
+ForensicsSolver stores image hint evidence alongside file/strings/binwalk/exiftool output. MiscSolver routes image puzzles through this evidence before generic transforms and submits image-derived flag candidates to the verifier.

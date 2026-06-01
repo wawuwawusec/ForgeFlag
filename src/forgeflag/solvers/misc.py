@@ -6,7 +6,7 @@ from forgeflag.archive_analysis import analyze_archive
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.hash_analysis import hash_summary_from_text
-from forgeflag.image import analyze_png_ihdr
+from forgeflag.image import analyze_image_stego_hints, analyze_png_ihdr
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
 from forgeflag.transforms import candidates_to_payload, transform_candidates
@@ -17,9 +17,16 @@ class MiscSolver:
     supported_categories = {ChallengeCategory.MISC}
 
     def solve(self, context: SolverContext) -> SolverResult:
-        image_findings = self._analyze_image_attachments(context)
+        flag_candidates: list[str] = []
+        image_findings = self._analyze_image_attachments(context, flag_candidates)
         if image_findings:
-            return SolverResult(self.name, context.challenge.challenge_id, "ok", tuple(image_findings))
+            return SolverResult(
+                self.name,
+                context.challenge.challenge_id,
+                "flag_candidate" if flag_candidates else "ok",
+                tuple(image_findings),
+                tuple(dict.fromkeys(flag_candidates)),
+            )
 
         archive_findings = self._analyze_archive_attachments(context)
         if archive_findings:
@@ -73,7 +80,7 @@ class MiscSolver:
         context.notebook.add_finding(finding)
         return SolverResult(self.name, context.challenge.challenge_id, "placeholder", (finding,))
 
-    def _analyze_image_attachments(self, context: SolverContext) -> list[Finding]:
+    def _analyze_image_attachments(self, context: SolverContext, flag_candidates: list[str]) -> list[Finding]:
         findings: list[Finding] = []
         for attachment_path in context.challenge.attachment_paths:
             try:
@@ -81,19 +88,24 @@ class MiscSolver:
             except FileNotFoundError:
                 continue
             png_ihdr = analyze_png_ihdr(resolved)
-            if not png_ihdr:
+            image_stego = analyze_image_stego_hints(resolved)
+            flags = extract_flags(_image_text(image_stego))
+            if not png_ihdr and not image_stego:
                 continue
+            flag_candidates.extend(flags)
             finding = Finding(
                 challenge_id=context.challenge.challenge_id,
                 solver=self.name,
                 finding="Analyzed misc image artifact",
                 evidence={
                     "artifact": {"name": resolved.name, "path": str(resolved)},
-                    "png_ihdr": png_ihdr,
+                    "flag_candidates": list(flags),
+                    **({"png_ihdr": png_ihdr} if png_ihdr else {}),
+                    **({"image_stego": image_stego} if image_stego else {}),
                 },
-                hypothesis="Misc image puzzle has PNG structure evidence that should be inspected before broader puzzle triage.",
-                confidence=0.72,
-                next_action="Open the repaired PNG, then inspect visible hints, channels, and bit planes.",
+                hypothesis=_image_hypothesis(flags, png_ihdr, image_stego),
+                confidence=0.78 if flags else 0.68,
+                next_action=_image_next_action(flags, png_ihdr, image_stego),
             )
             context.notebook.add_finding(finding)
             findings.append(finding)
@@ -162,3 +174,47 @@ def _archive_next_action(archive: dict[str, object]) -> str:
     if archive.get("encrypted"):
         return "Collect password hints before attempting archive extraction."
     return "Inspect interesting archive entries and extract only into a managed artifact workspace."
+
+
+def _image_hypothesis(
+    flags: tuple[str, ...],
+    png_ihdr: dict[str, object] | None,
+    image_stego: dict[str, object] | None,
+) -> str:
+    if flags:
+        return "Image metadata or appended bytes contain a flag-like token."
+    if png_ihdr:
+        return "Misc image puzzle has PNG structure evidence that should be inspected before broader puzzle triage."
+    if image_stego:
+        return "Image metadata or structure contains stego-style hints worth inspecting before generic puzzle triage."
+    return "Image artifact should be routed to visual and stego follow-up."
+
+
+def _image_next_action(
+    flags: tuple[str, ...],
+    png_ihdr: dict[str, object] | None,
+    image_stego: dict[str, object] | None,
+) -> str:
+    if flags:
+        return "Send image-derived flag candidates to Verifier and preserve the image evidence path."
+    if png_ihdr and png_ihdr.get("repaired_path"):
+        return "Open the repaired PNG, then inspect visible hints, channels, and bit planes."
+    if image_stego:
+        return "Review image text chunks, comments, and trailing bytes before trying low-bit-plane tools."
+    return "Inspect transform candidates, then route to crypto, archive, or stego follow-up."
+
+
+def _image_text(image_stego: dict[str, object] | None) -> str:
+    if not image_stego:
+        return ""
+    values: list[str] = []
+    for item in image_stego.get("text_chunks", []):
+        if isinstance(item, dict):
+            values.append(str(item.get("text_preview", "")))
+    for item in image_stego.get("comments", []):
+        if isinstance(item, dict):
+            values.append(str(item.get("text_preview", "")))
+    trailing = image_stego.get("trailing_data")
+    if isinstance(trailing, dict):
+        values.append(str(trailing.get("ascii_preview", "")))
+    return "\n".join(values)

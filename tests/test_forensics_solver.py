@@ -11,7 +11,7 @@ from forgeflag.domain import Challenge, ChallengeCategory, RunConfig, ToolResult
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.solvers import ForensicsSolver
-from tests.png_fixtures import png_with_wrong_declared_height
+from tests.png_fixtures import png_with_text_and_trailing_data, png_with_wrong_declared_height
 
 
 @unittest.skipUnless(shutil.which("file") and shutil.which("strings"), "file and strings commands are required")
@@ -137,6 +137,46 @@ class ForensicsSolverTest(unittest.TestCase):
             self.assertEqual(png_evidence["derived_height"], 3)
             self.assertFalse(png_evidence["ihdr_crc_ok"])
             self.assertTrue(Path(png_evidence["repaired_path"]).is_file())
+
+    def test_forensics_solver_records_image_stego_hints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "hint.png"
+            attachment.write_bytes(png_with_text_and_trailing_data("look deeper", trailing=b"hidden-tail"))
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="stego-forensics",
+                    category=ChallengeCategory.FORENSICS,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.forensics.ctf.file_identify",
+                    return_value=ToolResult(tool="file", target=None, status="success", raw={"stdout": "PNG image data"}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.strings_extract",
+                    return_value=ToolResult(tool="strings", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.binwalk_scan",
+                    return_value=ToolResult(tool="binwalk", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.exiftool_read",
+                    return_value=ToolResult(tool="exiftool", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                Manager(notebook, RunConfig(), solvers=[ForensicsSolver()]).run_challenge("stego-forensics")
+                finding = next(
+                    f for f in notebook.findings_for("stego-forensics") if f.finding == "Triaged forensic attachment"
+                )
+
+        self.assertEqual(finding.evidence["image_stego"]["format"], "png")
+        self.assertEqual(finding.evidence["image_stego"]["trailing_data"]["length"], len(b"hidden-tail"))
 
     def test_forensics_solver_records_archive_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

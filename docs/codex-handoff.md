@@ -64,8 +64,9 @@ Implemented so far:
   - local attachment triage with `file`, `strings`, `binwalk`, and `exiftool`
 - Reusable image puzzle analysis:
   - PNG IHDR height/CRC mismatch detection with repaired PNG artifact output
+  - PNG text chunk, IEND trailing-data, JPEG comment, and JPEG APP marker summaries for stego-style hints
   - `ForensicsSolver` uses it after local artifact triage
-  - `MiscSolver` uses it directly for misc image puzzles before broader puzzle triage
+  - `MiscSolver` uses it directly for misc image puzzles before broader puzzle triage and submits image-derived flag candidates to the verifier
 - Archive triage:
   - `forgeflag.archive_analysis.analyze_archive`
   - supports zip, tar, and gzip structure summaries
@@ -125,7 +126,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 98 tests OK
+- Tests passed: 102 tests OK
 
 Useful commands:
 

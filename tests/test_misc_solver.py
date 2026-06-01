@@ -8,7 +8,7 @@ from pathlib import Path
 from forgeflag.domain import Challenge, ChallengeCategory, RunConfig
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
-from tests.png_fixtures import png_with_wrong_declared_height
+from tests.png_fixtures import png_with_text_and_trailing_data, png_with_wrong_declared_height
 
 
 class MiscSolverTest(unittest.TestCase):
@@ -34,6 +34,29 @@ class MiscSolverTest(unittest.TestCase):
             self.assertEqual(finding.evidence["png_ihdr"]["declared_height"], 9)
             self.assertEqual(finding.evidence["png_ihdr"]["derived_height"], 3)
             self.assertTrue(Path(finding.evidence["png_ihdr"]["repaired_path"]).is_file())
+
+    def test_misc_solver_records_image_stego_hints_and_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "hint.png"
+            attachment.write_bytes(png_with_text_and_trailing_data("flag{png_text_chunk}"))
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="png-stego-misc",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("png-stego-misc")
+            finding = next(f for f in notebook.findings_for("png-stego-misc") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{png_text_chunk}"])
+        self.assertEqual(finding.finding, "Analyzed misc image artifact")
+        self.assertIn("image_stego", finding.evidence)
+        self.assertEqual(finding.evidence["image_stego"]["text_chunks"][0]["keyword"], "Comment")
 
     def test_misc_solver_decodes_flag_from_text_attachment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

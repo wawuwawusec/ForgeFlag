@@ -39,7 +39,7 @@ GitHub API star queries can be rate-limited in unauthenticated local runs, so th
 
 - Pwn/reverse: pwntools, pwndbg, GEF, ROPgadget, Ropper, Ghidra, radare2, Rizin, angr.
 - Crypto/misc: CyberChef, RsaCtfTool, Z3, SageMath, hashcat, John the Ripper. ForgeFlag fingerprints common hashes and exposes bounded dictionary wrappers, but does not automatically start cracking.
-- Forensics/misc: Binwalk, ExifTool, Volatility 3, Didier Stevens Suite.
+- Forensics/misc: Binwalk, ExifTool, Volatility 3, Didier Stevens Suite. ForgeFlag now does lightweight PNG/JPEG stego hint triage before heavier carving or channel tools.
 - Archive/puzzle triage: Python stdlib archive parsers first, then optional 7z/binwalk/carving wrappers when structure evidence justifies extraction.
 - Traffic: Wireshark/tshark, Scapy.
 - Web/infra: sqlmap, ffuf, nuclei, CTFd.
@@ -64,6 +64,7 @@ Build commands and invocation boundaries are documented in `docs/tool-containers
 - Prefer category-specific solvers that extract concise findings over dumping raw tool output.
 - Inspect archive structure before extraction; do not unpack untrusted archives into the project root.
 - Treat password cracking as an explicit operator action with a chosen wordlist, hash mode, and bounded runtime.
+- Prefer bounded metadata and structure summaries for image puzzles before invoking heavier stego tools.
 
 ## References
 

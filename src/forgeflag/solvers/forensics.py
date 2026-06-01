@@ -6,7 +6,7 @@ from typing import Any
 from forgeflag.archive_analysis import analyze_archive
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
-from forgeflag.image import analyze_png_ihdr
+from forgeflag.image import analyze_image_stego_hints, analyze_png_ihdr
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
 
@@ -79,9 +79,10 @@ class ForensicsSolver:
             str(result.raw.get("stdout", "")) + "\n" + str(result.raw.get("stderr", ""))
             for _, result in labeled_results
         )
-        flags = extract_flags(combined_output)
-        flag_candidates.extend(flags)
         png_ihdr = analyze_png_ihdr(Path(resolved))
+        image_stego = analyze_image_stego_hints(Path(resolved))
+        flags = tuple(dict.fromkeys((*extract_flags(combined_output), *extract_flags(_image_text(image_stego)))))
+        flag_candidates.extend(flags)
         archive = analyze_archive(resolved)
 
         finding = Finding(
@@ -97,11 +98,19 @@ class ForensicsSolver:
                 "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
                 "flag_candidates": list(flags),
                 **({"png_ihdr": png_ihdr} if png_ihdr else {}),
+                **({"image_stego": image_stego} if image_stego else {}),
                 **({"archive": archive} if archive else {}),
             },
-            hypothesis=_forensics_hypothesis(flags, labeled_results[0][1].status, labeled_results[1][1].status, png_ihdr, archive),
+            hypothesis=_forensics_hypothesis(
+                flags,
+                labeled_results[0][1].status,
+                labeled_results[1][1].status,
+                png_ihdr,
+                archive,
+                image_stego,
+            ),
             confidence=0.78 if flags else 0.58,
-            next_action=_next_action(flags, png_ihdr, archive),
+            next_action=_next_action(flags, png_ihdr, archive, image_stego),
         )
         context.notebook.add_finding(finding)
         return finding
@@ -122,6 +131,7 @@ def _forensics_hypothesis(
     strings_status: str,
     png_ihdr: dict[str, Any] | None = None,
     archive: dict[str, Any] | None = None,
+    image_stego: dict[str, Any] | None = None,
 ) -> str:
     if flags:
         return "Printable artifact content contains a flag-like token that should be verified."
@@ -129,6 +139,8 @@ def _forensics_hypothesis(
         return "PNG IHDR height appears inconsistent with IDAT scanline data; the repaired artifact is likely the next image to inspect."
     if archive:
         return "Archive structure was detected; interesting entry names should guide extraction and password-hint checks."
+    if image_stego:
+        return "Image metadata or structure contains stego-style hints that should be inspected before heavier extraction."
     if file_status == "success" and strings_status == "success":
         return "The artifact is readable; metadata or embedded payload analysis is the next likely path."
     return "Initial triage ran, but one or more local tools could not inspect the artifact."
@@ -138,6 +150,7 @@ def _next_action(
     flags: tuple[str, ...],
     png_ihdr: dict[str, Any] | None = None,
     archive: dict[str, Any] | None = None,
+    image_stego: dict[str, Any] | None = None,
 ) -> str:
     if flags:
         return "Send candidates to Verifier and preserve the attachment path as reproduction evidence."
@@ -147,4 +160,22 @@ def _next_action(
         if archive.get("encrypted"):
             return "Collect password hints before attempting archive extraction."
         return "Inspect interesting archive entries and extract only into a managed artifact workspace."
+    if image_stego:
+        return "Review image text chunks, comments, and trailing bytes before trying channel or low-bit-plane stego tools."
     return "Inspect tool output for embedded archives, metadata hints, or alternate encodings."
+
+
+def _image_text(image_stego: dict[str, Any] | None) -> str:
+    if not image_stego:
+        return ""
+    values: list[str] = []
+    for item in image_stego.get("text_chunks", []):
+        if isinstance(item, dict):
+            values.append(str(item.get("text_preview", "")))
+    for item in image_stego.get("comments", []):
+        if isinstance(item, dict):
+            values.append(str(item.get("text_preview", "")))
+    trailing = image_stego.get("trailing_data")
+    if isinstance(trailing, dict):
+        values.append(str(trailing.get("ascii_preview", "")))
+    return "\n".join(values)
