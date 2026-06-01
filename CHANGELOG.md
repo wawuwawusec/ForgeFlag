@@ -34,3 +34,4 @@
 - Added `ROPgadget` and `ropper` typed wrappers plus local binary evidence summaries in PwnSolver and ReverseSolver.
 - Added DNS summary extraction and TCP stream shortlisting for TrafficSolver.
 - Added scoped `ffuf` route discovery behind active-probe and allowlist controls, integrated into WebSolver and MCP.
+- Split the CTF Dockerfile into core and heavyweight targets for Volatility, SageMath, and Ghidra headless, with documented read-only adapter boundaries.

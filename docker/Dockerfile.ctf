@@ -1,4 +1,4 @@
-FROM kalilinux/kali-rolling
+FROM kalilinux/kali-rolling AS forgeflag-core
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -47,11 +47,38 @@ RUN apt-get update \
         pycryptodome \
         ropper \
         z3-solver \
-        volatility3 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/opt/forgeflag-venv/bin:${PATH}"
 WORKDIR /workspace
+
+
+FROM forgeflag-core AS forgeflag-volatility
+
+RUN /opt/forgeflag-venv/bin/pip install --no-cache-dir volatility3
+
+
+FROM forgeflag-core AS forgeflag-sagemath
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends sagemath \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+
+FROM forgeflag-core AS forgeflag-ghidra-headless
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ghidra \
+        openjdk-17-jre-headless \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV GHIDRA_HEADLESS=/usr/bin/analyzeHeadless
+
+
+FROM forgeflag-core AS forgeflag-default
 
 CMD ["/bin/bash"]

@@ -115,10 +115,10 @@ Expose them in catalog and docs, but do not auto-run until safety UX is explicit
 - Modify: `docs/mcp.md`
 - Modify: `docs/tooling-research.md`
 
-- [ ] **Step 1: Add Docker profiles for SageMath/Volatility/Ghidra-headless**
+- [x] **Step 1: Add Docker profiles for SageMath/Volatility/Ghidra-headless**
 
 Keep these out of the base venv. Document invocation boundaries and artifacts.
 
-- [ ] **Step 2: Add read-only external adapter pattern**
+- [x] **Step 2: Add read-only external adapter pattern**
 
 Use the current IDA MCP adapter as the template for Ghidra/headless export adapters.

@@ -44,6 +44,16 @@ GitHub API star queries can be rate-limited in unauthenticated local runs, so th
 - Web/infra: sqlmap, ffuf, nuclei, CTFd.
 - Reference collection: zardus/ctf-tools.
 
+## Heavyweight Tool Policy
+
+SageMath, Volatility, and Ghidra/headless are intentionally treated as Docker profile tools instead of local venv dependencies:
+
+- `forgeflag-volatility`: memory dump analysis and forensic plugins.
+- `forgeflag-sagemath`: math-heavy crypto solving.
+- `forgeflag-ghidra-headless`: scripted reverse-engineering exports.
+
+Build commands and invocation boundaries are documented in `docs/tool-containers.md`. Future adapters for these tools should mirror the IDA MCP approach: disabled by default, read-only by default, registered-attachment input only, typed operation surface, and structured evidence output.
+
 ## Design Choices Adopted
 
 - Package heavyweight security tools in Docker instead of assuming they exist on every host.

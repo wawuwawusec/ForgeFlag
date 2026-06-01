@@ -42,3 +42,15 @@ Current MCP tools:
 - `ffuf_route_discovery`
 
 Network-capable tools refuse to run unless the target host is listed in `FORGEFLAG_ALLOWED_HOSTS`.
+
+## External Analysis Adapters
+
+Binary-analysis integrations should follow the same boundary as the current IDA MCP adapter:
+
+- disabled unless explicitly configured
+- read-only by default
+- operate on registered attachment paths only
+- expose small typed operations instead of arbitrary shell execution
+- return structured evidence that solvers can store in the notebook
+
+Use this pattern for future Ghidra/headless adapters. Heavyweight tools should run from the Docker targets documented in `docs/tool-containers.md` rather than being installed into the local ForgeFlag venv.

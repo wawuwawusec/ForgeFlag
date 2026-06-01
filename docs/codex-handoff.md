@@ -84,6 +84,11 @@ Implemented so far:
   - run, auto-loaded findings, observations, replay report, tools, and catalog views
 - CTF Dockerfile:
   - `docker/Dockerfile.ctf`
+  - default `forgeflag-core` / `forgeflag-default` image keeps heavyweight tools out of the base venv
+  - explicit Docker targets: `forgeflag-volatility`, `forgeflag-sagemath`, `forgeflag-ghidra-headless`
+- Tool container guidance:
+  - `docs/tool-containers.md`
+  - future heavy external adapters should follow the IDA MCP pattern: disabled by default, read-only by default, registered attachments only, typed operations only
 - Project skill template:
   - `skills/forgeflag-ctf-tools/SKILL.md`
 
@@ -107,7 +112,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 78 tests OK
+- Tests passed: 81 tests OK
 
 Useful commands:
 
