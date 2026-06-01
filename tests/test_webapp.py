@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import tempfile
 import unittest
@@ -35,6 +36,33 @@ class WebAppApiTest(unittest.TestCase):
             self.assertEqual(len(challenge.attachment_paths), 1)
             self.assertEqual(Path(challenge.attachment_paths[0]).read_text(encoding="utf-8"), "flag{web_ui_upload}\n")
 
+    def test_artifacts_endpoint_returns_registered_attachment_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            content = b"web artifact bytes"
+            handler_cls = create_handler(db)
+            handler_cls.handle_create_challenge(
+                {
+                    "challenge_id": "webui-artifacts",
+                    "category": "misc",
+                    "attachments": [
+                        {
+                            "name": "sample.bin",
+                            "content_base64": base64.b64encode(content).decode("ascii"),
+                        }
+                    ],
+                }
+            )
+
+            payload = handler_cls.handle_artifacts("webui-artifacts")
+
+        self.assertEqual(payload["challenge_id"], "webui-artifacts")
+        self.assertEqual(payload["artifacts"][0]["name"], "sample.bin")
+        self.assertTrue(payload["artifacts"][0]["exists"])
+        self.assertEqual(payload["artifacts"][0]["size_bytes"], len(content))
+        self.assertEqual(payload["artifacts"][0]["sha256"], hashlib.sha256(content).hexdigest())
+
     def test_run_challenge_payload_returns_summary_with_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -67,6 +95,7 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("分类工作台", html)
         self.assertIn("categoryCounts", html)
         self.assertIn('data-tab="catalog"', html)
+        self.assertIn('data-tab="artifacts"', html)
 
     def test_project_catalog_endpoint_lists_recommended_projects(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))

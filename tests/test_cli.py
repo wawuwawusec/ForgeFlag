@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import tempfile
 import unittest
@@ -66,6 +67,62 @@ class CliTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         payload = json.loads(output.getvalue())
         self.assertEqual(payload["flags"][0]["flag"], "flag{reported}")
+
+    def test_artifacts_command_lists_registered_attachment_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "evidence.bin"
+            data = b"artifact bytes"
+            source.write_bytes(data)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            with redirect_stdout(io.StringIO()):
+                main(
+                    [
+                        "--db",
+                        str(db),
+                        "add-challenge",
+                        "artifact-cli",
+                        "--category",
+                        "misc",
+                        "--attachment",
+                        str(source),
+                    ]
+                )
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                exit_code = main(["--db", str(db), "artifacts", "artifact-cli"])
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["challenge_id"], "artifact-cli")
+        self.assertEqual(payload["artifacts"][0]["name"], "evidence.bin")
+        self.assertTrue(payload["artifacts"][0]["exists"])
+        self.assertEqual(payload["artifacts"][0]["size_bytes"], len(data))
+        self.assertEqual(payload["artifacts"][0]["sha256"], hashlib.sha256(data).hexdigest())
+
+    def test_artifacts_command_reports_missing_registered_attachment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            missing = root / "missing.bin"
+            SQLiteNotebook(db).add_challenge(
+                Challenge(
+                    challenge_id="missing-artifact",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(missing),),
+                )
+            )
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                exit_code = main(["--db", str(db), "artifacts", "missing-artifact"])
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertFalse(payload["artifacts"][0]["exists"])
+        self.assertIsNone(payload["artifacts"][0]["size_bytes"])
+        self.assertIsNone(payload["artifacts"][0]["sha256"])
 
     def test_run_command_passes_llm_options_to_manager_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

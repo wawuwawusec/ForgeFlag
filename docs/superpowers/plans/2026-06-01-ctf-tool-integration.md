@@ -203,3 +203,21 @@ Detect PNG text chunks, PNG data appended after IEND, JPEG comment segments, and
 - [x] **Step 2: Integrate image hints into solvers**
 
 ForensicsSolver stores image hint evidence alongside file/strings/binwalk/exiftool output. MiscSolver routes image puzzles through this evidence before generic transforms and submits image-derived flag candidates to the verifier.
+
+### Phase 10: Artifact Visibility
+
+**Files:**
+- Modify: `src/forgeflag/artifacts.py`
+- Modify: `src/forgeflag/cli.py`
+- Modify: `src/forgeflag/webapp.py`
+- Test: `tests/test_artifacts.py`
+- Test: `tests/test_cli.py`
+- Test: `tests/test_webapp.py`
+
+- [x] **Step 1: Add artifact metadata summaries**
+
+Summarize registered attachment paths with name, managed path, existence, size, and SHA256. Missing registered paths stay visible with null metadata.
+
+- [x] **Step 2: Expose summaries in CLI and Web UI**
+
+Add `forgeflag artifacts <challenge_id>` and a Web UI Artifacts tab so operators can confirm uploaded/registered files before running solvers.

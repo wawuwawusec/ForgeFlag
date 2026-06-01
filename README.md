@@ -65,6 +65,7 @@ For local artifact challenges, register attachments when creating the challenge.
 
 ```bash
 forgeflag --db .forgeflag/notebook.sqlite add-challenge forensic-01 --category forensics --attachment ./challenge.zip
+forgeflag --db .forgeflag/notebook.sqlite artifacts forensic-01
 forgeflag --db .forgeflag/notebook.sqlite run forensic-01
 ```
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from forgeflag.artifacts import ArtifactWorkspace
+from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
 from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.llm import build_llm_provider
 from forgeflag.manager import Manager
@@ -62,6 +62,9 @@ def create_handler(db_path: str | Path):
                 return
             if challenge_id and suffix == "report":
                 self._send_json(self.handle_report(challenge_id))
+                return
+            if challenge_id and suffix == "artifacts":
+                self._send_json(self.handle_artifacts(challenge_id))
                 return
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
@@ -184,6 +187,14 @@ def create_handler(db_path: str | Path):
                 }
                 for observation in cls.notebook.observations_for(challenge_id)
             ]
+
+        @classmethod
+        def handle_artifacts(cls, challenge_id: str) -> dict[str, Any]:
+            challenge = cls.notebook.get_challenge(challenge_id)
+            return {
+                "challenge_id": challenge.challenge_id,
+                "artifacts": summarize_artifact_paths(challenge.attachment_paths),
+            }
 
         @classmethod
         def handle_report(cls, challenge_id: str) -> dict[str, Any]:
@@ -420,6 +431,7 @@ INDEX_HTML = r"""<!doctype html>
         <button class="active" data-tab="summary">Summary</button>
         <button data-tab="findings">Findings</button>
         <button data-tab="observations">Observations</button>
+        <button data-tab="artifacts">Artifacts</button>
         <button data-tab="report">Report</button>
         <button data-tab="tools">Tools</button>
         <button data-tab="catalog">Catalog</button>

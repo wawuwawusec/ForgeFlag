@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,31 @@ class ArtifactWorkspace:
             if not numbered.exists():
                 return numbered
             index += 1
+
+
+def summarize_artifact_paths(paths: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for raw_path in paths:
+        path = Path(raw_path).expanduser()
+        exists = path.is_file()
+        summaries.append(
+            {
+                "name": path.name,
+                "path": str(path),
+                "exists": exists,
+                "size_bytes": path.stat().st_size if exists else None,
+                "sha256": _sha256_file(path) if exists else None,
+            }
+        )
+    return summaries
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _safe_name(value: str) -> str:

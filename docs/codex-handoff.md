@@ -60,6 +60,7 @@ Implemented so far:
 - Artifact workspace:
   - CLI attachment registration copies files into `.forgeflag/artifacts/<challenge_id>/`
   - challenge attachment paths persist in SQLite
+  - `forgeflag artifacts <challenge_id>` and the Web UI Artifacts tab report registered attachment existence, size, and SHA256
 - Scoped ForensicsSolver workflow:
   - local attachment triage with `file`, `strings`, `binwalk`, and `exiftool`
 - Reusable image puzzle analysis:
@@ -95,7 +96,7 @@ Implemented so far:
   - category workspace filters for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra queues
   - per-run LLM provider/model/API key controls, browser-local non-secret config saving, optional local key remembering, and `/api/llm/test`
   - entered LLM keys are used for run/test requests and are never stored in SQLite
-  - run, auto-loaded findings, observations, replay report, tools, and catalog views
+  - run, auto-loaded findings, observations, artifact summaries, replay report, tools, and catalog views
 - CTF Dockerfile:
   - `docker/Dockerfile.ctf`
   - default `forgeflag-core` / `forgeflag-default` image keeps heavyweight tools out of the base venv
@@ -126,7 +127,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 102 tests OK
+- Tests passed: 106 tests OK
 
 Useful commands:
 
@@ -144,6 +145,7 @@ scripts/forgeflag-control status
 scripts/forgeflag-control smoke
 scripts/forgeflag-control stop
 .venv/bin/forgeflag --db .forgeflag/notebook.sqlite web --host 127.0.0.1 --port 8080
+.venv/bin/forgeflag --db .forgeflag/notebook.sqlite artifacts <challenge_id>
 .venv/bin/forgeflag observations <challenge_id>
 .venv/bin/forgeflag report <challenge_id>
 ```

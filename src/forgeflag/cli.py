@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from forgeflag.artifacts import ArtifactWorkspace
+from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
 from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
@@ -49,6 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = subparsers.add_parser("report", help="Show the latest replay report for one challenge")
     report.add_argument("challenge_id")
+
+    artifacts = subparsers.add_parser("artifacts", help="List registered artifacts for one challenge")
+    artifacts.add_argument("challenge_id")
 
     subparsers.add_parser("tools", help="List configured CTF tool wrappers and local availability")
     catalog = subparsers.add_parser("catalog", help="List recommended CTF projects and integration candidates")
@@ -158,6 +161,20 @@ def main(argv: list[str] | None = None) -> int:
         summary = notebook.latest_run_summary(args.challenge_id)
         replay_report = (summary or {}).get("replay_report")
         print(json.dumps(replay_report or {}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "artifacts":
+        challenge = notebook.get_challenge(args.challenge_id)
+        print(
+            json.dumps(
+                {
+                    "challenge_id": challenge.challenge_id,
+                    "artifacts": summarize_artifact_paths(challenge.attachment_paths),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
     if args.command == "tools":
