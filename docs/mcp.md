@@ -29,6 +29,7 @@ Current MCP tools:
 - `checksec_binary`
 - `ropgadget_scan`
 - `ropper_scan`
+- `rsactftool_attack`
 - `binwalk_scan`
 - `exiftool_read`
 - `tshark_pcap_summary`

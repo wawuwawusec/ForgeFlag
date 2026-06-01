@@ -73,6 +73,13 @@ if FastMCP is not None:
         return _result_payload(ctf.ropper_scan(ctf.ensure_existing_file(path), search, _scope_from_env()))
 
     @mcp.tool()
+    def rsactftool_attack(public_key_path: str, cipher_path: str | None = None) -> dict[str, Any]:
+        """Run RsaCtfTool against a local RSA public key and optional ciphertext artifact."""
+        public_key = ctf.ensure_existing_file(public_key_path)
+        cipher = ctf.ensure_existing_file(cipher_path) if cipher_path else None
+        return _result_payload(ctf.rsactftool_attack(public_key, cipher, _scope_from_env()))
+
+    @mcp.tool()
     def binwalk_scan(path: str) -> dict[str, Any]:
         """Scan a local artifact for embedded files and signatures."""
         return _result_payload(ctf.binwalk_scan(ctf.ensure_existing_file(path), _scope_from_env()))

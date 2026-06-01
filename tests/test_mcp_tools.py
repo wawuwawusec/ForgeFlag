@@ -67,6 +67,20 @@ class McpToolTest(unittest.TestCase):
         self.assertEqual(payload["status"], "missing")
         self.assertEqual(payload["evidence"], ["not installed"])
 
+    def test_rsactftool_attack_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            public_key = Path(tmp) / "pub.pem"
+            public_key.write_text("public key", encoding="utf-8")
+            with patch(
+                "forgeflag.mcp_server.ctf.rsactftool_attack",
+                return_value=ToolResult(tool="RsaCtfTool", target=None, status="missing", evidence=["not installed"]),
+            ):
+                payload = mcp_server.rsactftool_attack(str(public_key))
+
+        self.assertEqual(payload["tool"], "RsaCtfTool")
+        self.assertEqual(payload["status"], "missing")
+        self.assertEqual(payload["evidence"], ["not installed"])
+
     def test_ffuf_route_discovery_mcp_tool_returns_structured_payload(self) -> None:
         with patch(
             "forgeflag.mcp_server.ctf.ffuf_route_discovery",

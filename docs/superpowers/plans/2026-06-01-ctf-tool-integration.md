@@ -122,3 +122,21 @@ Keep these out of the base venv. Document invocation boundaries and artifacts.
 - [x] **Step 2: Add read-only external adapter pattern**
 
 Use the current IDA MCP adapter as the template for Ghidra/headless export adapters.
+
+### Phase 6: Crypto RSA Triage
+
+**Files:**
+- Create: `src/forgeflag/crypto_analysis.py`
+- Modify: `src/forgeflag/solvers/crypto.py`
+- Modify: `src/forgeflag/tools/ctf.py`
+- Test: `tests/test_crypto_analysis.py`
+- Test: `tests/test_crypto_solver.py`
+- Test: `tests/test_tools.py`
+
+- [x] **Step 1: Add RSA parameter summary extraction**
+
+Extract common RSA fields from challenge text and attachments: `n`, `e`, `c`, `p`, `q`, `d`, and `phi`. Detect PEM public/private key markers and emit hints such as `low_exponent`, `known_factors`, and `rsa_n_e_c`.
+
+- [x] **Step 2: Add RsaCtfTool wrapper and solver evidence**
+
+Add a typed `RsaCtfTool` wrapper that accepts a registered public key and optional ciphertext artifact. CryptoSolver records RSA evidence and recommends RsaCtfTool/SageMath/Z3 follow-up without running heavyweight tools by default.

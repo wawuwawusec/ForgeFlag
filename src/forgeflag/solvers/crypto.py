@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from forgeflag.crypto_analysis import rsa_summary_from_text
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.solvers.base import SolverContext
@@ -14,7 +15,8 @@ class CryptoSolver:
     supported_categories = {ChallengeCategory.CRYPTO}
 
     def solve(self, context: SolverContext) -> SolverResult:
-        candidates = transform_candidates("\n".join(_text_inputs(context)))
+        text = "\n".join(_text_inputs(context))
+        candidates = transform_candidates(text)
         flags = extract_flags("\n".join(candidate.value for candidate in candidates))
         if candidates:
             finding = Finding(
@@ -34,6 +36,20 @@ class CryptoSolver:
                 (finding,),
                 flags,
             )
+
+        rsa_summary = rsa_summary_from_text(text)
+        if rsa_summary["parameters"] or rsa_summary["has_public_key"] or rsa_summary["has_private_key"]:
+            finding = Finding(
+                challenge_id=context.challenge.challenge_id,
+                solver=self.name,
+                finding="Analyzed RSA challenge parameters",
+                evidence={"rsa": rsa_summary},
+                hypothesis=_rsa_hypothesis(rsa_summary),
+                confidence=0.66,
+                next_action=_rsa_next_action(rsa_summary),
+            )
+            context.notebook.add_finding(finding)
+            return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
 
         finding = Finding(
             challenge_id=context.challenge.challenge_id,
@@ -78,3 +94,21 @@ def _transform_next_action(flags: tuple[str, ...]) -> str:
     if flags:
         return "Send decoded candidates to Verifier and preserve the transform recipe."
     return "Inspect transform candidates for keys, parameters, or secondary encodings."
+
+
+def _rsa_hypothesis(summary: dict[str, object]) -> str:
+    hints = summary.get("hints", [])
+    if "known_factors" in hints:
+        return "RSA parameters include factors; private key recovery should be direct."
+    if "low_exponent" in hints:
+        return "RSA parameters include a low public exponent; small-message or broadcast style checks may apply."
+    if summary.get("has_public_key"):
+        return "RSA public key material is present and should be sent to a dedicated RSA CTF tool."
+    return "RSA-like parameters were extracted and should guide a reproducible crypto solve path."
+
+
+def _rsa_next_action(summary: dict[str, object]) -> str:
+    tools = summary.get("recommended_tools", [])
+    if "RsaCtfTool" in tools:
+        return "Run RsaCtfTool or build a SageMath solve script from the extracted parameters."
+    return "Normalize parameters and identify the matching RSA weakness before attempting decryption."

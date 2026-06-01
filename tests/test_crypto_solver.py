@@ -29,6 +29,25 @@ class CryptoSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Decoded crypto transform candidates")
         self.assertIn("hex_decode", finding.evidence["transform_candidates"][0]["recipe"])
 
+    def test_crypto_solver_records_rsa_parameter_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-rsa",
+                    category=ChallengeCategory.CRYPTO,
+                    description="RSA task:\nn = 3233\ne = 3\nc = 2790\n",
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-rsa")
+            finding = next(f for f in notebook.findings_for("crypto-rsa") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(finding.finding, "Analyzed RSA challenge parameters")
+        self.assertEqual(finding.evidence["rsa"]["parameters"]["e"], "3")
+        self.assertIn("RsaCtfTool", finding.evidence["rsa"]["recommended_tools"])
+
 
 if __name__ == "__main__":
     unittest.main()

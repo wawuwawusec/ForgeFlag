@@ -13,6 +13,7 @@ from forgeflag.tools.ctf import (
     ffuf_route_discovery,
     ropgadget_scan,
     ropper_scan,
+    rsactftool_attack,
     strings_extract,
     tshark_flag_scan,
     tshark_dns_summary,
@@ -222,6 +223,22 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertIn("-rate", args)
         self.assertEqual(call.kwargs["target"], "http://127.0.0.1:8080/")
         self.assertEqual(call.kwargs["timeout_seconds"], 15)
+
+    def test_rsactftool_attack_uses_public_key_and_ciphertext_paths(self) -> None:
+        expected = ToolResult(tool="RsaCtfTool", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = rsactftool_attack("/tmp/pub.pem", cipher_path="/tmp/cipher.bin")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "RsaCtfTool",
+            ["--publickey", "/tmp/pub.pem", "--uncipherfile", "/tmp/cipher.bin"],
+            timeout_seconds=30,
+        )
 
 
 if __name__ == "__main__":

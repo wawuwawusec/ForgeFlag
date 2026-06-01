@@ -28,6 +28,7 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
     "checksec": ToolSpec("checksec", ("checksec",), "pwn", "Inspect ELF binary hardening flags."),
     "ROPgadget": ToolSpec("ROPgadget", ("ROPgadget",), "pwn", "Search ROP/JOP gadgets in a binary."),
     "ropper": ToolSpec("ropper", ("ropper",), "pwn", "Search gadgets and ROP chain helpers in a binary."),
+    "RsaCtfTool": ToolSpec("RsaCtfTool", ("RsaCtfTool",), "crypto", "Run RSA CTF attack heuristics."),
     "binwalk": ToolSpec("binwalk", ("binwalk",), "forensics", "Scan firmware and embedded file signatures."),
     "exiftool": ToolSpec("exiftool", ("exiftool",), "forensics", "Read metadata from images and documents."),
     "tshark": ToolSpec("tshark", ("tshark",), "forensics", "Summarize packet capture contents."),

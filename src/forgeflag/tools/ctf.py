@@ -38,6 +38,18 @@ def ropper_scan(path: str, search: str = "pop rdi; ret", scope: ScopePolicy | No
     return runner.run("ropper", ["--file", path, "--search", search, "--nocolor"])
 
 
+def rsactftool_attack(
+    public_key_path: str,
+    cipher_path: str | None = None,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    args = ["--publickey", public_key_path]
+    if cipher_path:
+        args.extend(["--uncipherfile", cipher_path])
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("RsaCtfTool", args, timeout_seconds=30)
+
+
 def binwalk_scan(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     runner = ToolRunner(scope or ScopePolicy())
     return runner.run("binwalk", [path])
