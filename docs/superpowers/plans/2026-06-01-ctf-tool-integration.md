@@ -69,11 +69,11 @@ Replace local URL/HTML decode helpers with shared transform candidates for HTTP 
 - Test: `tests/test_pwn_solver.py`
 - Test: `tests/test_reverse_solver.py`
 
-- [ ] **Step 1: Add ROPgadget and ropper typed wrappers**
+- [x] **Step 1: Add ROPgadget and ropper typed wrappers**
 
 Add wrappers only if local executables exist. Keep missing-tool behavior structured through `ToolRunner`.
 
-- [ ] **Step 2: Add pwn/reverse evidence summaries**
+- [x] **Step 2: Add pwn/reverse evidence summaries**
 
 Record checksec, strings, gadget availability, and IDA MCP output in a compact finding.
 

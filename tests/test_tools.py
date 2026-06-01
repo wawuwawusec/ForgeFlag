@@ -10,6 +10,8 @@ from forgeflag.domain import ToolResult
 from forgeflag.safety import ScopePolicy
 from forgeflag.tools.ctf import (
     file_identify,
+    ropgadget_scan,
+    ropper_scan,
     strings_extract,
     tshark_flag_scan,
     tshark_http_artifact_scan,
@@ -126,6 +128,33 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertIn('http.file_data contains "f1ag"', display_filter)
         self.assertIn('http.file_data contains "&#102;"', display_filter)
         self.assertIn("http.file_data", args)
+
+    def test_ropgadget_scan_uses_binary_argument_and_depth_limit(self) -> None:
+        expected = ToolResult(tool="ROPgadget", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = ropgadget_scan("/tmp/pwn")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with("ROPgadget", ["--binary", "/tmp/pwn", "--depth", "5"])
+
+    def test_ropper_scan_uses_file_argument_and_search_budget(self) -> None:
+        expected = ToolResult(tool="ropper", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = ropper_scan("/tmp/pwn", search="pop rdi; ret")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "ropper",
+            ["--file", "/tmp/pwn", "--search", "pop rdi; ret", "--nocolor"],
+        )
 
 
 if __name__ == "__main__":

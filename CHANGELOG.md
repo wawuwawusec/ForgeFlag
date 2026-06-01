@@ -31,3 +31,4 @@
 - Added optional read-only IDA MCP configuration and adapter hooks for `ReverseSolver` and `PwnSolver`.
 - Added a curated CTF project catalog available from `forgeflag catalog`, `/api/project-catalog`, and the Web UI Catalog tab.
 - Added a CyberChef-style transform pipeline for hex, Base64, URL decoding, and HTML entity decoding, then integrated it into CryptoSolver, MiscSolver, and TrafficSolver.
+- Added `ROPgadget` and `ropper` typed wrappers plus local binary evidence summaries in PwnSolver and ReverseSolver.

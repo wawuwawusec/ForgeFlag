@@ -63,6 +63,16 @@ if FastMCP is not None:
         return _result_payload(ctf.checksec_binary(ctf.ensure_existing_file(path), _scope_from_env()))
 
     @mcp.tool()
+    def ropgadget_scan(path: str, depth: int = 5) -> dict[str, Any]:
+        """Search ROP/JOP gadgets in a local binary challenge artifact."""
+        return _result_payload(ctf.ropgadget_scan(ctf.ensure_existing_file(path), depth, _scope_from_env()))
+
+    @mcp.tool()
+    def ropper_scan(path: str, search: str = "pop rdi; ret") -> dict[str, Any]:
+        """Search gadgets in a local binary challenge artifact with ropper."""
+        return _result_payload(ctf.ropper_scan(ctf.ensure_existing_file(path), search, _scope_from_env()))
+
+    @mcp.tool()
     def binwalk_scan(path: str) -> dict[str, Any]:
         """Scan a local artifact for embedded files and signatures."""
         return _result_payload(ctf.binwalk_scan(ctf.ensure_existing_file(path), _scope_from_env()))

@@ -39,6 +39,20 @@ class McpToolTest(unittest.TestCase):
         self.assertEqual(payload["status"], "success")
         self.assertEqual(payload["evidence"], ["http clue"])
 
+    def test_ropgadget_scan_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "pwn"
+            binary.write_bytes(b"fake")
+            with patch(
+                "forgeflag.mcp_server.ctf.ropgadget_scan",
+                return_value=ToolResult(tool="ROPgadget", target=None, status="missing", evidence=["not installed"]),
+            ):
+                payload = mcp_server.ropgadget_scan(str(binary), depth=4)
+
+        self.assertEqual(payload["tool"], "ROPgadget")
+        self.assertEqual(payload["status"], "missing")
+        self.assertEqual(payload["evidence"], ["not installed"])
+
 
 if __name__ == "__main__":
     unittest.main()

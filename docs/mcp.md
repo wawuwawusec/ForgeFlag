@@ -27,6 +27,8 @@ Current MCP tools:
 - `file_identify`
 - `strings_extract`
 - `checksec_binary`
+- `ropgadget_scan`
+- `ropper_scan`
 - `binwalk_scan`
 - `exiftool_read`
 - `tshark_pcap_summary`

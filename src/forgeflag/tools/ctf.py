@@ -23,6 +23,18 @@ def checksec_binary(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     return runner.run("checksec", ["--file", path])
 
 
+def ropgadget_scan(path: str, depth: int = 5, scope: ScopePolicy | None = None) -> ToolResult:
+    depth = max(1, min(depth, 20))
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("ROPgadget", ["--binary", path, "--depth", str(depth)])
+
+
+def ropper_scan(path: str, search: str = "pop rdi; ret", scope: ScopePolicy | None = None) -> ToolResult:
+    search = _tool_search_literal(search)
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("ropper", ["--file", path, "--search", search, "--nocolor"])
+
+
 def binwalk_scan(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     runner = ToolRunner(scope or ScopePolicy())
     return runner.run("binwalk", [path])
@@ -139,3 +151,8 @@ def ensure_existing_file(path: str) -> str:
 def _tshark_contains_literal(value: str) -> str:
     cleaned = "".join(char for char in value if char.isprintable() and char not in {'"', "\\"})
     return cleaned[:64] or "flag{"
+
+
+def _tool_search_literal(value: str) -> str:
+    cleaned = "".join(char for char in value if char.isprintable() and char not in {"\x00", "\n", "\r"})
+    return cleaned[:80] or "pop rdi; ret"

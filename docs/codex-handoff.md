@@ -32,6 +32,10 @@ Implemented so far:
   - `IDAMCPConfig` reads `FORGEFLAG_IDA_MCP_ENABLED`, `FORGEFLAG_IDA_MCP_COMMAND`, `FORGEFLAG_IDA_MCP_READ_ONLY`, and `FORGEFLAG_IDA_MCP_TIMEOUT_SECONDS`
   - `ReverseSolver` and `PwnSolver` call the adapter only for registered binary attachments
   - default config is disabled and keeps existing placeholder behavior
+- Local pwn/reverse binary triage:
+  - PwnSolver runs `file`, `strings`, `checksec`, `ROPgadget`, and `ropper` against registered attachments when IDA MCP is disabled
+  - ReverseSolver runs `file`, `strings`, `ROPgadget`, and `ropper` against registered attachments when IDA MCP is disabled
+  - missing gadget tools are recorded as structured `missing` tool results, not fatal errors
 - Harness loop controls.
 - Solver interface and starter solvers for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra.
 - CyberChef-style transform pipeline:
@@ -60,7 +64,7 @@ Implemented so far:
   - flag candidate extraction from packet capture output
 - CTF tool layer:
   - allowlisted `ToolRunner`
-  - wrappers for `file`, `strings`, `checksec`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `nmap_tcp_basic`
+  - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `nmap_tcp_basic`
   - `forgeflag tools` CLI inventory
 - Curated CTF project catalog:
   - `forgeflag catalog` and `forgeflag catalog --category <category>`
@@ -101,7 +105,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 63 tests OK
+- Tests passed: 68 tests OK
 
 Useful commands:
 
