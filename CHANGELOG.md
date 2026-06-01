@@ -37,3 +37,4 @@
 - Split the CTF Dockerfile into core and heavyweight targets for Volatility, SageMath, and Ghidra headless, with documented read-only adapter boundaries.
 - Added RSA parameter extraction, RsaCtfTool typed wrapper, and CryptoSolver RSA evidence summaries.
 - Added archive structure triage for zip, tar, and gzip artifacts in ForensicsSolver and MiscSolver.
+- Added hash/password triage with hashcat and John dictionary wrapper hooks, without automatic cracking by default.

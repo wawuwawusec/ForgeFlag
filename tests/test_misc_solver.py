@@ -81,6 +81,27 @@ class MiscSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["archive"]["kind"], "zip")
         self.assertIn("secret.txt", finding.evidence["archive"]["interesting_entries"])
 
+    def test_misc_solver_records_hash_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "hash.txt"
+            attachment.write_text("5d41402abc4b2a76b9719d911017c592", encoding="utf-8")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-hash",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-hash")
+            finding = next(f for f in notebook.findings_for("misc-hash") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(finding.finding, "Analyzed misc hash candidates")
+        self.assertEqual(finding.evidence["hashes"]["candidates"][0]["type"], "md5_or_ntlm")
+
 
 if __name__ == "__main__":
     unittest.main()

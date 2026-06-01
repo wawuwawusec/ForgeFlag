@@ -29,6 +29,8 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
     "ROPgadget": ToolSpec("ROPgadget", ("ROPgadget",), "pwn", "Search ROP/JOP gadgets in a binary."),
     "ropper": ToolSpec("ropper", ("ropper",), "pwn", "Search gadgets and ROP chain helpers in a binary."),
     "RsaCtfTool": ToolSpec("RsaCtfTool", ("RsaCtfTool",), "crypto", "Run RSA CTF attack heuristics."),
+    "hashcat": ToolSpec("hashcat", ("hashcat",), "crypto", "Run bounded dictionary hash cracking."),
+    "john": ToolSpec("john", ("john",), "crypto", "Run bounded dictionary password/hash recovery."),
     "binwalk": ToolSpec("binwalk", ("binwalk",), "forensics", "Scan firmware and embedded file signatures."),
     "exiftool": ToolSpec("exiftool", ("exiftool",), "forensics", "Read metadata from images and documents."),
     "tshark": ToolSpec("tshark", ("tshark",), "forensics", "Summarize packet capture contents."),

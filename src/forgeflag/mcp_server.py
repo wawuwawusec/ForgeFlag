@@ -80,6 +80,30 @@ if FastMCP is not None:
         return _result_payload(ctf.rsactftool_attack(public_key, cipher, _scope_from_env()))
 
     @mcp.tool()
+    def hashcat_dictionary_attack(hash_path: str, wordlist_path: str, hash_mode: int) -> dict[str, Any]:
+        """Run a bounded hashcat dictionary attack against a local hash file."""
+        return _result_payload(
+            ctf.hashcat_dictionary_attack(
+                ctf.ensure_existing_file(hash_path),
+                ctf.ensure_existing_file(wordlist_path),
+                hash_mode,
+                _scope_from_env(),
+            )
+        )
+
+    @mcp.tool()
+    def john_dictionary_attack(hash_path: str, wordlist_path: str, hash_format: str | None = None) -> dict[str, Any]:
+        """Run a bounded John the Ripper dictionary attack against a local hash file."""
+        return _result_payload(
+            ctf.john_dictionary_attack(
+                ctf.ensure_existing_file(hash_path),
+                ctf.ensure_existing_file(wordlist_path),
+                hash_format,
+                _scope_from_env(),
+            )
+        )
+
+    @mcp.tool()
     def binwalk_scan(path: str) -> dict[str, Any]:
         """Scan a local artifact for embedded files and signatures."""
         return _result_payload(ctf.binwalk_scan(ctf.ensure_existing_file(path), _scope_from_env()))

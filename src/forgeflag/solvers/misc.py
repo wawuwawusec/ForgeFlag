@@ -5,6 +5,7 @@ from pathlib import Path
 from forgeflag.archive_analysis import analyze_archive
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
+from forgeflag.hash_analysis import hash_summary_from_text
 from forgeflag.image import analyze_png_ihdr
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
@@ -24,7 +25,22 @@ class MiscSolver:
         if archive_findings:
             return SolverResult(self.name, context.challenge.challenge_id, "ok", tuple(archive_findings))
 
-        candidates = transform_candidates("\n".join(_text_inputs(context)))
+        text = "\n".join(_text_inputs(context))
+        hash_summary = hash_summary_from_text(text)
+        if hash_summary["candidates"]:
+            finding = Finding(
+                challenge_id=context.challenge.challenge_id,
+                solver=self.name,
+                finding="Analyzed misc hash candidates",
+                evidence={"hashes": hash_summary},
+                hypothesis="Misc text or attachment content contains hash-like values that should be triaged before generic transforms.",
+                confidence=0.64,
+                next_action="Choose a likely mode, prepare a challenge-scoped wordlist, then run hashcat or John only when requested.",
+            )
+            context.notebook.add_finding(finding)
+            return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
+        candidates = transform_candidates(text)
         flags = extract_flags("\n".join(candidate.value for candidate in candidates))
         if candidates:
             finding = Finding(

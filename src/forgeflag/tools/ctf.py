@@ -50,6 +50,35 @@ def rsactftool_attack(
     return runner.run("RsaCtfTool", args, timeout_seconds=30)
 
 
+def hashcat_dictionary_attack(
+    hash_path: str,
+    wordlist_path: str,
+    hash_mode: int,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    hash_mode = max(0, min(int(hash_mode), 99_999))
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run(
+        "hashcat",
+        ["-m", str(hash_mode), "-a", "0", "--status", "--potfile-disable", hash_path, wordlist_path],
+        timeout_seconds=60,
+    )
+
+
+def john_dictionary_attack(
+    hash_path: str,
+    wordlist_path: str,
+    hash_format: str | None = None,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    args = [f"--wordlist={wordlist_path}"]
+    if hash_format:
+        args.append(f"--format={_tool_search_literal(hash_format)}")
+    args.append(hash_path)
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("john", args, timeout_seconds=60)
+
+
 def binwalk_scan(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     runner = ToolRunner(scope or ScopePolicy())
     return runner.run("binwalk", [path])

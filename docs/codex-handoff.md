@@ -46,6 +46,11 @@ Implemented so far:
   - `forgeflag.crypto_analysis.rsa_summary_from_text`
   - extracts common RSA parameters (`n`, `e`, `c`, `p`, `q`, `d`, `phi`) and PEM key markers
   - `CryptoSolver` records RSA hints and recommends RsaCtfTool/SageMath/Z3 follow-up
+- Hash/password triage:
+  - `forgeflag.hash_analysis.hash_summary_from_text`
+  - fingerprints common MD5/NTLM-length, SHA1, SHA256, bcrypt, and sha512crypt candidates
+  - `CryptoSolver` and `MiscSolver` record likely hash modes before generic transform decoding
+  - hashcat and John wrappers are exposed as typed, bounded dictionary operations but are not run automatically
 - Scoped WebSolver workflow:
   - allowlist-gated HTTP probing
   - HTML title/link/form parsing
@@ -74,7 +79,7 @@ Implemented so far:
   - flag candidate extraction from packet capture output
 - CTF tool layer:
   - allowlisted `ToolRunner`
-  - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `ffuf`, `nmap_tcp_basic`
+  - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `ffuf`, `nmap_tcp_basic`
   - `forgeflag tools` CLI inventory
 - Curated CTF project catalog:
   - `forgeflag catalog` and `forgeflag catalog --category <category>`
@@ -120,7 +125,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 91 tests OK
+- Tests passed: 98 tests OK
 
 Useful commands:
 

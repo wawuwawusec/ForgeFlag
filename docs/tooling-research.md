@@ -38,7 +38,7 @@ GitHub API star queries can be rate-limited in unauthenticated local runs, so th
 ## Current Catalog Focus
 
 - Pwn/reverse: pwntools, pwndbg, GEF, ROPgadget, Ropper, Ghidra, radare2, Rizin, angr.
-- Crypto/misc: CyberChef, RsaCtfTool, Z3, SageMath, hashcat, John the Ripper.
+- Crypto/misc: CyberChef, RsaCtfTool, Z3, SageMath, hashcat, John the Ripper. ForgeFlag fingerprints common hashes and exposes bounded dictionary wrappers, but does not automatically start cracking.
 - Forensics/misc: Binwalk, ExifTool, Volatility 3, Didier Stevens Suite.
 - Archive/puzzle triage: Python stdlib archive parsers first, then optional 7z/binwalk/carving wrappers when structure evidence justifies extraction.
 - Traffic: Wireshark/tshark, Scapy.
@@ -63,6 +63,7 @@ Build commands and invocation boundaries are documented in `docs/tool-containers
 - Return structured `ToolResult` payloads so solvers can record evidence in the shared notebook.
 - Prefer category-specific solvers that extract concise findings over dumping raw tool output.
 - Inspect archive structure before extraction; do not unpack untrusted archives into the project root.
+- Treat password cracking as an explicit operator action with a chosen wordlist, hash mode, and bounded runtime.
 
 ## References
 

@@ -158,3 +158,29 @@ Detect zip, tar, and gzip artifacts without extracting by default. Record entry 
 - [x] **Step 2: Integrate archive summaries into solvers**
 
 ForensicsSolver and MiscSolver store archive evidence and recommend managed extraction or password-hint collection as the next action.
+
+### Phase 8: Hash and Password Triage
+
+**Files:**
+- Create: `src/forgeflag/hash_analysis.py`
+- Modify: `src/forgeflag/solvers/crypto.py`
+- Modify: `src/forgeflag/solvers/misc.py`
+- Modify: `src/forgeflag/tools/ctf.py`
+- Modify: `src/forgeflag/mcp_server.py`
+- Test: `tests/test_hash_analysis.py`
+- Test: `tests/test_crypto_solver.py`
+- Test: `tests/test_misc_solver.py`
+- Test: `tests/test_tools.py`
+- Test: `tests/test_mcp_tools.py`
+
+- [x] **Step 1: Fingerprint common hash candidates**
+
+Detect MD5/NTLM-length, SHA1, SHA256, bcrypt, and sha512crypt values in challenge text and attachments. Record hashcat modes, John formats, confidence, and recommended tools.
+
+- [x] **Step 2: Prioritize hash evidence before generic transforms**
+
+CryptoSolver and MiscSolver record hash evidence before transform decoding so short hex hashes are not misrouted as ordinary encoded strings.
+
+- [x] **Step 3: Add bounded cracking wrappers**
+
+Expose hashcat and John dictionary wrappers through the allowlisted tool catalog and MCP server. Solvers recommend these tools but do not automatically run password cracking.

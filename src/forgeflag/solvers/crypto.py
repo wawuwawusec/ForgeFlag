@@ -5,6 +5,7 @@ from pathlib import Path
 from forgeflag.crypto_analysis import rsa_summary_from_text
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
+from forgeflag.hash_analysis import hash_summary_from_text
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
 from forgeflag.transforms import candidates_to_payload, transform_candidates
@@ -16,6 +17,20 @@ class CryptoSolver:
 
     def solve(self, context: SolverContext) -> SolverResult:
         text = "\n".join(_text_inputs(context))
+        hash_summary = hash_summary_from_text(text)
+        if hash_summary["candidates"]:
+            finding = Finding(
+                challenge_id=context.challenge.challenge_id,
+                solver=self.name,
+                finding="Analyzed hash candidates",
+                evidence={"hashes": hash_summary},
+                hypothesis="Hash-like values were detected; offline dictionary tooling may be appropriate.",
+                confidence=0.68,
+                next_action="Use hashcat/John with an explicit wordlist and bounded runtime; do not start cracking automatically.",
+            )
+            context.notebook.add_finding(finding)
+            return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
         candidates = transform_candidates(text)
         flags = extract_flags("\n".join(candidate.value for candidate in candidates))
         if candidates:

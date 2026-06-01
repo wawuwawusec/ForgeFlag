@@ -11,6 +11,8 @@ from forgeflag.safety import ScopePolicy
 from forgeflag.tools.ctf import (
     file_identify,
     ffuf_route_discovery,
+    hashcat_dictionary_attack,
+    john_dictionary_attack,
     ropgadget_scan,
     ropper_scan,
     rsactftool_attack,
@@ -238,6 +240,38 @@ class ToolRunnerTest(unittest.TestCase):
             "RsaCtfTool",
             ["--publickey", "/tmp/pub.pem", "--uncipherfile", "/tmp/cipher.bin"],
             timeout_seconds=30,
+        )
+
+    def test_hashcat_dictionary_attack_uses_mode_and_wordlist(self) -> None:
+        expected = ToolResult(tool="hashcat", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = hashcat_dictionary_attack("/tmp/hash.txt", "/tmp/words.txt", hash_mode=0)
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "hashcat",
+            ["-m", "0", "-a", "0", "--status", "--potfile-disable", "/tmp/hash.txt", "/tmp/words.txt"],
+            timeout_seconds=60,
+        )
+
+    def test_john_dictionary_attack_uses_wordlist_and_optional_format(self) -> None:
+        expected = ToolResult(tool="john", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = john_dictionary_attack("/tmp/hash.txt", "/tmp/words.txt", hash_format="raw-md5")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "john",
+            ["--wordlist=/tmp/words.txt", "--format=raw-md5", "/tmp/hash.txt"],
+            timeout_seconds=60,
         )
 
 

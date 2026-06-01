@@ -30,6 +30,8 @@ Current MCP tools:
 - `ropgadget_scan`
 - `ropper_scan`
 - `rsactftool_attack`
+- `hashcat_dictionary_attack`
+- `john_dictionary_attack`
 - `binwalk_scan`
 - `exiftool_read`
 - `tshark_pcap_summary`

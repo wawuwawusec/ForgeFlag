@@ -81,6 +81,22 @@ class McpToolTest(unittest.TestCase):
         self.assertEqual(payload["status"], "missing")
         self.assertEqual(payload["evidence"], ["not installed"])
 
+    def test_hashcat_dictionary_attack_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hash_file = Path(tmp) / "hash.txt"
+            words = Path(tmp) / "words.txt"
+            hash_file.write_text("5d41402abc4b2a76b9719d911017c592", encoding="utf-8")
+            words.write_text("hello\n", encoding="utf-8")
+            with patch(
+                "forgeflag.mcp_server.ctf.hashcat_dictionary_attack",
+                return_value=ToolResult(tool="hashcat", target=None, status="missing", evidence=["not installed"]),
+            ):
+                payload = mcp_server.hashcat_dictionary_attack(str(hash_file), str(words), 0)
+
+        self.assertEqual(payload["tool"], "hashcat")
+        self.assertEqual(payload["status"], "missing")
+        self.assertEqual(payload["evidence"], ["not installed"])
+
     def test_ffuf_route_discovery_mcp_tool_returns_structured_payload(self) -> None:
         with patch(
             "forgeflag.mcp_server.ctf.ffuf_route_discovery",
