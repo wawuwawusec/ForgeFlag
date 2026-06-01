@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -136,6 +137,48 @@ class ForensicsSolverTest(unittest.TestCase):
             self.assertEqual(png_evidence["derived_height"], 3)
             self.assertFalse(png_evidence["ihdr_crc_ok"])
             self.assertTrue(Path(png_evidence["repaired_path"]).is_file())
+
+    def test_forensics_solver_records_archive_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "bundle.zip"
+            with zipfile.ZipFile(attachment, "w") as zf:
+                zf.writestr("flag.txt", "redacted")
+                zf.writestr("hint/readme.txt", "look deeper")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="archive-forensics",
+                    category=ChallengeCategory.FORENSICS,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.forensics.ctf.file_identify",
+                    return_value=ToolResult(tool="file", target=None, status="success", raw={"stdout": "Zip archive data"}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.strings_extract",
+                    return_value=ToolResult(tool="strings", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.binwalk_scan",
+                    return_value=ToolResult(tool="binwalk", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.exiftool_read",
+                    return_value=ToolResult(tool="exiftool", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                Manager(notebook, RunConfig(), solvers=[ForensicsSolver()]).run_challenge("archive-forensics")
+                finding = next(
+                    f for f in notebook.findings_for("archive-forensics") if f.finding == "Triaged forensic attachment"
+                )
+
+        self.assertEqual(finding.evidence["archive"]["kind"], "zip")
+        self.assertIn("flag.txt", finding.evidence["archive"]["interesting_entries"])
 
 if __name__ == "__main__":
     unittest.main()

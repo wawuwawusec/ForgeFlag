@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from forgeflag.domain import Challenge, ChallengeCategory, RunConfig
@@ -56,6 +57,29 @@ class MiscSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Decoded misc transform candidates")
         recipes = {tuple(candidate["recipe"]) for candidate in finding.evidence["transform_candidates"]}
         self.assertIn(("base64_decode", "html_unescape", "url_decode"), recipes)
+
+    def test_misc_solver_records_archive_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "puzzle.zip"
+            with zipfile.ZipFile(attachment, "w") as zf:
+                zf.writestr("secret.txt", "redacted")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-archive",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-archive")
+            finding = next(f for f in notebook.findings_for("misc-archive") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(finding.finding, "Analyzed misc archive artifact")
+        self.assertEqual(finding.evidence["archive"]["kind"], "zip")
+        self.assertIn("secret.txt", finding.evidence["archive"]["interesting_entries"])
 
 
 if __name__ == "__main__":

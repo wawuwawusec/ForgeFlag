@@ -61,6 +61,10 @@ Implemented so far:
   - PNG IHDR height/CRC mismatch detection with repaired PNG artifact output
   - `ForensicsSolver` uses it after local artifact triage
   - `MiscSolver` uses it directly for misc image puzzles before broader puzzle triage
+- Archive triage:
+  - `forgeflag.archive_analysis.analyze_archive`
+  - supports zip, tar, and gzip structure summaries
+  - `ForensicsSolver` and `MiscSolver` record archive entries, encryption state, comments, and interesting names without extracting by default
 - Scoped TrafficSolver workflow:
   - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, `tshark_flag_scan`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, and `tshark_http_artifact_scan`
   - HTTP artifact payload decoding via shared transform candidates before flag extraction
@@ -116,7 +120,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 86 tests OK
+- Tests passed: 91 tests OK
 
 Useful commands:
 

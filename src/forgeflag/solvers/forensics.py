@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from forgeflag.archive_analysis import analyze_archive
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.image import analyze_png_ihdr
@@ -81,6 +82,7 @@ class ForensicsSolver:
         flags = extract_flags(combined_output)
         flag_candidates.extend(flags)
         png_ihdr = analyze_png_ihdr(Path(resolved))
+        archive = analyze_archive(resolved)
 
         finding = Finding(
             challenge_id=challenge_id,
@@ -95,10 +97,11 @@ class ForensicsSolver:
                 "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
                 "flag_candidates": list(flags),
                 **({"png_ihdr": png_ihdr} if png_ihdr else {}),
+                **({"archive": archive} if archive else {}),
             },
-            hypothesis=_forensics_hypothesis(flags, labeled_results[0][1].status, labeled_results[1][1].status, png_ihdr),
+            hypothesis=_forensics_hypothesis(flags, labeled_results[0][1].status, labeled_results[1][1].status, png_ihdr, archive),
             confidence=0.78 if flags else 0.58,
-            next_action=_next_action(flags, png_ihdr),
+            next_action=_next_action(flags, png_ihdr, archive),
         )
         context.notebook.add_finding(finding)
         return finding
@@ -118,19 +121,30 @@ def _forensics_hypothesis(
     file_status: str,
     strings_status: str,
     png_ihdr: dict[str, Any] | None = None,
+    archive: dict[str, Any] | None = None,
 ) -> str:
     if flags:
         return "Printable artifact content contains a flag-like token that should be verified."
     if png_ihdr and png_ihdr.get("suspected_height_mismatch"):
         return "PNG IHDR height appears inconsistent with IDAT scanline data; the repaired artifact is likely the next image to inspect."
+    if archive:
+        return "Archive structure was detected; interesting entry names should guide extraction and password-hint checks."
     if file_status == "success" and strings_status == "success":
         return "The artifact is readable; metadata or embedded payload analysis is the next likely path."
     return "Initial triage ran, but one or more local tools could not inspect the artifact."
 
 
-def _next_action(flags: tuple[str, ...], png_ihdr: dict[str, Any] | None = None) -> str:
+def _next_action(
+    flags: tuple[str, ...],
+    png_ihdr: dict[str, Any] | None = None,
+    archive: dict[str, Any] | None = None,
+) -> str:
     if flags:
         return "Send candidates to Verifier and preserve the attachment path as reproduction evidence."
     if png_ihdr and png_ihdr.get("repaired_path"):
         return "Open the repaired PNG, then continue with visual, channel, and low-bit-plane stego analysis."
+    if archive:
+        if archive.get("encrypted"):
+            return "Collect password hints before attempting archive extraction."
+        return "Inspect interesting archive entries and extract only into a managed artifact workspace."
     return "Inspect tool output for embedded archives, metadata hints, or alternate encodings."

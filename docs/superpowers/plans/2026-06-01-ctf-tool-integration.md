@@ -140,3 +140,21 @@ Extract common RSA fields from challenge text and attachments: `n`, `e`, `c`, `p
 - [x] **Step 2: Add RsaCtfTool wrapper and solver evidence**
 
 Add a typed `RsaCtfTool` wrapper that accepts a registered public key and optional ciphertext artifact. CryptoSolver records RSA evidence and recommends RsaCtfTool/SageMath/Z3 follow-up without running heavyweight tools by default.
+
+### Phase 7: Archive Triage
+
+**Files:**
+- Create: `src/forgeflag/archive_analysis.py`
+- Modify: `src/forgeflag/solvers/forensics.py`
+- Modify: `src/forgeflag/solvers/misc.py`
+- Test: `tests/test_archive_analysis.py`
+- Test: `tests/test_forensics_solver.py`
+- Test: `tests/test_misc_solver.py`
+
+- [x] **Step 1: Add archive structure summaries**
+
+Detect zip, tar, and gzip artifacts without extracting by default. Record entry names, sizes, encryption state, archive comments, and interesting entry names such as flag, secret, hint, readme, password, and key.
+
+- [x] **Step 2: Integrate archive summaries into solvers**
+
+ForensicsSolver and MiscSolver store archive evidence and recommend managed extraction or password-hint collection as the next action.
