@@ -127,6 +127,8 @@ forgeflag-mcp
 
 See [docs/mcp.md](docs/mcp.md) for the current MCP tool list.
 
+For multi-machine development, see [docs/collaboration.md](docs/collaboration.md).
+
 ## Current Milestone
 
 The current milestone is a working skeleton plus the first scoped WebSolver, ForensicsSolver, TrafficSolver, and optional IDA MCP binary-analysis workflows:
