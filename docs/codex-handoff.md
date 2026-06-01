@@ -45,6 +45,7 @@ Implemented so far:
 - Scoped WebSolver workflow:
   - allowlist-gated HTTP probing
   - HTML title/link/form parsing
+  - low-budget `ffuf` route discovery only when active probing and allowed-host scope are enabled
   - flag candidate extraction
   - verifier integration
 - Artifact workspace:
@@ -65,7 +66,7 @@ Implemented so far:
   - flag candidate extraction from packet capture output
 - CTF tool layer:
   - allowlisted `ToolRunner`
-  - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `nmap_tcp_basic`
+  - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `ffuf`, `nmap_tcp_basic`
   - `forgeflag tools` CLI inventory
 - Curated CTF project catalog:
   - `forgeflag catalog` and `forgeflag catalog --category <category>`
@@ -106,7 +107,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 74 tests OK
+- Tests passed: 78 tests OK
 
 Useful commands:
 

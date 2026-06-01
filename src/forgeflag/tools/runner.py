@@ -31,6 +31,15 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
     "binwalk": ToolSpec("binwalk", ("binwalk",), "forensics", "Scan firmware and embedded file signatures."),
     "exiftool": ToolSpec("exiftool", ("exiftool",), "forensics", "Read metadata from images and documents."),
     "tshark": ToolSpec("tshark", ("tshark",), "forensics", "Summarize packet capture contents."),
+    "ffuf": ToolSpec(
+        "ffuf",
+        ("ffuf",),
+        "web",
+        "Scoped route discovery for explicitly authorized CTF web targets.",
+        active_network=True,
+        default_timeout_seconds=15,
+        max_output_bytes=32_768,
+    ),
     "nmap_tcp_basic": ToolSpec(
         "nmap_tcp_basic",
         ("nmap", "-sT", "-Pn"),

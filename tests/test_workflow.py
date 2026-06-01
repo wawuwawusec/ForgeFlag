@@ -5,8 +5,9 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from forgeflag.domain import Challenge, ChallengeCategory, Finding, RunConfig, SolverResult
+from forgeflag.domain import Challenge, ChallengeCategory, Finding, RunConfig, SolverResult, ToolResult
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.solvers.base import SolverContext
@@ -125,6 +126,46 @@ class WorkflowTest(unittest.TestCase):
         web_finding = next(f for f in findings if f.finding == "Analyzed scoped HTTP response structure")
         self.assertEqual(web_finding.evidence["html"]["title"], "ForgeFlag Test")
         self.assertEqual(web_finding.evidence["html"]["forms"][0]["method"], "post")
+
+    def test_web_solver_records_scoped_ffuf_route_discovery(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), FlagHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            target = f"http://127.0.0.1:{server.server_port}/"
+            with tempfile.TemporaryDirectory() as tmp:
+                notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+                notebook.add_challenge(
+                    Challenge(
+                        challenge_id="web-ffuf",
+                        category=ChallengeCategory.WEB,
+                        target=target,
+                        tags=("web", "route"),
+                    )
+                )
+
+                with patch(
+                    "forgeflag.solvers.web.ctf.ffuf_route_discovery",
+                    return_value=ToolResult(
+                        tool="ffuf",
+                        target=target,
+                        status="success",
+                        raw={"stdout": '{"results":[{"url":"' + target + 'admin","status":200}]}'},
+                    ),
+                ):
+                    summary = Manager(
+                        notebook,
+                        RunConfig(active_probe=True, allowed_hosts=("127.0.0.1",)),
+                    ).run_challenge("web-ffuf")
+                findings = notebook.findings_for("web-ffuf")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(summary["status"], "flag_found")
+        ffuf_finding = next(f for f in findings if f.finding == "Ran scoped ffuf route discovery")
+        self.assertEqual(ffuf_finding.evidence["tool_status"], "success")
+        self.assertIn("admin", ffuf_finding.evidence["tool_sample"])
 
     def test_manager_observer_injects_prior_solver_observations(self) -> None:
         class ProducerSolver:

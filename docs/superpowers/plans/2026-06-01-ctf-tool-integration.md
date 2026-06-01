@@ -100,11 +100,11 @@ Rank streams by HTTP clues, printable payload hints, and flag-like transform can
 - Test: `tests/test_tools.py`
 - Test: `tests/test_workflow.py`
 
-- [ ] **Step 1: Add ffuf wrapper behind active scope**
+- [x] **Step 1: Add ffuf wrapper behind active scope**
 
 Require `ScopePolicy.active_probe` and allowed host. Add request budget and timeout.
 
-- [ ] **Step 2: Keep sqlmap/nuclei as manual candidates first**
+- [x] **Step 2: Keep sqlmap/nuclei as manual candidates first**
 
 Expose them in catalog and docs, but do not auto-run until safety UX is explicit.
 

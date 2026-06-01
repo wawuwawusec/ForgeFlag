@@ -67,6 +67,17 @@ class McpToolTest(unittest.TestCase):
         self.assertEqual(payload["status"], "missing")
         self.assertEqual(payload["evidence"], ["not installed"])
 
+    def test_ffuf_route_discovery_mcp_tool_returns_structured_payload(self) -> None:
+        with patch(
+            "forgeflag.mcp_server.ctf.ffuf_route_discovery",
+            return_value=ToolResult(tool="ffuf", target="http://127.0.0.1:8080/", status="missing", evidence=["not installed"]),
+        ):
+            payload = mcp_server.ffuf_route_discovery("http://127.0.0.1:8080/", ["admin"])
+
+        self.assertEqual(payload["tool"], "ffuf")
+        self.assertEqual(payload["status"], "missing")
+        self.assertEqual(payload["evidence"], ["not installed"])
+
 
 if __name__ == "__main__":
     unittest.main()

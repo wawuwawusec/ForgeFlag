@@ -39,5 +39,6 @@ Current MCP tools:
 - `tshark_http_artifact_scan`
 - `tshark_flag_scan`
 - `nmap_tcp_basic`
+- `ffuf_route_discovery`
 
 Network-capable tools refuse to run unless the target host is listed in `FORGEFLAG_ALLOWED_HOSTS`.

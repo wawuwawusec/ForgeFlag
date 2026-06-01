@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import tempfile
+from urllib.parse import urlparse
 
 from forgeflag.domain import ToolResult
 from forgeflag.safety import ScopePolicy
@@ -208,6 +211,50 @@ def nmap_tcp_basic(target: str, ports: str = "1-1024", scope: ScopePolicy | None
     return runner.run("nmap_tcp_basic", ["-p", ports, target], target=target)
 
 
+def ffuf_route_discovery(
+    target: str,
+    route_words: tuple[str, ...] = ("admin", "login", "flag", "robots.txt"),
+    rate: int = 25,
+    timeout_seconds: int = 15,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    scope = scope or ScopePolicy()
+    target_url = _ffuf_target_url(target)
+    words = _route_words(route_words)
+    rate = max(1, min(rate, 100))
+    timeout_seconds = max(3, min(timeout_seconds, 30))
+    runner = ToolRunner(scope)
+    wordlist_path = ""
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as wordlist:
+            wordlist_path = wordlist.name
+            wordlist.write("\n".join(words) + "\n")
+        return runner.run(
+            "ffuf",
+            [
+                "-u",
+                target_url,
+                "-w",
+                wordlist_path,
+                "-of",
+                "json",
+                "-noninteractive",
+                "-rate",
+                str(rate),
+                "-t",
+                "5",
+            ],
+            target=target,
+            timeout_seconds=timeout_seconds,
+        )
+    finally:
+        if wordlist_path:
+            try:
+                os.unlink(wordlist_path)
+            except OSError:
+                pass
+
+
 def ensure_existing_file(path: str) -> str:
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_file():
@@ -223,3 +270,22 @@ def _tshark_contains_literal(value: str) -> str:
 def _tool_search_literal(value: str) -> str:
     cleaned = "".join(char for char in value if char.isprintable() and char not in {"\x00", "\n", "\r"})
     return cleaned[:80] or "pop rdi; ret"
+
+
+def _ffuf_target_url(target: str) -> str:
+    if "FUZZ" in target:
+        return target
+    parsed = urlparse(target)
+    if not parsed.scheme:
+        return target.rstrip("/") + "/FUZZ"
+    return target.rstrip("/") + "/FUZZ"
+
+
+def _route_words(words: tuple[str, ...], limit: int = 32) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    for word in words:
+        value = "".join(char for char in word.strip().lstrip("/") if char.isprintable() and char not in {"\x00", "\n", "\r"})
+        if not value or value in cleaned:
+            continue
+        cleaned.append(value[:80])
+    return tuple(cleaned[:limit]) or ("admin", "login", "flag", "robots.txt")

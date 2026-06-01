@@ -33,3 +33,4 @@
 - Added a CyberChef-style transform pipeline for hex, Base64, URL decoding, and HTML entity decoding, then integrated it into CryptoSolver, MiscSolver, and TrafficSolver.
 - Added `ROPgadget` and `ropper` typed wrappers plus local binary evidence summaries in PwnSolver and ReverseSolver.
 - Added DNS summary extraction and TCP stream shortlisting for TrafficSolver.
+- Added scoped `ffuf` route discovery behind active-probe and allowlist controls, integrated into WebSolver and MCP.

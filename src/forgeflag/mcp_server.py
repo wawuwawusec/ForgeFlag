@@ -122,6 +122,17 @@ if FastMCP is not None:
         """Run a basic TCP scan against an explicitly allowlisted CTF target."""
         return _result_payload(ctf.nmap_tcp_basic(target, ports, _scope_from_env(active_probe=True)))
 
+    @mcp.tool()
+    def ffuf_route_discovery(target: str, route_words: list[str] | None = None) -> dict[str, Any]:
+        """Run low-budget ffuf route discovery against an explicitly allowlisted CTF web target."""
+        return _result_payload(
+            ctf.ffuf_route_discovery(
+                target,
+                tuple(route_words or ("admin", "login", "flag", "robots.txt")),
+                scope=_scope_from_env(active_probe=True),
+            )
+        )
+
 
 def main() -> None:
     if FastMCP is None:

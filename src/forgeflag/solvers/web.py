@@ -3,6 +3,7 @@ from __future__ import annotations
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.solvers.base import SolverContext
+from forgeflag.tools import ctf
 from forgeflag.tools.http_probe import HttpProbeTool
 from forgeflag.web_analysis import HtmlSummary, summarize_html
 
@@ -85,6 +86,29 @@ class WebSolver:
         context.notebook.add_finding(analysis)
         findings.append(analysis)
 
+        ffuf_result = ctf.ffuf_route_discovery(
+            challenge.target,
+            route_words=_route_words_from_html(html),
+            scope=context.scope,
+        )
+        context.notebook.add_tool_result(challenge.challenge_id, ffuf_result)
+        ffuf_finding = Finding(
+            challenge_id=challenge.challenge_id,
+            solver=self.name,
+            finding="Ran scoped ffuf route discovery",
+            evidence={
+                "target": challenge.target,
+                "tool_status": ffuf_result.status,
+                "tool_evidence": ffuf_result.evidence,
+                "tool_sample": str(ffuf_result.raw.get("stdout", ""))[:1000],
+            },
+            hypothesis=_ffuf_hypothesis(ffuf_result.status),
+            confidence=0.62 if ffuf_result.status == "success" else 0.34,
+            next_action=_ffuf_next_action(ffuf_result.status),
+        )
+        context.notebook.add_finding(ffuf_finding)
+        findings.append(ffuf_finding)
+
         return SolverResult(
             solver=self.name,
             challenge_id=challenge.challenge_id,
@@ -112,3 +136,32 @@ def _next_action(html: HtmlSummary, flags: tuple[str, ...]) -> str:
     if html.links:
         return "Add route queueing with same-host scope checks."
     return "Capture headers and expand content-type specific analyzers."
+
+
+def _route_words_from_html(html: HtmlSummary) -> tuple[str, ...]:
+    words = ["admin", "login", "flag", "robots.txt"]
+    for link in html.links[:10]:
+        href = str(link).strip("/")
+        if href:
+            words.append(href.split("/", 1)[0])
+    for form in html.forms[:5]:
+        action = str(form.action or "").strip("/")
+        if action:
+            words.append(action.split("/", 1)[0])
+    return tuple(dict.fromkeys(words))
+
+
+def _ffuf_hypothesis(status: str) -> str:
+    if status == "success":
+        return "Low-budget scoped route discovery produced route evidence for follow-up."
+    if status == "missing":
+        return "ffuf is not installed locally; route discovery was skipped after scope validation."
+    return "Scoped ffuf route discovery did not complete successfully."
+
+
+def _ffuf_next_action(status: str) -> str:
+    if status == "success":
+        return "Inspect discovered routes and enqueue same-host follow-up only inside declared scope."
+    if status == "missing":
+        return "Install ffuf or continue with visible links and forms from the HTTP response."
+    return "Review ffuf tool evidence before expanding route discovery."

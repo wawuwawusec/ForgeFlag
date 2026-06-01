@@ -10,6 +10,7 @@ from forgeflag.domain import ToolResult
 from forgeflag.safety import ScopePolicy
 from forgeflag.tools.ctf import (
     file_identify,
+    ffuf_route_discovery,
     ropgadget_scan,
     ropper_scan,
     strings_extract,
@@ -36,6 +37,16 @@ class ToolRunnerTest(unittest.TestCase):
         runner = ToolRunner(ScopePolicy(allowed_hosts=("127.0.0.1",), active_probe=False))
 
         result = runner.run("nmap_tcp_basic", ["-p", "80", "127.0.0.1"], target="127.0.0.1")
+
+        self.assertEqual(result.status, "refused")
+        self.assertIn("active probing is disabled", result.evidence[0])
+
+    def test_ffuf_route_discovery_refuses_without_active_scope(self) -> None:
+        result = ffuf_route_discovery(
+            "http://127.0.0.1:8080/",
+            route_words=("admin",),
+            scope=ScopePolicy(allowed_hosts=("127.0.0.1",), active_probe=False),
+        )
 
         self.assertEqual(result.status, "refused")
         self.assertIn("active probing is disabled", result.evidence[0])
@@ -188,6 +199,29 @@ class ToolRunnerTest(unittest.TestCase):
             "ropper",
             ["--file", "/tmp/pwn", "--search", "pop rdi; ret", "--nocolor"],
         )
+
+    def test_ffuf_route_discovery_uses_target_scope_and_small_wordlist(self) -> None:
+        expected = ToolResult(tool="ffuf", target="http://127.0.0.1:8080/", status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = ffuf_route_discovery(
+                "http://127.0.0.1:8080/",
+                route_words=("admin", "flag"),
+                scope=ScopePolicy(allowed_hosts=("127.0.0.1",), active_probe=True),
+            )
+
+        self.assertIs(result, expected)
+        call = runner.run.call_args
+        self.assertEqual(call.args[0], "ffuf")
+        args = call.args[1]
+        self.assertIn("-u", args)
+        self.assertIn("http://127.0.0.1:8080/FUZZ", args)
+        self.assertIn("-rate", args)
+        self.assertEqual(call.kwargs["target"], "http://127.0.0.1:8080/")
+        self.assertEqual(call.kwargs["timeout_seconds"], 15)
 
 
 if __name__ == "__main__":
