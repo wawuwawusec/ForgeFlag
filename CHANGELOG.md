@@ -18,6 +18,7 @@
 - Added reusable PNG IHDR consistency analysis for forensics and misc image puzzles; it detects height/CRC mismatches and writes repaired PNG artifacts.
 - Added PCAP traffic-analysis wrappers, MCP tools, solver integration, and ForgeFlag skill guidance.
 - Split PCAP analysis into a dedicated `TrafficSolver` and `traffic` challenge category.
+- Added HTTP request and HTTP artifact extraction for traffic challenges, including HTML-entity encoded `f1ag{...}` flag recovery.
 - Added Observer-distilled shared observations and per-solver context injection.
 - Added a `forgeflag observations` CLI command.
 - Added automatic replay reports for accepted flags and a `forgeflag report` CLI command.
@@ -28,3 +29,4 @@
 - Added `scripts/forgeflag-control` for one-command local start, stop, status, restart, and smoke workflows.
 - Added a local Web UI with challenge creation, attachment upload, category filtering, per-run LLM settings, browser-local config saving, LLM connection testing, run, auto-loaded findings, observations, report, and tools views.
 - Added optional read-only IDA MCP configuration and adapter hooks for `ReverseSolver` and `PwnSolver`.
+- Added a curated CTF project catalog available from `forgeflag catalog`, `/api/project-catalog`, and the Web UI Catalog tab.

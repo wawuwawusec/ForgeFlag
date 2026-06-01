@@ -43,6 +43,14 @@ class TrafficSolverTest(unittest.TestCase):
                     "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "flag{pcap_payload}"}),
                 ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
             ):
                 summary = Manager(notebook, RunConfig()).run_challenge("traffic-flag")
                 findings = notebook.findings_for("traffic-flag")
@@ -53,6 +61,55 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(traffic_finding.solver, "TrafficSolver")
         self.assertIn("tshark_traffic_analysis", traffic_finding.evidence["tool_statuses"])
         self.assertIn("tshark_flag_scan", traffic_finding.evidence["tool_statuses"])
+
+    def test_traffic_solver_decodes_http_artifact_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "capture.pcapng"
+            attachment.write_bytes(b"pcapng fixture placeholder")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-http-flag",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+            multipart = (
+                'Content-Disposition: form-data; name="image"; filename="hnt.txt"\\r\\n'
+                "\\r\\n"
+                "&#102;&#49;&#97;&#103;&#123;&#115;&#105;&#49;&#49;&#121;&#98;&#48;&#121;&#101;&#109;&#109;&#109;&#125;"
+            )
+            artifact_stdout = f"456|16|POST|/upload/example1.php||{multipart.encode().hex()}"
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "HTTP POST"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "http frames"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "456|16|POST|/upload/example1.php|Java"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": artifact_stdout}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-http-flag")
+                finding = next(f for f in notebook.findings_for("traffic-http-flag") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["f1ag{si11yb0yemmm}"])
+        self.assertIn("f1ag{si11yb0yemmm}", finding.evidence["decoded_http_artifacts"][0])
 
     def test_traffic_solver_skips_non_pcap_attachments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

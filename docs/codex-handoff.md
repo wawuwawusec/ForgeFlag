@@ -49,13 +49,20 @@ Implemented so far:
   - `ForensicsSolver` uses it after local artifact triage
   - `MiscSolver` uses it directly for misc image puzzles before broader puzzle triage
 - Scoped TrafficSolver workflow:
-  - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, and `tshark_flag_scan`
+  - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, `tshark_flag_scan`, `tshark_http_requests`, and `tshark_http_artifact_scan`
+  - HTTP artifact payload decoding for hex, URL encoding, and HTML entities before flag extraction
+  - support for common CTF typo markers such as `f1ag{...}`
   - structured tool evidence in notebook
   - flag candidate extraction from packet capture output
 - CTF tool layer:
   - allowlisted `ToolRunner`
-  - wrappers for `file`, `strings`, `checksec`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_flag_scan`, `nmap_tcp_basic`
+  - wrappers for `file`, `strings`, `checksec`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `nmap_tcp_basic`
   - `forgeflag tools` CLI inventory
+- Curated CTF project catalog:
+  - `forgeflag catalog` and `forgeflag catalog --category <category>`
+  - `/api/project-catalog`
+  - Web UI Catalog tab
+  - catalog entries are integration candidates, not implicit bulk installs
 - Optional MCP server:
   - `forgeflag-mcp`
   - streamable HTTP endpoint can run at `http://127.0.0.1:8000/mcp`
@@ -64,7 +71,7 @@ Implemented so far:
   - category workspace filters for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra queues
   - per-run LLM provider/model/API key controls, browser-local non-secret config saving, optional local key remembering, and `/api/llm/test`
   - entered LLM keys are used for run/test requests and are never stored in SQLite
-  - run, auto-loaded findings, observations, replay report, and tools views
+  - run, auto-loaded findings, observations, replay report, tools, and catalog views
 - CTF Dockerfile:
   - `docker/Dockerfile.ctf`
 - Project skill template:
@@ -90,7 +97,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 51 tests OK
+- Tests passed: 59 tests OK
 
 Useful commands:
 
@@ -98,6 +105,8 @@ Useful commands:
 cd /Users/5haw0/Documents/ForgeFlag
 .venv/bin/forgeflag tools
 .venv/bin/forgeflag --db .forgeflag/notebook.sqlite tools
+.venv/bin/forgeflag catalog
+.venv/bin/forgeflag catalog --category traffic
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/python -m pip install -e .
 make smoke
@@ -162,13 +171,16 @@ Recent commits:
 Recommended next milestone:
 
 1. Add richer traffic analyzers:
-   - DNS query summary
-   - HTTP object extraction and host/URI summary
+   - DNS query/TXT summary
    - TCP stream extraction by stream id
-2. Add archive/carving follow-up from `binwalk_scan`.
-3. Add image/stego metadata hints.
-4. Add a CLI command to list registered artifacts per challenge.
-5. Push changes when ready.
+   - HTTP object export when a capture contains downloaded files
+2. Promote selected project catalog items into wrappers:
+   - `ffuf` and `sqlmap` only behind active-probe scope controls
+   - `ROPgadget`/`ropper` for pwn and reverse
+   - `Scapy` helper for custom traffic parsing
+3. Add archive/carving follow-up from `binwalk_scan`.
+4. Add image/stego metadata hints.
+5. Add a CLI command to list registered artifacts per challenge.
 
 ## Safety Boundary
 

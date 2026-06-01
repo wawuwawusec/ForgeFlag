@@ -8,6 +8,7 @@ from forgeflag.artifacts import ArtifactWorkspace
 from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
+from forgeflag.project_catalog import recommended_projects
 from forgeflag.safety import ScopePolicy
 from forgeflag.tools.runner import ToolRunner
 from forgeflag.webapp import run_webapp
@@ -50,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("challenge_id")
 
     subparsers.add_parser("tools", help="List configured CTF tool wrappers and local availability")
+    catalog = subparsers.add_parser("catalog", help="List recommended CTF projects and integration candidates")
+    catalog.add_argument("--category", choices=[c.value for c in ChallengeCategory])
 
     web = subparsers.add_parser("web", help="Start the local ForgeFlag web UI")
     web.add_argument("--host", default="127.0.0.1")
@@ -159,6 +162,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "tools":
         print(json.dumps(ToolRunner(ScopePolicy()).inventory(), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "catalog":
+        print(json.dumps(recommended_projects(args.category), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "web":

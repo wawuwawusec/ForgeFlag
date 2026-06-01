@@ -83,6 +83,16 @@ if FastMCP is not None:
         return _result_payload(ctf.tshark_traffic_analysis(ctf.ensure_existing_file(path), _scope_from_env()))
 
     @mcp.tool()
+    def tshark_http_requests(path: str) -> dict[str, Any]:
+        """Extract HTTP request metadata from a local PCAP artifact."""
+        return _result_payload(ctf.tshark_http_requests(ctf.ensure_existing_file(path), _scope_from_env()))
+
+    @mcp.tool()
+    def tshark_http_artifact_scan(path: str) -> dict[str, Any]:
+        """Scan HTTP file payloads in a local PCAP for CTF clues and encoded flags."""
+        return _result_payload(ctf.tshark_http_artifact_scan(ctf.ensure_existing_file(path), _scope_from_env()))
+
+    @mcp.tool()
     def tshark_flag_scan(path: str, needle: str = "flag{", packet_limit: int = 50) -> dict[str, Any]:
         """Scan PCAP frames for a printable flag-like payload marker."""
         return _result_payload(ctf.tshark_flag_scan(ctf.ensure_existing_file(path), needle, packet_limit, _scope_from_env()))

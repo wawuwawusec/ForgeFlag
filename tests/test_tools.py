@@ -8,7 +8,14 @@ from unittest.mock import Mock, patch
 
 from forgeflag.domain import ToolResult
 from forgeflag.safety import ScopePolicy
-from forgeflag.tools.ctf import file_identify, strings_extract, tshark_flag_scan, tshark_traffic_analysis
+from forgeflag.tools.ctf import (
+    file_identify,
+    strings_extract,
+    tshark_flag_scan,
+    tshark_http_artifact_scan,
+    tshark_http_requests,
+    tshark_traffic_analysis,
+)
 from forgeflag.tools.runner import ToolRunner
 
 
@@ -88,6 +95,37 @@ class ToolRunnerTest(unittest.TestCase):
             "tshark",
             ["-r", "/tmp/capture.pcap", "-Y", 'frame contains "flag{"', "-x", "-c", "200"],
         )
+
+    def test_tshark_http_requests_extracts_request_fields(self) -> None:
+        expected = ToolResult(tool="tshark", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = tshark_http_requests("/tmp/capture.pcap")
+
+        self.assertIs(result, expected)
+        args = runner.run.call_args.args[1]
+        self.assertIn("http.request", args)
+        self.assertIn("http.request.uri", args)
+        self.assertIn("http.user_agent", args)
+
+    def test_tshark_http_artifact_scan_searches_common_ctf_clues(self) -> None:
+        expected = ToolResult(tool="tshark", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = tshark_http_artifact_scan("/tmp/capture.pcap")
+
+        self.assertIs(result, expected)
+        args = runner.run.call_args.args[1]
+        display_filter = args[args.index("-Y") + 1]
+        self.assertIn('http.file_data contains "f1ag"', display_filter)
+        self.assertIn('http.file_data contains "&#102;"', display_filter)
+        self.assertIn("http.file_data", args)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import html
 from pathlib import Path
+from urllib.parse import unquote_plus
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
@@ -69,6 +71,8 @@ class TrafficSolver:
             ("tshark_pcap_summary", ctf.tshark_pcap_summary(pcap_path, packet_limit=50, scope=context.scope)),
             ("tshark_traffic_analysis", ctf.tshark_traffic_analysis(pcap_path, context.scope)),
             ("tshark_flag_scan", ctf.tshark_flag_scan(pcap_path, scope=context.scope)),
+            ("tshark_http_requests", ctf.tshark_http_requests(pcap_path, context.scope)),
+            ("tshark_http_artifact_scan", ctf.tshark_http_artifact_scan(pcap_path, context.scope)),
         ]
         for _, result in labeled_results:
             context.notebook.add_tool_result(challenge_id, result)
@@ -77,7 +81,10 @@ class TrafficSolver:
             str(result.raw.get("stdout", "")) + "\n" + str(result.raw.get("stderr", ""))
             for _, result in labeled_results
         )
-        flags = extract_flags(combined_output)
+        decoded_http_artifacts = _decoded_http_artifacts(
+            str(dict(labeled_results)["tshark_http_artifact_scan"].raw.get("stdout", ""))
+        )
+        flags = extract_flags("\n".join([combined_output, *decoded_http_artifacts]))
         flag_candidates.extend(flags)
 
         finding = Finding(
@@ -88,6 +95,8 @@ class TrafficSolver:
                 "artifact": {"name": Path(pcap_path).name, "path": pcap_path},
                 "tool_statuses": {label: result.status for label, result in labeled_results},
                 "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
+                "http_requests": _interesting_lines(str(dict(labeled_results)["tshark_http_requests"].raw.get("stdout", ""))),
+                "decoded_http_artifacts": decoded_http_artifacts[:20],
                 "flag_candidates": list(flags),
             },
             hypothesis=_traffic_hypothesis(flags),
@@ -111,6 +120,44 @@ def _tool_sample(result) -> dict[str, str]:
     stdout = str(result.raw.get("stdout", ""))
     stderr = str(result.raw.get("stderr", ""))
     return {"stdout": stdout[:500], "stderr": stderr[:500]}
+
+
+def _decoded_http_artifacts(output: str) -> list[str]:
+    decoded: list[str] = []
+    for line in output.splitlines():
+        parts = line.split("|")
+        if not parts:
+            continue
+        payload = parts[-1].strip()
+        if not payload:
+            continue
+        text = _decode_hex_text(payload)
+        if not text:
+            text = payload
+        normalized = html.unescape(unquote_plus(text))
+        snippet = _compact_text(normalized)
+        if snippet:
+            decoded.append(snippet)
+    return decoded
+
+
+def _decode_hex_text(value: str) -> str:
+    if len(value) % 2 or not value:
+        return ""
+    try:
+        raw = bytes.fromhex(value)
+    except ValueError:
+        return ""
+    return raw.decode("utf-8", errors="replace")
+
+
+def _interesting_lines(output: str, limit: int = 40) -> list[str]:
+    return [_compact_text(line) for line in output.splitlines()[:limit] if _compact_text(line)]
+
+
+def _compact_text(value: str, limit: int = 500) -> str:
+    text = " ".join(value.replace("\x00", " ").split())
+    return text[:limit]
 
 
 def _traffic_hypothesis(flags: tuple[str, ...]) -> str:

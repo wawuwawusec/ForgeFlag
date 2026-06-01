@@ -146,6 +146,17 @@ class CliTest(unittest.TestCase):
         self.assertEqual(captured["config"].llm_config.provider, "zhipu")
         self.assertEqual(captured["config"].llm_config.model, "glm-4.7")
 
+    def test_catalog_command_lists_recommended_projects(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = main(["catalog", "--category", "traffic"])
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload)
+        self.assertTrue(all("traffic" in row["categories"] for row in payload))
+        self.assertIn("Wireshark", {row["name"] for row in payload})
+
 
 if __name__ == "__main__":
     unittest.main()

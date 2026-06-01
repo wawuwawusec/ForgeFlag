@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 
-FLAG_PATTERN = re.compile(r"(?i)\b(?:flag|ctf)\{[^{}\s]{3,128}\}")
+FLAG_PATTERN = re.compile(r"(?i)(?:flag|ctf|f1ag)\{[^{}\s]{3,128}\}")
 
 
 def extract_flags(text: str) -> tuple[str, ...]:
@@ -15,4 +15,3 @@ def extract_flags(text: str) -> tuple[str, ...]:
             seen.add(candidate)
             flags.append(candidate)
     return tuple(flags)
-

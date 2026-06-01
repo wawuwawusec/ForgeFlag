@@ -44,6 +44,74 @@ def tshark_traffic_analysis(path: str, scope: ScopePolicy | None = None) -> Tool
     return runner.run("tshark", ["-r", path, "-q", "-z", "io,phs", "-z", "conv,tcp", "-z", "conv,udp"])
 
 
+def tshark_http_requests(path: str, scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run(
+        "tshark",
+        [
+            "-r",
+            path,
+            "-Y",
+            "http.request",
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+            "-e",
+            "tcp.stream",
+            "-e",
+            "http.request.method",
+            "-e",
+            "http.host",
+            "-e",
+            "http.request.uri",
+            "-e",
+            "http.user_agent",
+            "-E",
+            "separator=|",
+            "-E",
+            "occurrence=f",
+        ],
+    )
+
+
+def tshark_http_artifact_scan(path: str, scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run(
+        "tshark",
+        [
+            "-r",
+            path,
+            "-Y",
+            (
+                'http.file_data contains "flag" || http.file_data contains "f1ag" || '
+                'http.file_data contains "f1Ag" || http.file_data contains "flAg" || '
+                'http.file_data contains "&#102;" || http.file_data contains "hnt.txt" || '
+                'http.file_data contains "filename=\\"hnt" || http.request.uri contains "flag" || '
+                'http.request.uri contains "hnt"'
+            ),
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+            "-e",
+            "tcp.stream",
+            "-e",
+            "http.request.method",
+            "-e",
+            "http.request.uri",
+            "-e",
+            "http.response.code",
+            "-e",
+            "http.file_data",
+            "-E",
+            "separator=|",
+            "-E",
+            "occurrence=f",
+        ],
+    )
+
+
 def tshark_flag_scan(
     path: str,
     needle: str = "flag{",

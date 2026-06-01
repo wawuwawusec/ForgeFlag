@@ -31,6 +31,8 @@ Current MCP tools:
 - `exiftool_read`
 - `tshark_pcap_summary`
 - `tshark_traffic_analysis`
+- `tshark_http_requests`
+- `tshark_http_artifact_scan`
 - `tshark_flag_scan`
 - `nmap_tcp_basic`
 

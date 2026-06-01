@@ -66,6 +66,15 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn('id="categoryFilters"', html)
         self.assertIn("分类工作台", html)
         self.assertIn("categoryCounts", html)
+        self.assertIn('data-tab="catalog"', html)
+
+    def test_project_catalog_endpoint_lists_recommended_projects(self) -> None:
+        handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
+
+        payload = handler_cls.handle_project_catalog()
+
+        self.assertIn("pwntools", {row["name"] for row in payload})
+        self.assertIn("CyberChef", {row["name"] for row in payload})
 
     def test_run_button_loads_findings_after_summary(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))

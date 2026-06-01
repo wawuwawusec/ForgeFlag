@@ -42,8 +42,9 @@ Use this for PCAP/PCAPNG challenges and packet captures attached to mixed forens
 1. Register the capture as a challenge attachment; do not run ad hoc shell commands against arbitrary paths.
 2. Start broad: `file_identify`, `tshark_pcap_summary`, and `tshark_traffic_analysis`.
 3. Record protocol hierarchy, unusual ports, top TCP/UDP conversations, DNS/HTTP clues, and any stream numbers in notebook evidence.
-4. Search payloads with `tshark_flag_scan` before deeper carving.
-5. If clues point to a protocol, add a narrow typed wrapper rather than exposing raw `tshark` arguments through MCP.
+4. Search payloads with `tshark_flag_scan`, then enumerate HTTP requests with `tshark_http_requests`.
+5. For HTTP-heavy captures, scan `http.file_data` with `tshark_http_artifact_scan` and decode hex, URL encoding, and HTML entities before flag extraction.
+6. If clues point to another protocol, add a narrow typed wrapper rather than exposing raw `tshark` arguments through MCP.
 
 Common traffic pivots:
 
@@ -51,6 +52,15 @@ Common traffic pivots:
 - DNS: suspicious query names, TXT records, long labels, and repeated failed lookups.
 - TCP streams: conversation endpoints, stream ids, cleartext payloads, and transferred files.
 - ICMP/UDP: payload bytes, covert channels, and repeated size/timing patterns.
+
+## Curated Project Catalog
+
+ForgeFlag keeps a curated catalog of established CTF projects in `forgeflag.project_catalog`.
+Use it as a roadmap for wrappers and container images, not as permission to bulk-install tools.
+
+- Expose the catalog through `forgeflag catalog`, `/api/project-catalog`, and the Web UI Catalog tab.
+- Use `integration` values to decide next steps: `existing_wrapper`, `wrapper_candidate`, `docker_candidate`, `library_dependency`, `solver_workspace`, `external_gui_or_mcp`, `scoped_active_wrapper_candidate`, or `reference_only`.
+- Before moving a catalog item into execution, add a typed wrapper, tests, and scope gating for active network tools.
 
 ## Validation
 

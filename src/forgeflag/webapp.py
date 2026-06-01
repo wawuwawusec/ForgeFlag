@@ -13,6 +13,7 @@ from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.llm import build_llm_provider
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
+from forgeflag.project_catalog import recommended_projects
 from forgeflag.safety import ScopePolicy
 from forgeflag.tools.runner import ToolRunner
 
@@ -48,6 +49,9 @@ def create_handler(db_path: str | Path):
                 return
             if path == "/api/tools":
                 self._send_json(ToolRunner(ScopePolicy()).inventory())
+                return
+            if path == "/api/project-catalog":
+                self._send_json(self.handle_project_catalog())
                 return
             challenge_id, suffix = _challenge_route(path)
             if challenge_id and suffix == "findings":
@@ -185,6 +189,10 @@ def create_handler(db_path: str | Path):
         def handle_report(cls, challenge_id: str) -> dict[str, Any]:
             summary = cls.notebook.latest_run_summary(challenge_id)
             return (summary or {}).get("replay_report") or {}
+
+        @classmethod
+        def handle_project_catalog(cls) -> list[dict[str, Any]]:
+            return recommended_projects()
 
         def _read_json(self) -> dict[str, Any]:
             length = int(self.headers.get("content-length") or "0")
@@ -414,6 +422,7 @@ INDEX_HTML = r"""<!doctype html>
         <button data-tab="observations">Observations</button>
         <button data-tab="report">Report</button>
         <button data-tab="tools">Tools</button>
+        <button data-tab="catalog">Catalog</button>
       </div>
       <pre id="output">{}</pre>
     </section>
@@ -583,6 +592,7 @@ INDEX_HTML = r"""<!doctype html>
       document.querySelectorAll(".tabs button").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tab));
       if (tab === "summary") return show(state.lastSummary);
       if (tab === "tools") return show(await api("/api/tools"));
+      if (tab === "catalog") return show(await api("/api/project-catalog"));
       if (!state.selected) return status("select a challenge first");
       show(await api(`/api/challenges/${encodeURIComponent(state.selected)}/${tab}`));
     }
