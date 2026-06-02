@@ -43,17 +43,23 @@ class ReportBuilder:
         observations: list[Observation],
         solve_trace: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        path = [
-            self._finding_step(finding)
-            for finding in findings
-            if flag in str(finding.evidence) or flag in finding.finding
-        ]
+        path = _dedupe_steps(
+            [
+                self._finding_step(finding)
+                for finding in findings
+                if flag in str(finding.evidence) or flag in finding.finding
+            ],
+            ("solver", "finding", "next_action"),
+        )
         trace_path = shortest_trace_path(flag, solve_trace)
-        related_observations = [
-            self._observation_step(observation)
-            for observation in observations
-            if flag in observation.summary or flag in str(observation.evidence)
-        ]
+        related_observations = _dedupe_steps(
+            [
+                self._observation_step(observation)
+                for observation in observations
+                if flag in observation.summary or flag in str(observation.evidence)
+            ],
+            ("source", "kind", "summary"),
+        )
         replay_steps = [
             step["next_action"]
             for step in path
@@ -187,6 +193,18 @@ def _non_empty_items(items: list[tuple[str, str | None]]) -> list[dict[str, str]
     return [{"label": label, "value": value} for label, value in items if value]
 
 
+def _dedupe_steps(steps: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, ...]] = set()
+    deduped: list[dict[str, Any]] = []
+    for step in reversed(steps):
+        identity = tuple(str(step.get(key) or "") for key in keys)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        deduped.append(step)
+    return list(reversed(deduped))
+
+
 def _approach_summary(path_steps: list[dict[str, Any]], findings: list[Finding]) -> str:
     if path_steps:
         solvers = " -> ".join(step.get("solver") or "solver" for step in path_steps)
@@ -244,7 +262,7 @@ def _tool_observation_items(findings: list[Finding], observations: list[Observat
         items.append({"label": finding.solver, "value": finding.finding})
     for observation in observations[-5:]:
         items.append({"label": f"{observation.source} / {observation.kind}", "value": observation.summary})
-    return items[:8]
+    return _dedupe_steps(items, ("label", "value"))[:8]
 
 
 def _short_text(value: Any) -> str:

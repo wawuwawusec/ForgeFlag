@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgeflag.crypto_analysis import recover_rsa_flags_from_text, rsa_summary_from_text
+from forgeflag.crypto_analysis import (
+    recover_python_random_xor_flags_from_text,
+    recover_rsa_flags_from_text,
+    rsa_summary_from_text,
+)
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.hash_analysis import hash_summary_from_text
@@ -49,6 +53,26 @@ class CryptoSolver:
                 "flag_candidate",
                 (finding,),
                 tuple(str(flag) for flag in rsa_recovery["flags"]),
+            )
+
+        python_random_xor = recover_python_random_xor_flags_from_text(text)
+        if python_random_xor["flags"]:
+            finding = Finding(
+                challenge_id=context.challenge.challenge_id,
+                solver=self.name,
+                finding="Recovered Python random XOR flag candidates",
+                evidence={"python_random_xor": python_random_xor},
+                hypothesis="Python random was seeded from a small range before deriving an XOR key, so seed brute force recovered plaintext.",
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the seed/key evidence for replay.",
+            )
+            context.notebook.add_finding(finding)
+            return SolverResult(
+                self.name,
+                context.challenge.challenge_id,
+                "flag_candidate",
+                (finding,),
+                tuple(str(flag) for flag in python_random_xor["flags"]),
             )
 
         candidates = transform_candidates(text)

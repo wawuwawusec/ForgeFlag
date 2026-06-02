@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from forgeflag.crypto_analysis import recover_rsa_flags_from_text, rsa_summary_from_text
+from forgeflag.crypto_analysis import recover_python_random_xor_flags_from_text, recover_rsa_flags_from_text, rsa_summary_from_text
 
 
 class CryptoAnalysisTest(unittest.TestCase):
@@ -33,6 +33,28 @@ class CryptoAnalysisTest(unittest.TestCase):
 
         self.assertEqual(result["flags"], ["flag{rsa_known_factors}"])
         self.assertEqual(result["method"], "known_factors")
+
+    def test_recover_python_random_xor_flags_from_small_seed_script(self) -> None:
+        script = """
+import random
+from Crypto.Util.number import *
+
+# flag{
+flag = b'xxx'
+m = bytes_to_long(flag)
+seed = random.randint(1,2**12)
+random.seed(seed)
+key = random.getrandbits(150)
+enc = key ^ m
+print(enc)
+# 1027275529278332342097876075445098700759415489
+"""
+
+        result = recover_python_random_xor_flags_from_text(script)
+
+        self.assertEqual(result["flags"], ["flag{just_a_seed}"])
+        self.assertEqual(result["seed"], 3277)
+        self.assertEqual(result["key_bits"], 150)
 
 
 if __name__ == "__main__":

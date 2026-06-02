@@ -73,6 +73,42 @@ class CryptoSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Recovered RSA flag candidates")
         self.assertEqual(finding.evidence["rsa_recovery"]["method"], "known_factors")
 
+    def test_crypto_solver_recovers_python_random_xor_flag_from_attachment(self) -> None:
+        script = """
+import random
+from Crypto.Util.number import *
+
+# flag{
+flag = b'xxx'
+m = bytes_to_long(flag)
+seed = random.randint(1,2**12)
+random.seed(seed)
+key = random.getrandbits(150)
+enc = key ^ m
+print(enc)
+# 1027275529278332342097876075445098700759415489
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "easy_seed.py"
+            attachment.write_text(script, encoding="utf-8")
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-random-xor",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-random-xor")
+            finding = next(f for f in notebook.findings_for("crypto-random-xor") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{just_a_seed}"])
+        self.assertEqual(finding.finding, "Recovered Python random XOR flag candidates")
+        self.assertEqual(finding.evidence["python_random_xor"]["seed"], 3277)
+
     def test_crypto_solver_records_hash_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")

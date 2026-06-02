@@ -136,6 +136,81 @@ class ReportBuilderTest(unittest.TestCase):
         )
         self.assertIn("最短发现路径", [section["title"] for section in report["writeup"]["sections"]])
 
+    def test_report_uses_latest_solve_trace_after_rerun(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="trace-rerun",
+                solver="CryptoSolver",
+                finding="Recovered Python random XOR flag candidates",
+                evidence={"flag_candidates": ["flag{just_a_seed}"], "seed": 3277},
+                confidence=0.86,
+                next_action="Submit recovered flag candidate.",
+            ),
+            Finding(
+                challenge_id="trace-rerun",
+                solver="CryptoSolver",
+                finding="Recovered Python random XOR flag candidates",
+                evidence={"flag_candidates": ["flag{just_a_seed}"], "seed": 3277},
+                confidence=0.86,
+                next_action="Submit recovered flag candidate.",
+            ),
+        ]
+        observations = [
+            Observation(
+                challenge_id="trace-rerun",
+                source="ReconSolver",
+                kind="solve_trace_step",
+                summary="Step 1: ReconSolver completed with ok",
+                evidence={"step_index": 1, "solver": "ReconSolver", "status": "ok", "made_progress": True},
+            ),
+            Observation(
+                challenge_id="trace-rerun",
+                source="CryptoSolver",
+                kind="solve_trace_step",
+                summary="Step 2: CryptoSolver completed with completed",
+                evidence={"step_index": 2, "solver": "CryptoSolver", "status": "completed", "made_progress": False},
+            ),
+            Observation(
+                challenge_id="trace-rerun",
+                source="ReconSolver",
+                kind="solve_trace_step",
+                summary="Step 1: ReconSolver completed with ok",
+                evidence={"step_index": 1, "solver": "ReconSolver", "status": "ok", "made_progress": True},
+            ),
+            Observation(
+                challenge_id="trace-rerun",
+                source="CryptoSolver",
+                kind="solve_trace_step",
+                summary="Step 2: CryptoSolver completed with flag_candidate",
+                evidence={
+                    "step_index": 2,
+                    "solver": "CryptoSolver",
+                    "status": "flag_candidate",
+                    "flag_candidates": ["flag{just_a_seed}"],
+                    "made_progress": True,
+                },
+            ),
+        ]
+
+        report = ReportBuilder().build("trace-rerun", ("flag{just_a_seed}",), findings, observations)
+
+        self.assertEqual(
+            [(step["solver"], step["status"]) for step in report["solve_trace"]],
+            [("ReconSolver", "ok"), ("CryptoSolver", "flag_candidate")],
+        )
+        self.assertEqual([step["solver"] for step in report["flags"][0]["path"]], ["CryptoSolver"])
+        self.assertEqual(report["flags"][0]["replay_steps"], ["Submit recovered flag candidate."])
+        self.assertEqual(
+            [(step["solver"], step["status"]) for step in report["writeup"]["shortest_discovery_path"]],
+            [("ReconSolver", "ok"), ("CryptoSolver", "flag_candidate")],
+        )
+        tool_section = next(section for section in report["writeup"]["sections"] if section["title"] == "工具与观察")
+        tool_items = [(item["label"], item["value"]) for item in tool_section["items"]]
+        self.assertEqual(
+            tool_items.count(("CryptoSolver", "Recovered Python random XOR flag candidates")),
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

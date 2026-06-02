@@ -31,12 +31,18 @@ def build_solve_trace_step(
 
 
 def trace_steps_from_observations(observations: list[Observation] | tuple[Observation, ...]) -> list[dict[str, Any]]:
-    steps = [
-        _trace_step(observation)
-        for observation in observations
-        if observation.kind == "solve_trace_step"
-    ]
-    return sorted(steps, key=lambda step: step.get("step_index") or 0)
+    latest_run: list[dict[str, Any]] = []
+    previous_index = 0
+    for observation in observations:
+        if observation.kind != "solve_trace_step":
+            continue
+        step = _trace_step(observation)
+        step_index = step.get("step_index") or 0
+        if latest_run and step_index > 0 and (step_index == 1 or step_index <= previous_index):
+            latest_run = []
+        latest_run.append(step)
+        previous_index = step_index
+    return sorted(latest_run, key=lambda step: step.get("step_index") or 0)
 
 
 def shortest_trace_path(flag: str, trace_steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
