@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
+from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.llm import LLMResponse, OpenAIResponsesProvider, ZhipuChatCompletionsProvider
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
@@ -34,15 +34,26 @@ class LLMConfigTest(unittest.TestCase):
         config = LLMConfig.from_env(
             {
                 "FORGEFLAG_LLM_PROVIDER": "zhipu",
-                "FORGEFLAG_LLM_MODEL": "glm-4.7",
+                "FORGEFLAG_LLM_MODEL": "glm-5.1",
                 "ZAI_API_KEY": "zhipu-test",
             }
         )
 
         self.assertEqual(config.provider, "zhipu")
-        self.assertEqual(config.model, "glm-4.7")
+        self.assertEqual(config.model, "glm-5.1")
         self.assertEqual(config.api_key, "zhipu-test")
         self.assertEqual(config.base_url, "https://open.bigmodel.cn/api/paas/v4")
+        self.assertTrue(config.enabled)
+
+    def test_llm_config_defaults_zhipu_to_latest_model(self) -> None:
+        config = LLMConfig.from_env(
+            {
+                "FORGEFLAG_LLM_PROVIDER": "zhipu",
+                "ZAI_API_KEY": "zhipu-test",
+            }
+        )
+
+        self.assertEqual(config.model, DEFAULT_ZHIPU_MODEL)
         self.assertTrue(config.enabled)
 
     def test_llm_config_defaults_to_disabled_without_provider(self) -> None:
@@ -94,7 +105,7 @@ class ZhipuChatCompletionsProviderTest(unittest.TestCase):
 
         with patch("forgeflag.llm.request.urlopen", return_value=fake_response) as urlopen:
             provider = ZhipuChatCompletionsProvider(
-                LLMConfig(provider="zhipu", model="glm-4.7", api_key="zhipu-test", timeout_seconds=13)
+                LLMConfig(provider="zhipu", model="glm-5.1", api_key="zhipu-test", timeout_seconds=13)
             )
             result = provider.generate("You are ForgeFlag.", "Solve this scoped CTF challenge.")
 
@@ -104,7 +115,7 @@ class ZhipuChatCompletionsProviderTest(unittest.TestCase):
         self.assertEqual(request_obj.headers["Authorization"], "Bearer zhipu-test")
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 13)
         body = json.loads(request_obj.data.decode("utf-8"))
-        self.assertEqual(body["model"], "glm-4.7")
+        self.assertEqual(body["model"], "glm-5.1")
         self.assertEqual(body["messages"][0], {"role": "system", "content": "You are ForgeFlag."})
         self.assertEqual(body["messages"][1], {"role": "user", "content": "Solve this scoped CTF challenge."})
         self.assertFalse(body["stream"])
@@ -225,7 +236,7 @@ class LLMSolverTest(unittest.TestCase):
 
             summary = Manager(
                 notebook,
-                RunConfig(llm_config=LLMConfig(provider="zhipu", model="glm-4.7")),
+                RunConfig(llm_config=LLMConfig(provider="zhipu", model="glm-5.1")),
             ).run_challenge("llm-missing-key")
             findings = notebook.findings_for("llm-missing-key")
 

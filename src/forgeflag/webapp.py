@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
-from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
+from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.llm import build_llm_provider
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
@@ -306,7 +306,7 @@ def _llm_config(payload: dict[str, Any]) -> LLMConfig:
         )
     return LLMConfig(
         provider=provider,
-        model=_optional_string(payload.get("llm_model")) or base.model,
+        model=_optional_string(payload.get("llm_model")) or base.model or _default_llm_model(provider),
         api_key=_optional_string(payload.get("llm_api_key")) or base.api_key,
         base_url=_optional_string(payload.get("llm_base_url")) or _default_llm_base_url(provider, base.base_url),
         timeout_seconds=_int_value(payload.get("llm_timeout_seconds"), base.timeout_seconds),
@@ -325,6 +325,12 @@ def _default_llm_base_url(provider: str, fallback: str) -> str:
     if provider == "zhipu":
         return "https://open.bigmodel.cn/api/paas/v4"
     return fallback
+
+
+def _default_llm_model(provider: str) -> str | None:
+    if provider == "zhipu":
+        return DEFAULT_ZHIPU_MODEL
+    return None
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -504,12 +510,14 @@ INDEX_HTML = r"""<!doctype html>
     const asList = (value) => Array.isArray(value) ? value : [];
     const show = (data, tab="raw") => $("output").innerHTML = renderData(tab, data);
     const LLM_CONFIG_KEY = "forgeflag.llm.config.v1";
+    const DEFAULT_ZHIPU_MODEL = "glm-5.1";
     categories.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; $("category").appendChild(o); });
     function syncLLMSettings() {
       $("llmSettings").hidden = !$("llmEnabled").checked;
       if ($("llmEnabled").checked && $("llmProvider").value === "disabled") $("llmProvider").value = "zhipu";
       const zhipu = $("llmProvider").value === "zhipu";
-      $("llmModel").placeholder = zhipu ? "glm-4.7" : "gpt-4.1";
+      $("llmModel").placeholder = zhipu ? DEFAULT_ZHIPU_MODEL : "gpt-4.1";
+      if (zhipu && !$("llmModel").value.trim()) $("llmModel").value = DEFAULT_ZHIPU_MODEL;
       $("llmApiKey").placeholder = zhipu ? "ZAI_API_KEY" : "sk-...";
       $("llmBaseUrl").placeholder = zhipu ? "https://open.bigmodel.cn/api/paas/v4" : "https://api.openai.com/v1";
     }

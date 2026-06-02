@@ -195,13 +195,13 @@ class CliTest(unittest.TestCase):
                         "--llm-provider",
                         "zhipu",
                         "--llm-model",
-                        "glm-4.7",
+                        "glm-5.1",
                     ]
                 )
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(captured["config"].llm_config.provider, "zhipu")
-        self.assertEqual(captured["config"].llm_config.model, "glm-4.7")
+        self.assertEqual(captured["config"].llm_config.model, "glm-5.1")
 
     def test_catalog_command_lists_recommended_projects(self) -> None:
         output = io.StringIO()

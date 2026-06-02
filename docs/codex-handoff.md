@@ -192,9 +192,9 @@ export OPENAI_API_KEY="sk-..."
 .venv/bin/forgeflag run <challenge_id> --llm-provider openai --llm-model gpt-4.1
 
 export FORGEFLAG_LLM_PROVIDER=zhipu
-export FORGEFLAG_LLM_MODEL=glm-4.7
+export FORGEFLAG_LLM_MODEL=glm-5.1
 export ZAI_API_KEY="..."
-.venv/bin/forgeflag run <challenge_id> --llm-provider zhipu --llm-model glm-4.7
+.venv/bin/forgeflag run <challenge_id> --llm-provider zhipu --llm-model glm-5.1
 ```
 
 Optional IDA MCP run:

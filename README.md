@@ -83,14 +83,14 @@ For 智谱 GLM, choose `zhipu` and use the OpenAI-compatible base URL:
 
 ```bash
 export FORGEFLAG_LLM_PROVIDER=zhipu
-export FORGEFLAG_LLM_MODEL=glm-4.7
+export FORGEFLAG_LLM_MODEL=glm-5.1
 export ZAI_API_KEY="..."
-forgeflag --db .forgeflag/notebook.sqlite run forensic-01 --llm-provider zhipu --llm-model glm-4.7
+forgeflag --db .forgeflag/notebook.sqlite run forensic-01 --llm-provider zhipu --llm-model glm-5.1
 ```
 
 `LLMSolver` writes planning guidance to the notebook. If the model returns JSON with `summary`, `suggested_solvers`, `next_actions`, and `tool_hints`, ForgeFlag stores it as an `llm_solver_plan` observation and can insert suggested solvers into the remaining run queue. Specialist solvers still perform scoped tool execution and the verifier only accepts evidence-backed flags.
 
-The Web UI also has a per-run "大模型分析" switch. Select `智谱 GLM`, enter a GLM model such as `glm-4.7`, and paste the API key. The UI can save provider/model/base URL/timeout to browser local storage and includes a connection test button. API keys are not stored unless you explicitly tick "记住 API Key", and ForgeFlag never writes the token to SQLite.
+The Web UI also has a per-run "大模型分析" switch. Select `智谱 GLM`, enter a GLM model such as `glm-5.1`, and paste the API key. The UI can save provider/model/base URL/timeout to browser local storage and includes a connection test button. API keys are not stored unless you explicitly tick "记住 API Key", and ForgeFlag never writes the token to SQLite.
 
 IDA MCP reverse-engineering support is also optional. When enabled, `ReverseSolver` and `PwnSolver` call a read-only IDA MCP server for registered binary attachments and store function, string, and disassembly/decompiler pivot evidence in the notebook:
 

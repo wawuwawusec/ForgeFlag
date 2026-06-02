@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from forgeflag.domain import LLMConfig
 from forgeflag.webapp import create_handler
 
 
@@ -224,7 +225,7 @@ class WebAppApiTest(unittest.TestCase):
                     {
                         "llm_enabled": True,
                         "llm_provider": "zhipu",
-                        "llm_model": "glm-4.7",
+                        "llm_model": "glm-5.1",
                         "llm_api_key": "zhipu-web-ui",
                     },
                 )
@@ -232,14 +233,45 @@ class WebAppApiTest(unittest.TestCase):
         llm_config = captured["config"].llm_config
         self.assertTrue(llm_config.enabled)
         self.assertEqual(llm_config.provider, "zhipu")
-        self.assertEqual(llm_config.model, "glm-4.7")
+        self.assertEqual(llm_config.model, "glm-5.1")
         self.assertEqual(llm_config.api_key, "zhipu-web-ui")
         self.assertEqual(llm_config.base_url, "https://open.bigmodel.cn/api/paas/v4")
+
+    def test_zhipu_web_config_defaults_to_latest_model_when_blank(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            handler_cls = create_handler(db)
+            handler_cls.handle_create_challenge({"challenge_id": "glm-default-web-run", "category": "misc"})
+            captured = {}
+
+            class FakeManager:
+                def __init__(self, notebook, config):
+                    captured["config"] = config
+
+                def run_challenge(self, challenge_id: str):
+                    return {"status": "ok", "challenge_id": challenge_id}
+
+            with patch("forgeflag.webapp.Manager", FakeManager), patch(
+                "forgeflag.webapp.LLMConfig.from_env", return_value=LLMConfig(provider="disabled")
+            ):
+                handler_cls.handle_run_challenge(
+                    "glm-default-web-run",
+                    {
+                        "llm_enabled": True,
+                        "llm_provider": "zhipu",
+                        "llm_api_key": "zhipu-web-ui",
+                    },
+                )
+
+        llm_config = captured["config"].llm_config
+        self.assertEqual(llm_config.provider, "zhipu")
+        self.assertEqual(llm_config.model, "glm-5.1")
 
     def test_llm_test_endpoint_uses_runtime_config_without_returning_key(self) -> None:
         class FakeProvider:
             name = "zhipu"
-            model = "glm-4.7"
+            model = "glm-5.1"
             enabled = True
 
             def generate(self, instructions: str, prompt: str):
@@ -254,14 +286,14 @@ class WebAppApiTest(unittest.TestCase):
                 {
                     "llm_enabled": True,
                     "llm_provider": "zhipu",
-                    "llm_model": "glm-4.7",
+                    "llm_model": "glm-5.1",
                     "llm_api_key": "sensitive-token",
                 }
             )
 
         self.assertEqual(response["status"], "ok")
         self.assertEqual(response["provider"], "zhipu")
-        self.assertEqual(response["model"], "glm-4.7")
+        self.assertEqual(response["model"], "glm-5.1")
         self.assertEqual(response["content_sample"], "GLM test ok")
         self.assertNotIn("api_key", response)
         self.assertNotIn("sensitive-token", json.dumps(response))

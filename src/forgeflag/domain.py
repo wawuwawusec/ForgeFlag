@@ -8,6 +8,9 @@ import shlex
 from typing import Any
 
 
+DEFAULT_ZHIPU_MODEL = "glm-5.1"
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -106,6 +109,8 @@ class LLMConfig:
         values = env if env is not None else os.environ
         provider = values.get("FORGEFLAG_LLM_PROVIDER", "disabled").strip().lower() or "disabled"
         model = values.get("FORGEFLAG_LLM_MODEL")
+        if provider == "zhipu" and not model:
+            model = DEFAULT_ZHIPU_MODEL
         api_key = values.get("FORGEFLAG_LLM_API_KEY")
         if provider == "openai":
             api_key = api_key or values.get("OPENAI_API_KEY")
