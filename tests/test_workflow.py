@@ -213,6 +213,59 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(observations[0].summary, "Recovered archive password candidate")
         self.assertIn("Recovered archive password candidate", consumer.evidence["observation_summaries"])
 
+    def test_manager_records_solve_trace_steps_for_each_solver(self) -> None:
+        class FirstSolver:
+            name = "FirstSolver"
+            supported_categories = {ChallengeCategory.MISC}
+
+            def solve(self, context: SolverContext) -> SolverResult:
+                finding = Finding(
+                    challenge_id=context.challenge.challenge_id,
+                    solver=self.name,
+                    finding="Decoded warmup hint",
+                    evidence={"hint": "try binary ascii"},
+                    confidence=0.8,
+                    next_action="Run the second solver.",
+                )
+                context.notebook.add_finding(finding)
+                return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
+        class SecondSolver:
+            name = "SecondSolver"
+            supported_categories = {ChallengeCategory.MISC}
+
+            def solve(self, context: SolverContext) -> SolverResult:
+                finding = Finding(
+                    challenge_id=context.challenge.challenge_id,
+                    solver=self.name,
+                    finding="Recovered flag candidate",
+                    evidence={"flag_candidates": ["flag{trace_path}"]},
+                    confidence=0.9,
+                    next_action="Submit flag candidate.",
+                )
+                context.notebook.add_finding(finding)
+                return SolverResult(
+                    self.name,
+                    context.challenge.challenge_id,
+                    "ok",
+                    (finding,),
+                    ("flag{trace_path}",),
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="trace-01", category=ChallengeCategory.MISC))
+
+            summary = Manager(notebook, RunConfig(), solvers=[FirstSolver(), SecondSolver()]).run_challenge("trace-01")
+            trace = [observation for observation in notebook.observations_for("trace-01") if observation.kind == "solve_trace_step"]
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual([step.evidence["step_index"] for step in trace], [1, 2])
+        self.assertEqual([step.source for step in trace], ["FirstSolver", "SecondSolver"])
+        self.assertEqual(trace[0].evidence["findings"][0]["finding"], "Decoded warmup hint")
+        self.assertEqual(trace[1].evidence["flag_candidates"], ["flag{trace_path}"])
+        self.assertTrue(trace[1].evidence["made_progress"])
+
 
 if __name__ == "__main__":
     unittest.main()

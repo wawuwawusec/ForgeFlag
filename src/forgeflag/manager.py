@@ -22,6 +22,7 @@ from forgeflag.solvers import (
     TrafficSolver,
     WebSolver,
 )
+from forgeflag.trace import build_solve_trace_step
 from forgeflag.verifier import Verifier
 
 
@@ -103,6 +104,14 @@ class Manager:
                 result.flag_candidates,
             ):
                 self.notebook.add_observation(observation)
+            self.notebook.add_observation(
+                build_solve_trace_step(
+                    challenge_id,
+                    index + 1,
+                    result,
+                    context.observations,
+                )
+            )
             selected = self._apply_llm_solver_plan(selected, index + 1, self.notebook.observations_for(challenge_id))
             index += 1
 

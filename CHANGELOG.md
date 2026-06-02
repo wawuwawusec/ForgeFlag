@@ -22,6 +22,7 @@
 - Added Observer-distilled shared observations and per-solver context injection.
 - Added a `forgeflag observations` CLI command.
 - Added automatic replay reports for accepted flags and a `forgeflag report` CLI command.
+- Added SolveTrace step observations and report-level shortest discovery paths for accepted flags.
 - Added `LLMConfig`, provider adapters, optional OpenAI Responses and 智谱 GLM chat-completions adapters, and `LLMSolver` strategy planning.
 - Added structured LLM solve plans and dynamic solver queue insertion from `llm_solver_plan` observations.
 - Upgraded LLM planning to Planner v2 JSON with hypotheses, expected evidence, fallback plans, markdown-fence parsing, empty-plan fallback, and duplicate suggestion cleanup.

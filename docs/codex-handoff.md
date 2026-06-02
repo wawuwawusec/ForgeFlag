@@ -22,6 +22,8 @@ Implemented so far:
 - Observer-distilled shared observations.
 - Automatic replay reports for accepted flags.
   - Reports now include a write-up style structure and Markdown in addition to the legacy flag/path replay data
+  - Manager records `solve_trace_step` observations after each solver run
+  - Reports expose `solve_trace`, per-flag `trace_path`, and write-up `shortest_discovery_path`
 - Optional LLM planning layer:
   - `LLMConfig` reads `FORGEFLAG_LLM_PROVIDER`, `FORGEFLAG_LLM_MODEL`, `FORGEFLAG_LLM_API_KEY`, `OPENAI_API_KEY`, `ZAI_API_KEY`, and `FORGEFLAG_LLM_BASE_URL`
   - `OpenAIResponsesProvider` uses the Responses API via standard-library HTTP

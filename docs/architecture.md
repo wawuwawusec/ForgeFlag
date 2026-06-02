@@ -28,9 +28,13 @@ The notebook is the durable blackboard. It stores challenges, attachment paths, 
 
 The observer filters noisy solver output into high-value observations. The manager reloads these observations before each solver call, so later solvers inherit concise progress signals without reading every raw finding or tool log.
 
+### SolveTrace
+
+After each solver run, the manager records a `solve_trace_step` observation with the step index, solver status, finding summaries, flag candidates, progress signal, and any matching LLM plan rationale. Reports use these trace observations to expose the full solver timeline and a per-flag shortest discovery path.
+
 ### LLM Planning
 
-`LLMSolver` is optional and disabled unless an LLM provider is configured. It may return free-form strategy text or compact JSON with `summary`, `suggested_solvers`, `next_actions`, and `tool_hints`; the observer promotes structured plans into shared observations for the manager to use in solver scheduling.
+`LLMSolver` is optional and disabled unless an LLM provider is configured. It may return free-form strategy text or compact Planner v2 JSON with `summary`, `hypotheses`, `suggested_solvers`, `next_actions`, `tool_hints`, `expected_evidence`, and `fallback_plan`; the observer promotes structured plans into shared observations for the manager to use in solver scheduling.
 
 ### IDA MCP Adapter
 

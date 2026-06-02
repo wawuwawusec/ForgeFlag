@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from forgeflag.domain import Challenge, Finding, Observation
+from forgeflag.trace import shortest_trace_path, trace_steps_from_observations
 
 
 class ReportBuilder:
@@ -14,14 +15,24 @@ class ReportBuilder:
         observations: list[Observation],
         challenge: Challenge | None = None,
     ) -> dict[str, Any]:
+        solve_trace = trace_steps_from_observations(observations)
         flag_reports = [
-            self._flag_report(flag, findings, observations)
+            self._flag_report(flag, findings, observations, solve_trace)
             for flag in accepted_flags
         ]
-        writeup = self._writeup_report(challenge_id, accepted_flags, flag_reports, findings, observations, challenge)
+        writeup = self._writeup_report(
+            challenge_id,
+            accepted_flags,
+            flag_reports,
+            findings,
+            observations,
+            challenge,
+            solve_trace,
+        )
         return {
             "challenge_id": challenge_id,
             "flags": flag_reports,
+            "solve_trace": solve_trace,
             "writeup": writeup,
         }
 
@@ -30,12 +41,14 @@ class ReportBuilder:
         flag: str,
         findings: list[Finding],
         observations: list[Observation],
+        solve_trace: list[dict[str, Any]],
     ) -> dict[str, Any]:
         path = [
             self._finding_step(finding)
             for finding in findings
             if flag in str(finding.evidence) or flag in finding.finding
         ]
+        trace_path = shortest_trace_path(flag, solve_trace)
         related_observations = [
             self._observation_step(observation)
             for observation in observations
@@ -49,6 +62,7 @@ class ReportBuilder:
         return {
             "flag": flag,
             "path": path[:3],
+            "trace_path": trace_path,
             "observations": related_observations[:3],
             "replay_steps": replay_steps[:3],
         }
@@ -79,12 +93,14 @@ class ReportBuilder:
         findings: list[Finding],
         observations: list[Observation],
         challenge: Challenge | None,
+        solve_trace: list[dict[str, Any]],
     ) -> dict[str, Any]:
         title = challenge.title if challenge and challenge.title else challenge_id
         category = challenge.category.value if challenge else "unknown"
         tags = list(challenge.tags) if challenge else []
         attachments = list(challenge.attachment_paths) if challenge else []
         path_steps = flag_reports[0]["path"] if flag_reports else []
+        trace_path = flag_reports[0]["trace_path"] if flag_reports else solve_trace[:5]
         observation_steps = flag_reports[0]["observations"] if flag_reports else []
         replay_steps = flag_reports[0]["replay_steps"] if flag_reports else []
 
@@ -123,9 +139,14 @@ class ReportBuilder:
                 "items": _evidence_items(path_steps, observation_steps),
             },
             {
+                "title": "最短发现路径",
+                "body": "按 solver 执行轨迹压缩出的发现路径，方便从答题者视角复盘每一步为什么存在。",
+                "steps": _trace_replay_steps(trace_path),
+            },
+            {
                 "title": "复现步骤",
                 "body": "按下面顺序可以复现最短发现路径。",
-                "steps": replay_steps or _fallback_replay_steps(path_steps),
+                "steps": replay_steps or _trace_replay_steps(trace_path) or _fallback_replay_steps(path_steps),
             },
             {
                 "title": "工具与观察",
@@ -141,6 +162,8 @@ class ReportBuilder:
             "tags": tags,
             "attachments": attachments,
             "final_flags": list(accepted_flags),
+            "solve_trace": solve_trace,
+            "shortest_discovery_path": trace_path,
             "sections": sections,
             "markdown": markdown,
         }
@@ -201,6 +224,18 @@ def _fallback_replay_steps(path_steps: list[dict[str, Any]]) -> list[str]:
         finding = step.get("finding") or "finding"
         steps.append(f"复查 {solver} 的 {finding} 证据。")
     return steps[:5]
+
+
+def _trace_replay_steps(trace_path: list[dict[str, Any]]) -> list[str]:
+    steps = []
+    for step in trace_path:
+        index = step.get("step_index") or len(steps) + 1
+        solver = step.get("solver") or "solver"
+        rationale = step.get("rationale") or step.get("summary") or "记录分析步骤。"
+        candidates = step.get("flag_candidates") or []
+        suffix = f" 候选 flag: {', '.join(candidates)}。" if candidates else ""
+        steps.append(f"{index}. {solver}: {rationale}{suffix}")
+    return steps[:8]
 
 
 def _tool_observation_items(findings: list[Finding], observations: list[Observation]) -> list[dict[str, str]]:

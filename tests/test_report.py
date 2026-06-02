@@ -87,6 +87,55 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("# Base32 warmup", writeup["markdown"])
         self.assertIn("flag{writeup_style}", writeup["markdown"])
 
+    def test_report_includes_solve_trace_and_shortest_discovery_path(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="trace-report",
+                solver="MiscSolver",
+                finding="Recovered flag candidate",
+                evidence={"flag_candidates": ["flag{trace_report}"]},
+                confidence=0.91,
+                next_action="Submit flag candidate.",
+            )
+        ]
+        observations = [
+            Observation(
+                challenge_id="trace-report",
+                source="ReconSolver",
+                kind="solve_trace_step",
+                summary="Step 1: ReconSolver completed with ok",
+                evidence={
+                    "step_index": 1,
+                    "solver": "ReconSolver",
+                    "status": "ok",
+                    "flag_candidates": [],
+                    "made_progress": True,
+                },
+            ),
+            Observation(
+                challenge_id="trace-report",
+                source="MiscSolver",
+                kind="solve_trace_step",
+                summary="Step 2: MiscSolver completed with ok",
+                evidence={
+                    "step_index": 2,
+                    "solver": "MiscSolver",
+                    "status": "ok",
+                    "flag_candidates": ["flag{trace_report}"],
+                    "made_progress": True,
+                },
+            ),
+        ]
+
+        report = ReportBuilder().build("trace-report", ("flag{trace_report}",), findings, observations)
+
+        self.assertEqual([step["solver"] for step in report["solve_trace"]], ["ReconSolver", "MiscSolver"])
+        self.assertEqual(
+            [step["solver"] for step in report["flags"][0]["trace_path"]],
+            ["ReconSolver", "MiscSolver"],
+        )
+        self.assertIn("最短发现路径", [section["title"] for section in report["writeup"]["sections"]])
+
 
 if __name__ == "__main__":
     unittest.main()
