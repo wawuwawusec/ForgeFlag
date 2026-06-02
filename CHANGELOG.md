@@ -26,6 +26,7 @@
 - Added `LLMConfig`, provider adapters, optional OpenAI Responses and 智谱 GLM chat-completions adapters, and `LLMSolver` strategy planning.
 - Added structured LLM solve plans and dynamic solver queue insertion from `llm_solver_plan` observations.
 - Upgraded LLM planning to Planner v2 JSON with hypotheses, expected evidence, fallback plans, markdown-fence parsing, empty-plan fallback, and duplicate suggestion cleanup.
+- Added category-specific LLM prompt playbooks for Web, Crypto, Forensics, Traffic, Reverse, Pwn, Misc, Infra, Recon, and Unknown routing.
 - Changed LLM planning failures to non-blocking findings so deterministic solvers still run when a web-run LLM key or model is misconfigured.
 - Added `.env.example` and a local artifact-based `make smoke` workflow.
 - Added `scripts/forgeflag-control` for one-command local start, stop, status, restart, and smoke workflows.

@@ -6,6 +6,7 @@ from typing import Any
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.llm import LLMProvider
+from forgeflag.llm_prompts import category_playbook
 from forgeflag.solvers.base import SolverContext
 
 
@@ -111,6 +112,7 @@ def _prompt(context: SolverContext) -> str:
             f"description: {challenge.description or ''}",
             f"tags: {', '.join(challenge.tags)}",
             f"attachments: {', '.join(challenge.attachment_paths)}",
+            category_playbook(challenge.category),
             "shared_observations:",
             observations or "- none",
         ]

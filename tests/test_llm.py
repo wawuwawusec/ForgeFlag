@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.llm import LLMResponse, OpenAIResponsesProvider, ZhipuChatCompletionsProvider
+from forgeflag.llm_prompts import category_playbook
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.solvers.llm import LLMSolver
@@ -122,6 +123,24 @@ class ZhipuChatCompletionsProviderTest(unittest.TestCase):
 
 
 class LLMSolverTest(unittest.TestCase):
+    def test_category_playbooks_cover_core_ctf_categories(self) -> None:
+        expectations = {
+            ChallengeCategory.WEB: ("WebSolver", "/robots.txt"),
+            ChallengeCategory.CRYPTO: ("CryptoSolver", "RSA"),
+            ChallengeCategory.FORENSICS: ("ForensicsSolver", "PNG chunks/IHDR/CRC"),
+            ChallengeCategory.TRAFFIC: ("TrafficSolver", "protocol hierarchy"),
+            ChallengeCategory.REVERSE: ("ReverseSolver", "IDA/Ghidra/r2"),
+            ChallengeCategory.PWN: ("PwnSolver", "checksec"),
+            ChallengeCategory.MISC: ("MiscSolver", "QR/barcode"),
+        }
+
+        for category, required_fragments in expectations.items():
+            with self.subTest(category=category.value):
+                prompt = category_playbook(category)
+                self.assertIn("category_playbook:", prompt)
+                for fragment in required_fragments:
+                    self.assertIn(fragment, prompt)
+
     def test_llm_solver_records_strategy_finding_when_provider_is_enabled(self) -> None:
         class FakeProvider:
             name = "fake"
@@ -359,6 +378,117 @@ class LLMSolverTest(unittest.TestCase):
             ).run_challenge("llm-filter")
 
         self.assertEqual([row["solver"] for row in summary["solvers"]], ["LLMSolver", "ExtraSolver"])
+
+    def test_llm_solver_prompt_includes_web_category_playbook(self) -> None:
+        class RecordingProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def __init__(self) -> None:
+                self.prompt = ""
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.prompt = prompt
+                return LLMResponse(content="Web planning text.", raw={"id": "fake-response"})
+
+        provider = RecordingProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="llm-web-prompt",
+                    category=ChallengeCategory.WEB,
+                    target="http://127.0.0.1:8081",
+                    description="A login page with hidden routes.",
+                )
+            )
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(provider)],
+            ).run_challenge("llm-web-prompt")
+
+        self.assertIn("category_playbook:", provider.prompt)
+        self.assertIn("response capture", provider.prompt)
+        self.assertIn("/robots.txt", provider.prompt)
+        self.assertIn("SQL/NoSQL injection", provider.prompt)
+        self.assertIn("suggested_solvers: WebSolver", provider.prompt)
+
+    def test_llm_solver_prompt_includes_traffic_category_playbook(self) -> None:
+        class RecordingProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def __init__(self) -> None:
+                self.prompt = ""
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.prompt = prompt
+                return LLMResponse(content="Traffic planning text.", raw={"id": "fake-response"})
+
+        provider = RecordingProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            pcap = Path(tmp) / "capture.pcap"
+            pcap.write_bytes(b"pcap")
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="llm-traffic-prompt",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(pcap),),
+                )
+            )
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(provider)],
+            ).run_challenge("llm-traffic-prompt")
+
+        self.assertIn("protocol hierarchy", provider.prompt)
+        self.assertIn("DNS queries/TXT", provider.prompt)
+        self.assertIn("TCP streams", provider.prompt)
+        self.assertIn("tshark_flag_scan", provider.prompt)
+        self.assertIn("suggested_solvers: TrafficSolver", provider.prompt)
+
+    def test_llm_solver_prompt_uses_unknown_category_routing_playbook(self) -> None:
+        class RecordingProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def __init__(self) -> None:
+                self.prompt = ""
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.prompt = prompt
+                return LLMResponse(content="Unknown planning text.", raw={"id": "fake-response"})
+
+        provider = RecordingProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="llm-unknown-prompt",
+                    category=ChallengeCategory.UNKNOWN,
+                    description="Maybe base32, maybe a PNG.",
+                )
+            )
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(provider)],
+            ).run_challenge("llm-unknown-prompt")
+
+        self.assertIn("category_playbook:", provider.prompt)
+        self.assertIn("route the challenge", provider.prompt)
+        self.assertIn("artifact type", provider.prompt)
+        self.assertIn("cheap evidence first", provider.prompt)
+        self.assertIn("suggested_solvers:", provider.prompt)
 
     def test_manager_adds_solver_suggested_by_llm_plan_observation(self) -> None:
         class FakeProvider:

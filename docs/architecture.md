@@ -34,7 +34,7 @@ After each solver run, the manager records a `solve_trace_step` observation with
 
 ### LLM Planning
 
-`LLMSolver` is optional and disabled unless an LLM provider is configured. It may return free-form strategy text or compact Planner v2 JSON with `summary`, `hypotheses`, `suggested_solvers`, `next_actions`, `tool_hints`, `expected_evidence`, and `fallback_plan`; the observer promotes structured plans into shared observations for the manager to use in solver scheduling.
+`LLMSolver` is optional and disabled unless an LLM provider is configured. The prompt includes a category-specific playbook for Web, Crypto, Forensics, Traffic, Reverse, Pwn, Misc, Infra, Recon, or Unknown routing, then asks for free-form strategy text or compact Planner v2 JSON with `summary`, `hypotheses`, `suggested_solvers`, `next_actions`, `tool_hints`, `expected_evidence`, and `fallback_plan`; the observer promotes structured plans into shared observations for the manager to use in solver scheduling.
 
 ### IDA MCP Adapter
 
