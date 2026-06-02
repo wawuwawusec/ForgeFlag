@@ -106,16 +106,24 @@ def create_handler(db_path: str | Path):
         def handle_tools(cls) -> dict[str, Any]:
             wrappers = ToolRunner(ScopePolicy()).inventory()
             catalog = recommended_projects()
+            host_wrappers = sum(1 for row in wrappers if row.get("source") == "host")
+            docker_wrappers = sum(1 for row in wrappers if row.get("source") == "docker")
+            missing_wrappers = sum(1 for row in wrappers if row.get("source") == "missing")
             return {
                 "wrappers": wrappers,
                 "catalog": catalog,
                 "counts": {
                     "wrappers": len(wrappers),
                     "available_wrappers": sum(1 for row in wrappers if row.get("available")),
+                    "host_wrappers": host_wrappers,
+                    "docker_wrappers": docker_wrappers,
+                    "missing_wrappers": missing_wrappers,
                     "catalog": len(catalog),
                 },
                 "runtime_smoke": {
                     "command": "scripts/forgeflag-tool-smoke",
+                    "docker_build_command": "scripts/forgeflag-control docker-build",
+                    "docker_smoke_command": "scripts/forgeflag-control docker-smoke",
                     "active_network_command": "scripts/forgeflag-tool-smoke --include-active-network",
                     "cracking_command": "scripts/forgeflag-tool-smoke --include-cracking",
                 },
@@ -735,10 +743,24 @@ INDEX_HTML = r"""<!doctype html>
               <div class="card-title">
                 <h3>工具总览</h3>
                 <div class="meta">${escapeHtml(counts.available_wrappers ?? 0)} / ${escapeHtml(counts.wrappers ?? wrappers.length)} wrappers available · ${escapeHtml(counts.catalog ?? catalog.length)} catalog entries</div>
-                <div class="meta">Runtime smoke: ${escapeHtml(smoke.command || "scripts/forgeflag-tool-smoke")}</div>
-                <div class="meta">Active probes are scoped and opt-in: ${escapeHtml(smoke.active_network_command || "scripts/forgeflag-tool-smoke --include-active-network")}</div>
               </div>
-              <span class="badge muted">分层展示</span>
+              <span class="badge muted">host/docker</span>
+            </div>
+            <div class="kv-grid">
+              <div class="kv"><span>Host</span><strong>${escapeHtml(counts.host_wrappers ?? wrappers.filter(row => row.source === "host").length)}</strong></div>
+              <div class="kv"><span>Docker</span><strong>${escapeHtml(counts.docker_wrappers ?? wrappers.filter(row => row.source === "docker").length)}</strong></div>
+              <div class="kv"><span>Missing</span><strong>${escapeHtml(counts.missing_wrappers ?? wrappers.filter(row => row.source === "missing").length)}</strong></div>
+            </div>
+            <div class="kv">
+              <span>Docker install</span>
+              <strong>${escapeHtml(smoke.docker_build_command || "scripts/forgeflag-control docker-build")}</strong>
+              <div class="meta">安装后重启 Web：scripts/forgeflag-control restart</div>
+            </div>
+            <div class="kv">
+              <span>Verification</span>
+              <strong>${escapeHtml(smoke.docker_smoke_command || "scripts/forgeflag-control docker-smoke")}</strong>
+              <div class="meta">Offline smoke: ${escapeHtml(smoke.command || "scripts/forgeflag-tool-smoke")}</div>
+              <div class="meta">Active probes are scoped and opt-in: ${escapeHtml(smoke.active_network_command || "scripts/forgeflag-tool-smoke --include-active-network")}</div>
             </div>
           </div>
           ${renderToolList("可直接调用的 Wrapper", wrappers, "tool")}

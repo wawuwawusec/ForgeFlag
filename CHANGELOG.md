@@ -51,3 +51,4 @@
 - Fixed tool availability checks so missing pyenv shims are not reported as runnable wrappers.
 - Added OrbStack/Docker tool fallback via `scripts/forgeflag-control docker-build`, `.forgeflag/docker.env`, and Docker-backed wrapper execution for missing host tools.
 - Added Docker smoke verification for container-backed wrappers, including path rewriting for mounted artifacts and `--key=/path` arguments.
+- Improved the Web UI Tools tab with host/Docker/missing wrapper counts and the Docker build/smoke commands needed to install and verify the tool image.

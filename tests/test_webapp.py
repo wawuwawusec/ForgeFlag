@@ -107,6 +107,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("function renderFindings", html)
         self.assertIn("function renderReport", html)
         self.assertIn("推荐 CTF 工具目录", html)
+        self.assertIn("Docker install", html)
+        self.assertIn("host/docker", html)
         self.assertIn("查看原始 JSON", html)
 
     def test_project_catalog_endpoint_lists_recommended_projects(self) -> None:
@@ -125,6 +127,15 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("wrappers", payload)
         self.assertIn("catalog", payload)
         self.assertIn("counts", payload)
+        self.assertIn("host_wrappers", payload["counts"])
+        self.assertIn("docker_wrappers", payload["counts"])
+        self.assertIn("missing_wrappers", payload["counts"])
+        self.assertEqual(
+            payload["counts"]["wrappers"],
+            payload["counts"]["host_wrappers"] + payload["counts"]["docker_wrappers"] + payload["counts"]["missing_wrappers"],
+        )
+        self.assertEqual(payload["runtime_smoke"]["docker_build_command"], "scripts/forgeflag-control docker-build")
+        self.assertEqual(payload["runtime_smoke"]["docker_smoke_command"], "scripts/forgeflag-control docker-smoke")
         self.assertIn("file", {row["name"] for row in payload["wrappers"]})
         self.assertIn("Burp Suite Community", {row["name"] for row in payload["catalog"]})
 

@@ -103,6 +103,7 @@ Implemented so far:
   - entered LLM keys are used for run/test requests and are never stored in SQLite
   - run, auto-loaded findings, observations, artifact summaries, replay report, tools, and catalog views
   - Summary, Findings, Observations, Artifacts, Report, Tools, and Catalog render as readable cards with collapsible raw JSON for debugging
+  - Tools tab shows host/Docker/missing wrapper counts, per-wrapper source, and Docker build/smoke commands
 - Web-run CTF corpus smoke:
   - `scripts/forgeflag-corpus-smoke --url http://127.0.0.1:8080`
   - Generates local fixtures for web, crypto, misc, forensics, traffic, reverse, and pwn
