@@ -57,6 +57,7 @@ Each row reports:
 | `hard-crypto-aes-ctr-reuse` | crypto | AES-CTR nonce reuse | classify stream keystream reuse |
 | `hard-crypto-poly1305-reuse` | crypto | Poly1305 one-time key reuse | classify MAC algebra workflow |
 | `hard-traffic-dns-split` | traffic | split DNS label exfiltration | reconstruct encoded flag |
+| `hard-traffic-http-stream-follow` | traffic | HTTP payload in an interesting TCP stream | follow stream id and recover payload flag |
 | `hard-forensics-mail-powershell` | forensics | suspicious mail with encoded PowerShell | mail and encoded command triage |
 | `hard-reverse-packed-away` | reverse | packer marker before decompilation | UPX/packed binary recognition |
 | `hard-pwn-format-string` | pwn | source-level `printf(user_input)` bug | format string and pwntools workflow |
@@ -72,13 +73,14 @@ scripts/forgeflag-control restart
 scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict
 ```
 
-Result: 9/9 cases reached full score through the Web API.
+Result: 10/10 cases reached full score through the Web API.
 
 | Area | Improvement Verified |
 | --- | --- |
 | Web | Follows same-origin routes mentioned in client-side script strings, including hidden JSON APIs. |
 | Web | Stores plain-text response samples and emits chain hints such as LFI, WAR, and Java. |
 | Traffic | Reconstructs split encoded DNS labels before decoding exfiltrated flags. |
+| Traffic | Follows shortlisted TCP streams and stores stream id, hints, payload sample, and recovered flags. |
 | Crypto | Recognizes AES-CTR nonce/keystream reuse and Poly1305 one-time-key algebra workflows. |
 | Forensics | Re-runs transforms on decoded mail/PowerShell content and recovers nested base64 flags. |
 | Pwn | Recognizes source-level `printf(user_input)` format string sinks and suggests a pwntools path. |

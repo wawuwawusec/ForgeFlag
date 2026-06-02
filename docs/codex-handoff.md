@@ -84,6 +84,7 @@ Implemented so far:
   - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, `tshark_flag_scan`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, and `tshark_http_artifact_scan`
   - HTTP artifact payload decoding via shared transform candidates before flag extraction
   - DNS query/TXT/rcode summary, encoded DNS query-label hints, and TCP stream shortlist evidence
+  - shortlisted TCP stream follow-up with stream id, hints, payload sample, and recovered flag evidence
   - support for common CTF typo markers such as `f1ag{...}`
   - structured tool evidence in notebook
   - flag candidate extraction from packet capture output
@@ -118,6 +119,11 @@ Implemented so far:
   - `scripts/forgeflag-corpus-smoke --url http://127.0.0.1:8080`
   - Generates local fixtures for web, crypto, misc, forensics, traffic, reverse, and pwn
   - Submits challenges through the Web API and exits non-zero if expected flags are not accepted
+- Web-run hard/expert CTF corpus benchmark:
+  - `scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict`
+  - Generates safe local fixtures distilled from public CTF writeup patterns
+  - Covers hidden Web APIs, crypto primitive misuse, DNS exfil, TCP stream follow-up, mail/PowerShell forensics, packed reverse, format-string pwn, pickle sandbox, and Web-to-Java chains
+  - Current strict result: 10/10 full score through the Web API
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category
@@ -164,7 +170,7 @@ Current local setup after migration:
   - host wrappers: `file`, `strings`, `binwalk`, `exiftool`, `tshark`, `nmap_tcp_basic`
   - Docker wrappers: `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`
   - hashcat is installed, but current OrbStack runtime does not expose an OpenCL/CUDA device, so cracking smoke skips hashcat device execution
-- Tests passed: 123 tests OK
+- Tests passed: 177 tests OK
 
 Useful commands:
 
@@ -244,9 +250,9 @@ Recent commits:
 Recommended next milestone:
 
 1. Add richer traffic analyzers:
-   - TCP stream extraction by stream id
    - HTTP object export when a capture contains downloaded files
-   - Scapy helpers for DNS exfil reconstruction across split labels/packets
+   - Scapy helpers for deeper DNS exfil reconstruction across split labels/packets
+   - protocol-specific stream summaries for FTP/SMTP/IRC-style CTF captures
 2. Promote selected project catalog items into wrappers:
    - `sqlmap` only behind active-probe scope controls
    - `Scapy` helper for custom traffic parsing

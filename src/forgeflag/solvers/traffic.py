@@ -92,8 +92,10 @@ class TrafficSolver:
             http_requests_output=str(dict(labeled_results)["tshark_http_requests"].raw.get("stdout", "")),
             decoded_payloads=decoded_http_artifacts,
         )
+        tcp_stream_payloads = _follow_tcp_stream_payloads(context, pcap_path, tcp_streams)
         decoded_dns_hints = [str(value) for value in dns_summary.get("decoded_query_hints", [])]
-        flags = extract_flags("\n".join([combined_output, *decoded_http_artifacts, *decoded_dns_hints]))
+        stream_payload_text = "\n".join(str(item.get("sample", "")) for item in tcp_stream_payloads)
+        flags = extract_flags("\n".join([combined_output, *decoded_http_artifacts, *decoded_dns_hints, stream_payload_text]))
         flag_candidates.extend(flags)
 
         finding = Finding(
@@ -108,6 +110,7 @@ class TrafficSolver:
                 "decoded_http_artifacts": decoded_http_artifacts[:20],
                 "dns_summary": dns_summary,
                 "tcp_streams": tcp_streams,
+                "tcp_stream_payloads": tcp_stream_payloads,
                 "flag_candidates": list(flags),
             },
             hypothesis=_traffic_hypothesis(flags),
@@ -131,6 +134,34 @@ def _tool_sample(result) -> dict[str, str]:
     stdout = str(result.raw.get("stdout", ""))
     stderr = str(result.raw.get("stderr", ""))
     return {"stdout": stdout[:500], "stderr": stderr[:500]}
+
+
+def _follow_tcp_stream_payloads(
+    context: SolverContext,
+    pcap_path: str,
+    tcp_streams: list[dict[str, object]],
+    limit: int = 3,
+) -> list[dict[str, object]]:
+    payloads: list[dict[str, object]] = []
+    for stream in tcp_streams[:limit]:
+        stream_id = str(stream.get("stream_id") or "")
+        if not stream_id.isdigit():
+            continue
+        result = ctf.tshark_follow_tcp_stream(pcap_path, int(stream_id), scope=context.scope)
+        context.notebook.add_tool_result(context.challenge.challenge_id, result)
+        sample = _compact_text(str(result.raw.get("stdout", "")), limit=1200)
+        flags = extract_flags(sample)
+        payloads.append(
+            {
+                "stream_id": stream_id,
+                "tool_status": result.status,
+                "score": stream.get("score"),
+                "hints": stream.get("hints", []),
+                "sample": sample,
+                "flags": list(flags),
+            }
+        )
+    return payloads
 
 
 def _decoded_http_artifacts(output: str) -> list[str]:

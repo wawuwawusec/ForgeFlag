@@ -134,6 +134,11 @@ if FastMCP is not None:
         return _result_payload(ctf.tshark_tcp_streams(ctf.ensure_existing_file(path), packet_limit, _scope_from_env()))
 
     @mcp.tool()
+    def tshark_follow_tcp_stream(path: str, stream_id: int) -> dict[str, Any]:
+        """Follow one TCP stream from a local PCAP artifact as bounded ASCII text."""
+        return _result_payload(ctf.tshark_follow_tcp_stream(ctf.ensure_existing_file(path), stream_id, _scope_from_env()))
+
+    @mcp.tool()
     def tshark_http_requests(path: str) -> dict[str, Any]:
         """Extract HTTP request metadata from a local PCAP artifact."""
         return _result_payload(ctf.tshark_http_requests(ctf.ensure_existing_file(path), _scope_from_env()))

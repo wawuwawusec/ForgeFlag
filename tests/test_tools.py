@@ -25,6 +25,7 @@ from forgeflag.tools.ctf import (
     tshark_dns_summary,
     tshark_http_artifact_scan,
     tshark_http_requests,
+    tshark_follow_tcp_stream,
     tshark_tcp_streams,
     tshark_traffic_analysis,
 )
@@ -276,6 +277,22 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertIn("tcp.stream", args)
         self.assertIn("-c", args)
         self.assertIn("500", args)
+
+    def test_tshark_follow_tcp_stream_uses_ascii_follow_and_bounds_stream_id(self) -> None:
+        expected = ToolResult(tool="tshark", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = tshark_follow_tcp_stream("/tmp/capture.pcap", stream_id=999999)
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "tshark",
+            ["-r", "/tmp/capture.pcap", "-q", "-z", "follow,tcp,ascii,10000"],
+            timeout_seconds=20,
+        )
 
     def test_ropgadget_scan_uses_binary_argument_and_depth_limit(self) -> None:
         expected = ToolResult(tool="ROPgadget", target=None, status="success")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from forgeflag.domain import Challenge, ChallengeCategory, RunConfig, ToolResult
 from forgeflag.manager import Manager
@@ -57,6 +57,10 @@ class TrafficSolverTest(unittest.TestCase):
                 ),
                 patch(
                     "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
                 ),
             ):
@@ -119,6 +123,10 @@ class TrafficSolverTest(unittest.TestCase):
                     "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": artifact_stdout}),
                 ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
             ):
                 summary = Manager(notebook, RunConfig()).run_challenge("traffic-http-flag")
                 finding = next(f for f in notebook.findings_for("traffic-http-flag") if f.solver == "TrafficSolver")
@@ -178,6 +186,10 @@ class TrafficSolverTest(unittest.TestCase):
                     "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
                 ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
             ):
                 summary = Manager(notebook, RunConfig()).run_challenge("traffic-dns")
                 finding = next(f for f in notebook.findings_for("traffic-dns") if f.solver == "TrafficSolver")
@@ -231,6 +243,10 @@ class TrafficSolverTest(unittest.TestCase):
                     "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
                 ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
             ):
                 summary = Manager(notebook, RunConfig()).run_challenge("traffic-dns-query")
                 finding = next(f for f in notebook.findings_for("traffic-dns-query") if f.solver == "TrafficSolver")
@@ -238,6 +254,70 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(summary["status"], "flag_found")
         self.assertEqual(summary["accepted_flags"], ["flag{dns_subdomain}"])
         self.assertIn("flag{dns_subdomain}", finding.evidence["dns_summary"]["decoded_query_hints"])
+
+    def test_traffic_solver_follows_shortlisted_tcp_streams_for_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "capture.pcap"
+            attachment.write_bytes(b"pcap fixture placeholder")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-follow-stream",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+            tcp_stdout = "7|3|10.0.0.2|5000|10.0.0.4|80|HTTP|POST /submit HTTP/1.1"
+            http_stdout = "7|3|POST|example.test|/submit|curl/8"
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "HTTP"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "http frames"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": tcp_stdout}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": http_stdout}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(
+                        tool="tshark",
+                        target=None,
+                        status="success",
+                        raw={"stdout": "POST /submit HTTP/1.1\\r\\n\\r\\nflag{follow_stream_payload}\\n"},
+                    ),
+                ) as follow_stream,
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-follow-stream")
+                finding = next(f for f in notebook.findings_for("traffic-follow-stream") if f.solver == "TrafficSolver")
+
+        follow_stream.assert_called_once_with(str(attachment.resolve()), 3, scope=ANY)
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{follow_stream_payload}"])
+        self.assertEqual(finding.evidence["tcp_stream_payloads"][0]["stream_id"], "3")
+        self.assertIn("flag{follow_stream_payload}", finding.evidence["tcp_stream_payloads"][0]["flags"])
 
     def test_traffic_solver_skips_non_pcap_attachments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

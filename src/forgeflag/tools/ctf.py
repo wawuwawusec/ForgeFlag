@@ -168,6 +168,16 @@ def tshark_tcp_streams(path: str, packet_limit: int = 500, scope: ScopePolicy | 
     )
 
 
+def tshark_follow_tcp_stream(path: str, stream_id: int, scope: ScopePolicy | None = None) -> ToolResult:
+    stream_id = max(0, min(int(stream_id), 10_000))
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run(
+        "tshark",
+        ["-r", path, "-q", "-z", f"follow,tcp,ascii,{stream_id}"],
+        timeout_seconds=20,
+    )
+
+
 def tshark_http_requests(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     runner = ToolRunner(scope or ScopePolicy())
     return runner.run(

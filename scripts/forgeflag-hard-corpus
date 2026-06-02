@@ -90,6 +90,12 @@ def build_fixtures() -> dict[str, Path]:
     traffic = WORKDIR / "dns-split-base32.pcap"
     write_dns_pcap(traffic, "flag{hard_dns_split}")
 
+    http_stream = WORKDIR / "http-stream-follow.pcap"
+    write_http_pcap(
+        http_stream,
+        b"POST /submit HTTP/1.1\r\nHost: hard-stream.test\r\nContent-Length: 25\r\n\r\nflag{hard_tcp_stream_path}\n",
+    )
+
     eml = WORKDIR / "powershell-email.eml"
     encoded = base64.b64encode(b"powershell -enc ZmxhZ3toYXJkX21haWxfdHJpYWdlfQ==").decode("ascii")
     eml.write_text(
@@ -131,6 +137,7 @@ def build_fixtures() -> dict[str, Path]:
         "crypto_ctr": crypto_ctr,
         "poly1305": poly1305,
         "traffic": traffic,
+        "http_stream": http_stream,
         "eml": eml,
         "reverse": reverse_bin,
         "pwn_source": pwn_source,
@@ -193,6 +200,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["dns_summary", "decoded_query_hints", "flag{hard_dns_split}"],
             "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
             "improvement_hint": "TrafficSolver should keep reconstructing DNS labels and preserve replayable query evidence.",
+        },
+        {
+            "challenge_id": "hard-traffic-http-stream-follow",
+            "category": "traffic",
+            "difficulty": "hard",
+            "title": "HTTP TCP stream follow",
+            "description": "Wireshark-style traffic task: identify the interesting TCP stream and follow it to recover payload evidence.",
+            "attachments": [fixtures["http_stream"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_tcp_stream_path}",
+            "required_evidence": ["tcp_streams", "tcp_stream_payloads", "flag{hard_tcp_stream_path}"],
+            "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
+            "improvement_hint": "TrafficSolver should follow shortlisted TCP streams and preserve stream id plus payload sample for replay.",
         },
         {
             "challenge_id": "hard-forensics-mail-powershell",
@@ -410,6 +430,14 @@ def write_dns_pcap(path: Path, flag: str) -> None:
         handle.write(packet)
 
 
+def write_http_pcap(path: Path, payload: bytes) -> None:
+    packet = ethernet_frame(ipv4_packet(tcp_segment(payload), protocol=6))
+    with path.open("wb") as handle:
+        handle.write(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
+        handle.write(struct.pack("<IIII", int(time.time()), 0, len(packet), len(packet)))
+        handle.write(packet)
+
+
 def dns_query(name: str) -> bytes:
     labels = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.split(".") if part)
     return struct.pack("!HHHHHH", 0x4242, 0x0100, 1, 0, 0, 0) + labels + b"\x00" + struct.pack("!HH", 1, 1)
@@ -420,13 +448,18 @@ def udp_datagram(payload: bytes) -> bytes:
     return struct.pack("!HHHH", 53000, 53, length, 0) + payload
 
 
-def ipv4_packet(payload: bytes) -> bytes:
+def ipv4_packet(payload: bytes, protocol: int = 17) -> bytes:
     src = socket.inet_aton("10.10.10.2")
     dst = socket.inet_aton("8.8.8.8")
     total_length = 20 + len(payload)
-    header = struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 17, 0, src, dst)
+    header = struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, protocol, 0, src, dst)
     checksum = internet_checksum(header)
-    return struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 17, checksum, src, dst) + payload
+    return struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, protocol, checksum, src, dst) + payload
+
+
+def tcp_segment(payload: bytes) -> bytes:
+    data_offset_and_flags = (5 << 12) | 0x18
+    return struct.pack("!HHIIHHHH", 4444, 80, 1, 1, data_offset_and_flags, 8192, 0, 0) + payload
 
 
 def ethernet_frame(payload: bytes) -> bytes:
