@@ -88,6 +88,7 @@ Implemented so far:
 - CTF tool layer:
   - allowlisted `ToolRunner`
   - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `ffuf`, `nmap_tcp_basic`
+  - `forgeflag.tool_compression` adds compact `compressed_summary` data to stored tool runs and promotes it into `tool_summary` observations
   - `forgeflag tools` CLI inventory
   - `ToolRunner` avoids counting unavailable pyenv shims as runnable tools
   - `ToolRunner` can use Docker fallback for missing host wrappers through `FORGEFLAG_TOOL_DOCKER_IMAGE` and `FORGEFLAG_TOOL_DOCKER_MOUNT`

@@ -28,6 +28,10 @@ The notebook is the durable blackboard. It stores challenges, attachment paths, 
 
 The observer filters noisy solver output into high-value observations. The manager reloads these observations before each solver call, so later solvers inherit concise progress signals without reading every raw finding or tool log.
 
+### Tool Output Compression
+
+Tool runs keep their raw stdout/stderr in SQLite, but ForgeFlag also stores a compact `compressed_summary` with extracted flags, interesting lines, errors, hints, truncation state, and tool metadata. Each scoped tool run with a challenge id is promoted into a `tool_summary` observation so later solvers and LLM planning can consume concise evidence instead of long command output.
+
 ### SolveTrace
 
 After each solver run, the manager records a `solve_trace_step` observation with the step index, solver status, finding summaries, flag candidates, progress signal, and any matching LLM plan rationale. Reports use these trace observations to expose the full solver timeline and a per-flag shortest discovery path.

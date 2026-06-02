@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from forgeflag.domain import Challenge, ChallengeCategory, Finding, FindingStatus, Observation, ToolResult, utc_now
+from forgeflag.tool_compression import with_compressed_summary
 
 
 class SQLiteNotebook:
@@ -197,6 +198,7 @@ class SQLiteNotebook:
         return [self._observation_from_row(row) for row in rows]
 
     def add_tool_result(self, challenge_id: str | None, result: ToolResult) -> int:
+        result = with_compressed_summary(result)
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -217,7 +219,26 @@ class SQLiteNotebook:
                     result.created_at,
                 ),
             )
-            return int(cursor.lastrowid)
+            tool_run_id = int(cursor.lastrowid)
+            if challenge_id:
+                summary = result.raw.get("compressed_summary")
+                if isinstance(summary, dict):
+                    conn.execute(
+                        """
+                        insert into observations (
+                            challenge_id, source, kind, summary, evidence_json, created_at
+                        ) values (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            challenge_id,
+                            result.tool,
+                            "tool_summary",
+                            _tool_summary_text(summary),
+                            json.dumps(summary, ensure_ascii=False, sort_keys=True),
+                            result.created_at,
+                        ),
+                    )
+            return tool_run_id
 
     def record_run(self, challenge_id: str, status: str, summary: dict[str, Any]) -> int:
         with self._connect() as conn:
@@ -274,3 +295,15 @@ class SQLiteNotebook:
             evidence=json.loads(row["evidence_json"]),
             created_at=row["created_at"],
         )
+
+
+def _tool_summary_text(summary: dict[str, Any]) -> str:
+    tool = str(summary.get("tool") or "tool")
+    status = str(summary.get("status") or "")
+    flags = summary.get("flags") if isinstance(summary.get("flags"), list) else []
+    interesting = summary.get("interesting_lines") if isinstance(summary.get("interesting_lines"), list) else []
+    if flags:
+        return f"{tool} {status}: flag candidates {', '.join(str(flag) for flag in flags[:3])}"
+    if interesting:
+        return f"{tool} {status}: {str(interesting[0])[:180]}"
+    return f"{tool} {status}: no compressed highlights"
