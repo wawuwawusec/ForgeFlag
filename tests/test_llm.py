@@ -585,8 +585,15 @@ class LLMSolverTest(unittest.TestCase):
                 RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
                 solvers=[LLMSolver(FakeProvider()), ExtraSolver()],
             ).run_challenge("llm-dispatch")
+            action_queue = next(
+                observation for observation in notebook.observations_for("llm-dispatch")
+                if observation.kind == "llm_action_queue"
+            )
 
         self.assertEqual([row["solver"] for row in summary["solvers"]], ["LLMSolver", "ExtraSolver"])
+        self.assertEqual(action_queue.evidence["requested_solvers"], ["ExtraSolver"])
+        self.assertEqual(action_queue.evidence["queued_solvers"], ["ExtraSolver"])
+        self.assertEqual(action_queue.evidence["unknown_solvers"], [])
 
     def test_manager_continues_when_runtime_llm_config_is_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):

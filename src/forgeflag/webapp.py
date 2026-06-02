@@ -758,6 +758,7 @@ INDEX_HTML = r"""<!doctype html>
       const writeup = report.writeup || {};
       const flags = asList(writeup.final_flags).length ? asList(writeup.final_flags) : asList(data.summary && data.summary.accepted_flags);
       const llmPlans = collectLLMPlans(findings, observations);
+      const actionQueues = observations.filter(obs => obs.kind === "llm_action_queue");
       const knowledge = collectKnowledge(findings, observations);
       const toolSummaries = observations.filter(obs => obs.kind === "tool_summary");
       const traceSteps = collectTraceSteps(report, observations);
@@ -774,13 +775,17 @@ INDEX_HTML = r"""<!doctype html>
           ${flagChips(flags)}
           <div class="kv-grid">
             <div class="kv"><span>LLM Plans</span><strong>${llmPlans.length}</strong></div>
+            <div class="kv"><span>Action Queues</span><strong>${actionQueues.length}</strong></div>
             <div class="kv"><span>Tool Summaries</span><strong>${toolSummaries.length}</strong></div>
-            <div class="kv"><span>SolveTrace</span><strong>${traceSteps.length}</strong></div>
           </div>
         </div>
         <div class="result-card">
           <div class="card-head"><div class="card-title"><h3>LLM 规划</h3><div class="meta">模型给出的假设、工具建议和下一步。</div></div></div>
           ${llmPlans.length ? llmPlans.map(renderLLMPlan).join("") : `<div class="empty-state">本轮没有记录 LLM 规划。启用“大模型分析”后运行题目会显示在这里。</div>`}
+        </div>
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>行动队列</h3><div class="meta">LLM 建议如何影响后续 solver 调度。</div></div></div>
+          ${actionQueues.length ? actionQueues.map(renderActionQueue).join("") : `<div class="empty-state">暂无行动队列。LLM 返回 suggested_solvers 后会显示排队、已存在和无效建议。</div>`}
         </div>
         <div class="result-card">
           <div class="card-head"><div class="card-title"><h3>知识检索</h3><div class="meta">本地 playbook 与历史 write-up 给模型补充的上下文。</div></div></div>
@@ -825,6 +830,23 @@ INDEX_HTML = r"""<!doctype html>
         ${tools.length ? `<div class="meta">工具提示：${tools.map(escapeHtml).join(", ")}</div>` : ""}
         ${expected.length ? `<div class="meta">期望证据：${expected.map(escapeHtml).join("；")}</div>` : ""}
         ${plan.fallback_plan ? `<div class="meta">Fallback：${escapeHtml(plan.fallback_plan)}</div>` : ""}
+      </div>`;
+    }
+    function renderActionQueue(obs) {
+      const evidence = obs.evidence || {};
+      const queued = asList(evidence.queued_solvers);
+      const already = asList(evidence.already_present_solvers);
+      const unknown = asList(evidence.unknown_solvers);
+      const actions = asList(evidence.next_actions);
+      const tools = asList(evidence.tool_hints);
+      return `<div class="kv">
+        <span>${escapeHtml(obs.source || "Manager")}</span>
+        <strong>${escapeHtml(obs.summary || "LLM action queue")}</strong>
+        ${queued.length ? `<div class="meta">排队 solver：${queued.map(escapeHtml).join(", ")}</div>` : ""}
+        ${already.length ? `<div class="meta">已在队列：${already.map(escapeHtml).join(", ")}</div>` : ""}
+        ${unknown.length ? `<div class="meta">无效建议：${unknown.map(escapeHtml).join(", ")}</div>` : ""}
+        ${actions.length ? `<div class="meta">下一步：${actions.map(escapeHtml).join("；")}</div>` : ""}
+        ${tools.length ? `<div class="meta">工具提示：${tools.map(escapeHtml).join(", ")}</div>` : ""}
       </div>`;
     }
     function collectKnowledge(findings, observations) {

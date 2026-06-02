@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from forgeflag.domain import ChallengeCategory, RunConfig
+from forgeflag.domain import ChallengeCategory, Observation, RunConfig
 from forgeflag.harness import Harness
 from forgeflag.ida import IDAAdapter, build_ida_adapter
 from forgeflag.llm import UnavailableLLMProvider, build_llm_provider
@@ -112,7 +112,15 @@ class Manager:
                     context.observations,
                 )
             )
-            selected = self._apply_llm_solver_plan(selected, index + 1, self.notebook.observations_for(challenge_id))
+            if result.solver == "LLMSolver":
+                selected, action_observation = self._apply_llm_solver_plan(
+                    selected,
+                    index + 1,
+                    self.notebook.observations_for(challenge_id),
+                    challenge_id,
+                )
+                if action_observation is not None:
+                    self.notebook.add_observation(action_observation)
             index += 1
 
         findings = self.notebook.findings_for(challenge_id)
@@ -159,26 +167,74 @@ class Manager:
         selected: list[Solver],
         insertion_index: int,
         observations,
-    ) -> list[Solver]:
+        challenge_id: str,
+    ) -> tuple[list[Solver], Observation | None]:
         requested = []
+        next_actions = []
+        tool_hints = []
         for observation in observations:
             if observation.kind != "llm_solver_plan":
                 continue
             suggested = observation.evidence.get("suggested_solvers")
             if isinstance(suggested, list):
                 requested.extend(name for name in suggested if isinstance(name, str))
+            actions = observation.evidence.get("next_actions")
+            if isinstance(actions, list):
+                next_actions.extend(action for action in actions if isinstance(action, str))
+            hints = observation.evidence.get("tool_hints")
+            if isinstance(hints, list):
+                tool_hints.extend(hint for hint in hints if isinstance(hint, str))
         if not requested:
-            return selected
+            return selected, None
 
         by_name = {solver.name: solver for solver in self.solvers}
         result = list(selected)
         insert_at = insertion_index
         existing_names = {solver.name for solver in result}
-        for solver_name in requested:
+        requested_solvers = _dedupe(requested)
+        queued_solvers: list[str] = []
+        already_present_solvers: list[str] = []
+        unknown_solvers: list[str] = []
+        for solver_name in requested_solvers:
             solver = by_name.get(solver_name)
-            if solver is None or solver.name in existing_names:
+            if solver is None:
+                unknown_solvers.append(solver_name)
+                continue
+            if solver.name in existing_names:
+                already_present_solvers.append(solver.name)
                 continue
             result.insert(insert_at, solver)
             existing_names.add(solver.name)
+            queued_solvers.append(solver.name)
             insert_at += 1
-        return result
+        summary = (
+            f"LLM queued solver(s): {', '.join(queued_solvers)}"
+            if queued_solvers
+            else "LLM solver plan did not change the current solver queue"
+        )
+        return result, Observation(
+            challenge_id=challenge_id,
+            source="Manager",
+            kind="llm_action_queue",
+            summary=summary,
+            evidence={
+                "requested_solvers": requested_solvers,
+                "queued_solvers": queued_solvers,
+                "already_present_solvers": already_present_solvers,
+                "unknown_solvers": unknown_solvers,
+                "next_actions": _dedupe(next_actions),
+                "tool_hints": _dedupe(tool_hints),
+            },
+        )
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = value.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
