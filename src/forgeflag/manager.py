@@ -124,6 +124,7 @@ class Manager:
                 verification.accepted,
                 findings,
                 self.notebook.observations_for(challenge_id),
+                challenge=challenge,
             )
         self.notebook.record_run(challenge_id, status, summary)
         return summary

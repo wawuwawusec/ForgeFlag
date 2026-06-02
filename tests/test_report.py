@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from forgeflag.domain import Finding, Observation
+from forgeflag.domain import Challenge, ChallengeCategory, Finding, Observation
 from forgeflag.report import ReportBuilder
 
 
@@ -44,6 +44,48 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertEqual(report["flags"][0]["path"][0]["finding"], "Analyzed packet capture traffic")
         self.assertEqual(report["flags"][0]["replay_steps"], ["Send candidates to Verifier."])
         self.assertEqual(report["flags"][0]["observations"][0]["summary"], "flag{short_path}")
+
+    def test_writeup_report_contains_ctf_sections_and_markdown(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="writeup-01",
+                solver="MiscSolver",
+                finding="Decoded Base32 artifact",
+                evidence={"transform_candidates": [{"value": "flag{writeup_style}", "method": "base32"}]},
+                confidence=0.91,
+                hypothesis="The attachment content decodes cleanly as Base32.",
+                next_action="Submit verified flag candidate.",
+            )
+        ]
+        observations = [
+            Observation(
+                challenge_id="writeup-01",
+                source="MiscSolver",
+                kind="flag_candidate",
+                summary="flag{writeup_style}",
+                evidence={"candidate": "flag{writeup_style}", "source": "transform_candidates"},
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="writeup-01",
+            category=ChallengeCategory.MISC,
+            title="Base32 warmup",
+            description="A small encoding puzzle.",
+            tags=("base32", "misc"),
+            attachment_paths=("/tmp/base32.txt",),
+        )
+
+        report = ReportBuilder().build("writeup-01", ("flag{writeup_style}",), findings, observations, challenge=challenge)
+
+        writeup = report["writeup"]
+        self.assertEqual(writeup["title"], "Base32 warmup")
+        self.assertEqual(writeup["final_flags"], ["flag{writeup_style}"])
+        self.assertIn("题目信息", [section["title"] for section in writeup["sections"]])
+        self.assertIn("解题思路", [section["title"] for section in writeup["sections"]])
+        self.assertIn("关键证据", [section["title"] for section in writeup["sections"]])
+        self.assertIn("复现步骤", [section["title"] for section in writeup["sections"]])
+        self.assertIn("# Base32 warmup", writeup["markdown"])
+        self.assertIn("flag{writeup_style}", writeup["markdown"])
 
 
 if __name__ == "__main__":

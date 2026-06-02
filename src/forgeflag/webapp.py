@@ -496,6 +496,7 @@ INDEX_HTML = r"""<!doctype html>
     const categories = ["unknown","web","pwn","reverse","crypto","forensics","traffic","misc","infra"];
     const categoryLabels = { all:"全部", unknown:"未知", web:"Web", pwn:"Pwn", reverse:"Reverse", crypto:"Crypto", forensics:"Forensics", traffic:"Traffic", misc:"Misc", infra:"Infra" };
     const state = { selected: null, activeCategory: "all", challenges: [], lastSummary: {} };
+    const writeupSectionOrder = ["题目信息", "最终结论", "解题思路", "关键证据", "复现步骤", "工具与观察"];
     const $ = (id) => document.getElementById(id);
     const status = (text) => $("status").textContent = text;
     const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
@@ -742,6 +743,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     function renderReport(data) {
       const flags = asList(data && data.flags);
+      if (data && data.writeup) return renderWriteupReport(data);
       if (!flags.length) return `<div class="empty-state">还没有复盘报告。只有 verifier 接受 flag 后才会生成最短发现路径。</div>${rawJson(data)}`;
       return flags.map(entry => `
         <div class="result-card">
@@ -761,6 +763,47 @@ INDEX_HTML = r"""<!doctype html>
             </div>`).join("")}
           ${rawJson(entry)}
         </div>`).join("");
+    }
+    function renderWriteupReport(data) {
+      const writeup = data.writeup || {};
+      const sections = asList(writeup.sections);
+      return `
+        <div class="result-card">
+          <div class="card-head">
+            <div class="card-title">
+              <h3>${escapeHtml(writeup.title || data.challenge_id || "Write-up")}</h3>
+              <div class="meta">Write-up 风格复盘 · ${escapeHtml(writeup.category || "unknown")}</div>
+            </div>
+            <span class="badge">accepted</span>
+          </div>
+          ${flagChips(writeup.final_flags)}
+        </div>
+        ${sections.map(section => `
+          <div class="result-card">
+            <div class="card-head">
+              <div class="card-title">
+                <h3>${escapeHtml(section.title || "Section")}</h3>
+                <div class="meta">${escapeHtml(section.body || "")}</div>
+              </div>
+            </div>
+            ${section.flags ? flagChips(section.flags) : ""}
+            ${asList(section.items).map(item => `
+              <div class="kv">
+                <span>${escapeHtml(item.label || "")}</span>
+                <strong>${escapeHtml(item.value || "")}</strong>
+              </div>`).join("")}
+            ${asList(section.steps).length ? `<ol class="steps">${section.steps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}
+          </div>`).join("")}
+        <div class="result-card">
+          <div class="card-head">
+            <div class="card-title">
+              <h3>Markdown Write-up</h3>
+              <div class="meta">可复制到博客、论坛或赛后复盘。</div>
+            </div>
+          </div>
+          <pre class="raw-json">${escapeHtml(writeup.markdown || "")}</pre>
+          ${rawJson(data)}
+        </div>`;
     }
     function renderToolRows(data, title, kind) {
       if (kind === "tool" && data && !Array.isArray(data) && (data.wrappers || data.catalog)) {
