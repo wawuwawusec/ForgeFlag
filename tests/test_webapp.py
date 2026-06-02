@@ -119,6 +119,20 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("tool-group", html)
         self.assertIn("查看原始 JSON", html)
 
+    def test_index_contains_agent_timeline_view(self) -> None:
+        handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
+
+        html = handler_cls.render_index()
+
+        self.assertIn('data-tab="agent"', html)
+        self.assertIn("function loadAgentView", html)
+        self.assertIn("function renderAgentView", html)
+        self.assertIn("Agent 解题过程", html)
+        self.assertIn("LLM 规划", html)
+        self.assertIn("知识检索", html)
+        self.assertIn("工具摘要", html)
+        self.assertIn("SolveTrace", html)
+
     def test_project_catalog_endpoint_lists_recommended_projects(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
 

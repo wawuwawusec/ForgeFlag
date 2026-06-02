@@ -488,6 +488,7 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <div class="tabs" style="margin-top:18px">
         <button class="active" data-tab="summary">Summary</button>
+        <button data-tab="agent">Agent</button>
         <button data-tab="findings">Findings</button>
         <button data-tab="observations">Observations</button>
         <button data-tab="artifacts">Artifacts</button>
@@ -651,6 +652,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     function renderData(tab, data) {
       if (tab === "summary") return renderSummary(data);
+      if (tab === "agent") return renderAgentView(data);
       if (tab === "findings") return renderFindings(data);
       if (tab === "observations") return renderObservations(data);
       if (tab === "artifacts") return renderArtifacts(data);
@@ -748,6 +750,120 @@ INDEX_HTML = r"""<!doctype html>
             </div>`).join("")}
           ${rawJson(data)}
         </div>`;
+    }
+    function renderAgentView(data) {
+      const report = data.report || {};
+      const findings = asList(data.findings);
+      const observations = asList(data.observations);
+      const writeup = report.writeup || {};
+      const flags = asList(writeup.final_flags).length ? asList(writeup.final_flags) : asList(data.summary && data.summary.accepted_flags);
+      const llmPlans = collectLLMPlans(findings, observations);
+      const knowledge = collectKnowledge(findings, observations);
+      const toolSummaries = observations.filter(obs => obs.kind === "tool_summary");
+      const traceSteps = collectTraceSteps(report, observations);
+      const shortestPath = collectShortestPath(report);
+      return `
+        <div class="result-card">
+          <div class="card-head">
+            <div class="card-title">
+              <h3>Agent 解题过程</h3>
+              <div class="meta">${escapeHtml(data.challenge_id || report.challenge_id || "selected challenge")}</div>
+            </div>
+            <span class="badge">${flags.length ? "flag found" : "in progress"}</span>
+          </div>
+          ${flagChips(flags)}
+          <div class="kv-grid">
+            <div class="kv"><span>LLM Plans</span><strong>${llmPlans.length}</strong></div>
+            <div class="kv"><span>Tool Summaries</span><strong>${toolSummaries.length}</strong></div>
+            <div class="kv"><span>SolveTrace</span><strong>${traceSteps.length}</strong></div>
+          </div>
+        </div>
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>LLM 规划</h3><div class="meta">模型给出的假设、工具建议和下一步。</div></div></div>
+          ${llmPlans.length ? llmPlans.map(renderLLMPlan).join("") : `<div class="empty-state">本轮没有记录 LLM 规划。启用“大模型分析”后运行题目会显示在这里。</div>`}
+        </div>
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>知识检索</h3><div class="meta">本地 playbook 与历史 write-up 给模型补充的上下文。</div></div></div>
+          ${knowledge.length ? knowledge.map(item => `<div class="kv"><span>${escapeHtml(item.source || "knowledge")}</span><strong>${escapeHtml(item.title || item.summary || "retrieved item")}</strong><div class="meta">${escapeHtml(item.body || item.snippet || item.value || "")}</div></div>`).join("") : `<div class="empty-state">本轮未持久化知识检索片段；运行时仍会向 LLM prompt 注入分类 playbook 和历史 write-up。</div>`}
+        </div>
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>工具摘要</h3><div class="meta">压缩后的工具输出，适合快速判断下一步。</div></div></div>
+          ${toolSummaries.length ? toolSummaries.map(renderToolSummary).join("") : `<div class="empty-state">暂无工具摘要。运行会产生较长输出的工具后会显示压缩结果。</div>`}
+        </div>
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>SolveTrace</h3><div class="meta">按时间线整理 solver 行动与证据。</div></div></div>
+          ${traceSteps.length ? `<ol class="steps">${traceSteps.map(step => `<li><strong>${escapeHtml(step.solver || step.source || "solver")}</strong> · ${escapeHtml(step.status || step.kind || "step")}<div class="meta">${escapeHtml(step.rationale || step.summary || step.finding || "")}</div>${asList(step.flag_candidates || step.flags).length ? flagChips(step.flag_candidates || step.flags) : ""}</li>`).join("")}</ol>` : `<div class="empty-state">暂无 SolveTrace 步骤。</div>`}
+        </div>
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>最短发现路径</h3><div class="meta">找到 flag 后自动沉淀的复盘路径。</div></div></div>
+          ${shortestPath.length ? `<ol class="steps">${shortestPath.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : `<div class="empty-state">还没有可用的最短路径。Verifier 接受 flag 后会生成。</div>`}
+          ${rawJson(data)}
+        </div>`;
+    }
+    function collectLLMPlans(findings, observations) {
+      const fromFindings = findings.filter(finding => {
+        const solver = String(finding.solver || "").toLowerCase();
+        return solver.includes("llm") || (finding.evidence && finding.evidence.plan);
+      }).map(finding => ({ source: finding.solver || "LLM", finding: finding.finding, confidence: finding.confidence, ...(finding.evidence || {}) }));
+      const fromObservations = observations.filter(obs => String(obs.kind || "").includes("llm") && (obs.evidence || obs.summary))
+        .map(obs => ({ source: obs.source || "LLM", finding: obs.summary, ...(obs.evidence || {}) }));
+      return [...fromFindings, ...fromObservations];
+    }
+    function renderLLMPlan(entry) {
+      const plan = entry.plan || entry;
+      const hypotheses = asList(plan.hypotheses);
+      const actions = asList(plan.next_actions);
+      const solvers = asList(plan.suggested_solvers);
+      const tools = asList(plan.tool_hints);
+      const expected = asList(plan.expected_evidence);
+      return `<div class="kv">
+        <span>${escapeHtml(entry.source || "LLM")}</span>
+        <strong>${escapeHtml(plan.summary || entry.finding || "LLM plan")}</strong>
+        ${hypotheses.length ? `<div class="meta">假设：${hypotheses.map(escapeHtml).join("；")}</div>` : ""}
+        ${actions.length ? `<div class="meta">下一步：${actions.map(escapeHtml).join("；")}</div>` : ""}
+        ${solvers.length ? `<div class="meta">建议 solver：${solvers.map(escapeHtml).join(", ")}</div>` : ""}
+        ${tools.length ? `<div class="meta">工具提示：${tools.map(escapeHtml).join(", ")}</div>` : ""}
+        ${expected.length ? `<div class="meta">期望证据：${expected.map(escapeHtml).join("；")}</div>` : ""}
+        ${plan.fallback_plan ? `<div class="meta">Fallback：${escapeHtml(plan.fallback_plan)}</div>` : ""}
+      </div>`;
+    }
+    function collectKnowledge(findings, observations) {
+      const items = [];
+      findings.forEach(finding => {
+        const evidence = finding.evidence || {};
+        asList(evidence.retrieved_knowledge).forEach(item => items.push(item));
+        asList(evidence.plan && evidence.plan.retrieved_knowledge).forEach(item => items.push(item));
+      });
+      observations.filter(obs => String(obs.kind || "").includes("knowledge")).forEach(obs => items.push({ source: obs.source, title: obs.summary, ...(obs.evidence || {}) }));
+      return items;
+    }
+    function renderToolSummary(obs) {
+      const evidence = obs.evidence || {};
+      const flags = asList(evidence.flags || evidence.flag_candidates);
+      const lines = asList(evidence.interesting_lines || evidence.key_lines);
+      return `<div class="kv">
+        <span>${escapeHtml(obs.source || "tool")}</span>
+        <strong>${escapeHtml(obs.summary || "tool summary")}</strong>
+        ${flags.length ? flagChips(flags) : ""}
+        ${lines.length ? `<div class="meta">${lines.slice(0, 5).map(escapeHtml).join(" · ")}</div>` : ""}
+        ${evidence.errors ? `<div class="meta">Errors: ${escapeHtml(evidence.errors)}</div>` : ""}
+      </div>`;
+    }
+    function collectTraceSteps(report, observations) {
+      const writeup = report.writeup || {};
+      const fromReport = asList(report.solve_trace).length ? asList(report.solve_trace) : asList(writeup.solve_trace);
+      const fromObservations = observations.filter(obs => obs.kind === "solve_trace_step").map(obs => ({ source: obs.source, kind: obs.kind, summary: obs.summary, ...(obs.evidence || {}) }));
+      return [...fromReport, ...fromObservations].sort((left, right) => (left.step_index ?? 0) - (right.step_index ?? 0));
+    }
+    function collectShortestPath(report) {
+      const writeup = report.writeup || {};
+      if (asList(writeup.shortest_discovery_path).length) return asList(writeup.shortest_discovery_path);
+      const flagEntries = asList(report.flags);
+      const first = flagEntries[0] || {};
+      if (asList(first.trace_path).length) return asList(first.trace_path).map(step => step.replay_step || step.summary || step.finding || JSON.stringify(step));
+      if (asList(first.replay_steps).length) return asList(first.replay_steps);
+      if (asList(first.path).length) return asList(first.path).map(step => step.replay_step || step.summary || step.finding || JSON.stringify(step));
+      return [];
     }
     function renderReport(data) {
       const flags = asList(data && data.flags);
@@ -957,7 +1073,17 @@ INDEX_HTML = r"""<!doctype html>
       if (tab === "tools") return show(await api("/api/tools"), "tools");
       if (tab === "catalog") return show(await api("/api/project-catalog"), "catalog");
       if (!state.selected) return status("select a challenge first");
+      if (tab === "agent") return show(await loadAgentView(), "agent");
       show(await api(`/api/challenges/${encodeURIComponent(state.selected)}/${tab}`), tab);
+    }
+    async function loadAgentView() {
+      const challenge = encodeURIComponent(state.selected);
+      const [report, findings, observations] = await Promise.all([
+        api(`/api/challenges/${challenge}/report`),
+        api(`/api/challenges/${challenge}/findings`),
+        api(`/api/challenges/${challenge}/observations`)
+      ]);
+      return { challenge_id: state.selected, summary: state.lastSummary || {}, report, findings, observations };
     }
     $("saveBtn").onclick = () => saveChallenge().catch(e => { status("error"); show({error:e.message}); });
     $("refreshBtn").onclick = () => refresh().catch(e => show({error:e.message}));
