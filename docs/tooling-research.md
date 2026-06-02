@@ -56,6 +56,8 @@ Public CTF archives are useful as a coverage guide, but ForgeFlag should not ven
 
 The current regression tests synthesize tiny fixtures from these patterns so they remain fast, deterministic, and safe to run offline.
 
+`scripts/forgeflag-corpus-smoke` now turns the same policy into a Web-run smoke corpus for web, crypto, misc, forensics, traffic, reverse, and pwn. It generates small local fixtures, submits them through the Web API, runs each challenge, and fails if the expected flag is not accepted.
+
 ## Heavyweight Tool Policy
 
 SageMath, Volatility, and Ghidra/headless are intentionally treated as Docker profile tools instead of local venv dependencies:

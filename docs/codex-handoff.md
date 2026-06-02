@@ -99,6 +99,13 @@ Implemented so far:
   - entered LLM keys are used for run/test requests and are never stored in SQLite
   - run, auto-loaded findings, observations, artifact summaries, replay report, tools, and catalog views
   - Summary, Findings, Observations, Artifacts, Report, Tools, and Catalog render as readable cards with collapsible raw JSON for debugging
+- Web-run CTF corpus smoke:
+  - `scripts/forgeflag-corpus-smoke --url http://127.0.0.1:8080`
+  - Generates local fixtures for web, crypto, misc, forensics, traffic, reverse, and pwn
+  - Submits challenges through the Web API and exits non-zero if expected flags are not accepted
+- CTF playbook notes:
+  - `docs/ctf-playbook.md`
+  - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category
 - One-command lifecycle script:
   - `scripts/forgeflag-control start/status/smoke/stop`
   - Web UI start uses `.venv/bin/python -m forgeflag.cli` and stores the managed Python process PID in `.forgeflag/web.pid`
@@ -133,7 +140,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 115 tests OK
+- Tests passed: 116 tests OK
 
 Useful commands:
 

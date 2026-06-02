@@ -81,6 +81,36 @@ class MiscSolverTest(unittest.TestCase):
         recipes = {tuple(candidate["recipe"]) for candidate in finding.evidence["transform_candidates"]}
         self.assertIn(("base64_decode", "html_unescape", "url_decode"), recipes)
 
+    def test_misc_solver_decodes_binary_ascii_attachment_with_metadata_noise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "binary.txt"
+            attachment.write_text(
+                "01100110 01101100 01100001 01100111 01111011 01100011 01101111 "
+                "01110010 01110000 01110101 01110011 01011111 01101101 01101001 "
+                "01110011 01100011 01111101\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-binary-corpus",
+                    category=ChallengeCategory.MISC,
+                    title="Corpus Misc binary ASCII",
+                    description="Binary ASCII puzzle pattern.",
+                    tags=("corpus", "web-smoke"),
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-binary-corpus")
+            finding = next(f for f in notebook.findings_for("misc-binary-corpus") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{corpus_misc}"])
+        recipes = {tuple(candidate["recipe"]) for candidate in finding.evidence["transform_candidates"]}
+        self.assertIn(("binary_ascii_decode",), recipes)
+
     def test_misc_solver_records_archive_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+from pathlib import Path
+import socket
+import struct
+import subprocess
+import sys
+import time
+import urllib.request
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKDIR = ROOT / ".forgeflag" / "corpus-smoke"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run a small public-CTF-pattern Web smoke corpus.")
+    parser.add_argument("--url", default="http://127.0.0.1:8080", help="ForgeFlag Web UI base URL")
+    args = parser.parse_args()
+
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    fixtures = build_fixtures()
+    web_server = start_fixture_http_server(fixtures["web_dir"])
+    try:
+        rows = []
+        for case in corpus_cases(fixtures):
+            create_challenge(args.url, case)
+            summary = run_challenge(args.url, case)
+            report = get_json(args.url, f"/api/challenges/{case['challenge_id']}/report")
+            findings = get_json(args.url, f"/api/challenges/{case['challenge_id']}/findings")
+            accepted = summary.get("accepted_flags", [])
+            ok = case["expected_flag"] in accepted
+            rows.append(
+                {
+                    "challenge_id": case["challenge_id"],
+                    "category": case["category"],
+                    "status": summary.get("status"),
+                    "expected": case["expected_flag"],
+                    "accepted_flags": accepted,
+                    "ok": ok,
+                    "findings": [item.get("finding") for item in findings],
+                    "report_flags": [item.get("flag") for item in report.get("flags", [])],
+                }
+            )
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        failed = [row for row in rows if not row["ok"]]
+        if failed:
+            print(f"failed corpus cases: {', '.join(row['challenge_id'] for row in failed)}", file=sys.stderr)
+            return 1
+        return 0
+    finally:
+        web_server.terminate()
+        try:
+            web_server.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            web_server.kill()
+
+
+def build_fixtures() -> dict[str, Path]:
+    crypto = WORKDIR / "crypto-base32.txt"
+    crypto.write_text(base64.b32encode(b"flag{corpus_crypto}").decode("ascii").rstrip("=") + "\n", encoding="utf-8")
+
+    misc = WORKDIR / "misc-binary.txt"
+    misc.write_text(" ".join(f"{byte:08b}" for byte in b"flag{corpus_misc}") + "\n", encoding="utf-8")
+
+    forensic = WORKDIR / "forensics-strings.bin"
+    forensic.write_bytes(b"\x00CTF sample artifact\x00flag{corpus_forensics}\x00")
+
+    reverse_source = WORKDIR / "reverse-sample.c"
+    reverse_source.write_text(
+        '#include <stdio.h>\nconst char *flag = "flag{corpus_reverse}";\nint main(void) { puts("reverse me"); return flag[0] == 0; }\n',
+        encoding="utf-8",
+    )
+    reverse_bin = WORKDIR / "reverse-sample"
+    compile_c(reverse_source, reverse_bin)
+
+    pwn_source = WORKDIR / "pwn-sample.c"
+    pwn_source.write_text(
+        '#include <stdio.h>\nconst char *flag = "flag{corpus_pwn}";\nint main(void) { char buf[16]; puts("pwn me"); return flag[0] == 0 && sizeof(buf) == 0; }\n',
+        encoding="utf-8",
+    )
+    pwn_bin = WORKDIR / "pwn-sample"
+    compile_c(pwn_source, pwn_bin)
+
+    traffic = WORKDIR / "traffic-http-flag.pcap"
+    write_http_pcap(traffic, b"GET /flag HTTP/1.1\r\nHost: corpus.test\r\n\r\nflag{corpus_traffic}\n")
+
+    web_dir = WORKDIR / "web-root"
+    web_dir.mkdir(exist_ok=True)
+    (web_dir / "index.html").write_text(
+        "<!doctype html><title>Corpus Web</title><h1>flag{corpus_web}</h1>",
+        encoding="utf-8",
+    )
+
+    return {
+        "crypto": crypto,
+        "misc": misc,
+        "forensic": forensic,
+        "reverse": reverse_bin,
+        "pwn": pwn_bin,
+        "traffic": traffic,
+        "web_dir": web_dir,
+    }
+
+
+def corpus_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
+    return [
+        {
+            "challenge_id": "corpus-web",
+            "category": "web",
+            "title": "Corpus Web visible response",
+            "description": "Inspired by web warmups where the first scoped response or an obvious route contains a flag.",
+            "target": "http://127.0.0.1:18081/",
+            "attachments": [],
+            "active_probe": True,
+            "expected_flag": "flag{corpus_web}",
+        },
+        {
+            "challenge_id": "corpus-crypto",
+            "category": "crypto",
+            "title": "Corpus Crypto Base32",
+            "description": "Base32/encoding warmup pattern.",
+            "attachments": [fixtures["crypto"]],
+            "active_probe": False,
+            "expected_flag": "flag{corpus_crypto}",
+        },
+        {
+            "challenge_id": "corpus-misc",
+            "category": "misc",
+            "title": "Corpus Misc binary ASCII",
+            "description": "Binary ASCII puzzle pattern.",
+            "attachments": [fixtures["misc"]],
+            "active_probe": False,
+            "expected_flag": "flag{corpus_misc}",
+        },
+        {
+            "challenge_id": "corpus-forensics",
+            "category": "forensics",
+            "title": "Corpus Forensics strings",
+            "description": "File triage / strings pattern.",
+            "attachments": [fixtures["forensic"]],
+            "active_probe": False,
+            "expected_flag": "flag{corpus_forensics}",
+        },
+        {
+            "challenge_id": "corpus-traffic",
+            "category": "traffic",
+            "title": "Corpus Traffic HTTP payload",
+            "description": "PCAP payload scan and TCP/HTTP triage pattern.",
+            "attachments": [fixtures["traffic"]],
+            "active_probe": False,
+            "expected_flag": "flag{corpus_traffic}",
+        },
+        {
+            "challenge_id": "corpus-reverse",
+            "category": "reverse",
+            "title": "Corpus Reverse strings",
+            "description": "Reverse warmup where static strings expose the token.",
+            "attachments": [fixtures["reverse"]],
+            "active_probe": False,
+            "expected_flag": "flag{corpus_reverse}",
+        },
+        {
+            "challenge_id": "corpus-pwn",
+            "category": "pwn",
+            "title": "Corpus Pwn binary triage",
+            "description": "Binary exploitation warmup where checksec/strings establish the triage baseline.",
+            "attachments": [fixtures["pwn"]],
+            "active_probe": False,
+            "expected_flag": "flag{corpus_pwn}",
+        },
+    ]
+
+
+def compile_c(source: Path, output: Path) -> None:
+    subprocess.run(["clang", str(source), "-o", str(output)], check=True)
+
+
+def start_fixture_http_server(web_dir: Path) -> subprocess.Popen:
+    process = subprocess.Popen(
+        [sys.executable, "-m", "http.server", "18081", "--bind", "127.0.0.1"],
+        cwd=web_dir,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", 18081), timeout=0.2):
+                return process
+        except OSError:
+            time.sleep(0.1)
+    process.terminate()
+    raise RuntimeError("fixture HTTP server did not start on 127.0.0.1:18081")
+
+
+def create_challenge(base_url: str, case: dict[str, object]) -> None:
+    payload = {
+        "challenge_id": case["challenge_id"],
+        "category": case["category"],
+        "title": case["title"],
+        "target": case.get("target", ""),
+        "description": case["description"],
+        "tags": "corpus,web-smoke",
+        "attachments": [
+            {
+                "name": path.name,
+                "content_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+            }
+            for path in case["attachments"]
+        ],
+    }
+    post_json(base_url, "/api/challenges", payload)
+
+
+def run_challenge(base_url: str, case: dict[str, object]) -> dict[str, object]:
+    return post_json(
+        base_url,
+        f"/api/challenges/{case['challenge_id']}/run",
+        {
+            "active_probe": case["active_probe"],
+            "allowed_hosts": "127.0.0.1,localhost",
+            "llm_enabled": False,
+            "llm_provider": "disabled",
+        },
+    )
+
+
+def post_json(base_url: str, path: str, payload: dict[str, object]) -> dict[str, object]:
+    request = urllib.request.Request(
+        base_url.rstrip("/") + path,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def get_json(base_url: str, path: str) -> dict[str, object] | list[dict[str, object]]:
+    with urllib.request.urlopen(base_url.rstrip("/") + path, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def write_http_pcap(path: Path, payload: bytes) -> None:
+    packet = ethernet_frame(ipv4_packet(tcp_segment(payload)))
+    with path.open("wb") as handle:
+        handle.write(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
+        handle.write(struct.pack("<IIII", int(time.time()), 0, len(packet), len(packet)))
+        handle.write(packet)
+
+
+def ethernet_frame(payload: bytes) -> bytes:
+    return b"\xaa\xaa\xaa\xaa\xaa\xaa" + b"\xbb\xbb\xbb\xbb\xbb\xbb" + b"\x08\x00" + payload
+
+
+def ipv4_packet(payload: bytes) -> bytes:
+    src = socket.inet_aton("10.0.0.2")
+    dst = socket.inet_aton("10.0.0.3")
+    total_length = 20 + len(payload)
+    header = struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 6, 0, src, dst)
+    checksum = internet_checksum(header)
+    return struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 6, checksum, src, dst) + payload
+
+
+def tcp_segment(payload: bytes) -> bytes:
+    data_offset_and_flags = (5 << 12) | 0x18
+    return struct.pack("!HHIIHHHH", 4444, 80, 1, 1, data_offset_and_flags, 8192, 0, 0) + payload
+
+
+def internet_checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\x00"
+    total = sum(struct.unpack("!%dH" % (len(data) // 2), data))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

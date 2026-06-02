@@ -11,6 +11,7 @@ from forgeflag.flags import extract_flags
 
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9+/=_&%#;{}:.,!@-]{4,}")
+BINARY_ASCII_PATTERN = re.compile(r"(?:[01]{8}\s+){3,}[01]{8}")
 
 
 @dataclass(frozen=True)
@@ -57,7 +58,7 @@ def candidates_to_payload(candidates: tuple[TransformCandidate, ...], limit: int
 
 def _seed_values(text: str) -> list[str]:
     seeds: list[str] = []
-    for value in [text, *TOKEN_PATTERN.findall(text)]:
+    for value in [text, *BINARY_ASCII_PATTERN.findall(text), *TOKEN_PATTERN.findall(text)]:
         normalized = value.strip()
         if len(normalized) < 4:
             continue
