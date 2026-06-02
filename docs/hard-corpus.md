@@ -56,6 +56,7 @@ Required evidence is intentionally broader than a flag: cases can score classifi
 | ID | Category | Pattern | Expected |
 | --- | --- | --- | --- |
 | `hard-web-api-options` | web | client script hints at a hidden API route | flag and route extraction |
+| `hard-web-source-routes` | web | source-only route and sink triage | route extraction plus API option, JWT/session, SSRF, and path traversal hints |
 | `hard-crypto-aes-ctr-reuse` | crypto | AES-CTR nonce reuse | classify stream keystream reuse |
 | `hard-crypto-poly1305-reuse` | crypto | Poly1305 one-time key reuse | classify MAC algebra workflow |
 | `hard-traffic-dns-split` | traffic | split DNS label exfiltration | reconstruct encoded flag |
@@ -78,11 +79,12 @@ scripts/forgeflag-control restart
 scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict
 ```
 
-Result: 13/13 cases reached full score through the Web API.
+Result: 14/14 cases reached full score through the Web API.
 
 | Area | Improvement Verified |
 | --- | --- |
 | Web | Follows same-origin routes mentioned in client-side script strings, including hidden JSON APIs. |
+| Web | Parses source attachments for framework routes and source-derived API option leakage, JWT/session, SSRF, and path traversal hints. |
 | Web | Stores plain-text response samples and emits chain hints such as LFI, WAR, and Java. |
 | Traffic | Reconstructs split encoded DNS labels before decoding exfiltrated flags. |
 | Traffic | Follows shortlisted TCP streams and stores stream id, hints, payload sample, and recovered flags. |

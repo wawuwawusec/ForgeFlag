@@ -57,7 +57,7 @@ ForgeFlag next additions:
 
 - Record response headers and cookies in WebSolver evidence.
 - Add robots/source-map/static-JS discovery behind active-probe scope.
-- Add bug-class hint extraction from forms, route names, technologies, and source attachments.
+- Add bug-class hint extraction from forms and technologies.
 
 ### Crypto Method Card
 
@@ -159,6 +159,7 @@ Common first moves:
 ForgeFlag coverage today:
 
 - `WebSolver` runs scoped HTTP probing and low-budget route discovery.
+- `WebSolver` analyzes source attachments for Flask/FastAPI/Express/Django/Laravel-style routes and promotes source-derived API option leakage, JWT/session, SSRF, and path traversal hints.
 - The corpus smoke includes a visible-response flag case.
 
 ### Crypto

@@ -66,6 +66,8 @@ Implemented so far:
 - Scoped WebSolver workflow:
   - allowlist-gated HTTP probing
   - HTML title/link/form parsing
+  - source attachment route extraction for common Flask/FastAPI/Express/Django/Laravel-style route declarations
+  - source-derived bug-class hints for API option leakage, JWT/session, SSRF, and path traversal sinks
   - low-budget `ffuf` route discovery only when active probing and allowed-host scope are enabled
   - flag candidate extraction
   - verifier integration
@@ -129,8 +131,8 @@ Implemented so far:
 - Web-run hard/expert CTF corpus benchmark:
   - `scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeup patterns
-  - Covers hidden Web APIs, crypto primitive misuse, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, ret2win pwn, pickle sandbox, and Web-to-Java chains
-  - Current strict result: 13/13 full score through the Web API
+  - Covers hidden Web APIs, source route/sink triage, crypto primitive misuse, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, ret2win pwn, pickle sandbox, and Web-to-Java chains
+  - Current strict result: 14/14 full score through the Web API
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category

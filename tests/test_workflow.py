@@ -265,6 +265,46 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("LFI", web_finding.evidence["chain_hints"])
         self.assertIn("WAR", web_finding.evidence["chain_hints"])
 
+    def test_web_solver_analyzes_source_routes_and_bug_class_hints_without_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "app.py"
+            source.write_text(
+                "from flask import Flask, request, session\n"
+                "import jwt, requests\n"
+                "app = Flask(__name__)\n"
+                "app.config['SECRET_KEY'] = 'dev-secret'\n"
+                "@app.route('/api/options')\n"
+                "def options(): return {'commands': ['status', 'flag']}\n"
+                "@app.route('/fetch')\n"
+                "def fetch(): return requests.get(request.args['url']).text\n"
+                "@app.route('/download')\n"
+                "def download(): return open(request.args['file']).read()\n"
+                "def auth(token): return jwt.decode(token, options={'verify_signature': False})\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="web-source-only",
+                    category=ChallengeCategory.WEB,
+                    attachment_paths=(str(source),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("web-source-only")
+            findings = notebook.findings_for("web-source-only")
+
+        self.assertEqual(summary["status"], "completed")
+        source_finding = next(f for f in findings if f.finding == "Analyzed web source attachments")
+        self.assertIn("/api/options", source_finding.evidence["routes"])
+        self.assertIn("/fetch", source_finding.evidence["routes"])
+        self.assertIn("api option leakage", source_finding.evidence["bug_class_hints"])
+        self.assertIn("SSRF", source_finding.evidence["bug_class_hints"])
+        self.assertIn("path traversal", source_finding.evidence["bug_class_hints"])
+        self.assertIn("JWT/session", source_finding.evidence["bug_class_hints"])
+        self.assertIn("route", source_finding.next_action.lower())
+
     def test_web_solver_records_scoped_ffuf_route_discovery(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), FlagHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

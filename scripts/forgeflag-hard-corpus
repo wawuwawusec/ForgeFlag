@@ -66,6 +66,22 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    web_route_source = WORKDIR / "web-source-routes.py"
+    web_route_source.write_text(
+        "from flask import Flask, request, session\n"
+        "import jwt, requests\n"
+        "app = Flask(__name__)\n"
+        "app.config['SECRET_KEY'] = 'ctf-dev-secret'\n"
+        "@app.route('/api/options')\n"
+        "def options(): return {'commands': ['status', 'flag']}\n"
+        "@app.route('/fetch')\n"
+        "def fetch(): return requests.get(request.args['url']).text\n"
+        "@app.route('/download')\n"
+        "def download(): return open(request.args['file']).read()\n"
+        "def auth(token): return jwt.decode(token, options={'verify_signature': False})\n",
+        encoding="utf-8",
+    )
+
     crypto_ctr = WORKDIR / "aes-ctr-reuse.txt"
     crypto_ctr.write_text(
         "\n".join(
@@ -162,6 +178,7 @@ def build_fixtures() -> dict[str, Path]:
 
     return {
         "web_source": web_source,
+        "web_route_source": web_route_source,
         "crypto_ctr": crypto_ctr,
         "poly1305": poly1305,
         "traffic": traffic,
@@ -192,6 +209,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["api/options", "hidden API", "flag{hard_web_option_leak}"],
             "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
             "improvement_hint": "WebSolver should extract script-mentioned routes and probe same-origin API endpoints.",
+        },
+        {
+            "challenge_id": "hard-web-source-routes",
+            "category": "web",
+            "difficulty": "hard",
+            "title": "Source route and sink triage",
+            "description": "Public hard Web writeup pattern: source code reveals hidden API routes plus SSRF/path traversal/JWT-session sinks before any live target is provided.",
+            "attachments": [fixtures["web_route_source"]],
+            "active_probe": False,
+            "expected_flag": None,
+            "required_evidence": ["/api/options", "SSRF", "path traversal", "JWT/session", "api option leakage"],
+            "source_url": "https://book.hacktricks.wiki/en/network-services-pentesting/pentesting-web/index.html",
+            "improvement_hint": "WebSolver should parse framework routes and promote source-derived bug-class hints before active probing.",
         },
         {
             "challenge_id": "hard-crypto-aes-ctr-reuse",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from urllib.parse import urldefrag, urljoin, urlparse
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
@@ -13,6 +14,7 @@ from forgeflag.web_analysis import HtmlSummary, summarize_html
 
 _SCRIPT_ROUTE_PATTERN = re.compile(r"""["'](\/[A-Za-z0-9][A-Za-z0-9._~!$&()*+,;=:@%\/?#[\]-]*)["']""")
 _STATIC_ROUTE_SUFFIXES = (".css", ".gif", ".ico", ".jpg", ".jpeg", ".js", ".map", ".png", ".svg", ".webp")
+_SOURCE_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".py", ".php", ".rb", ".go", ".java", ".kt", ".cs"}
 
 
 class WebSolver:
@@ -41,12 +43,19 @@ class WebSolver:
         context.notebook.add_finding(finding)
         findings.append(finding)
 
+        source_finding, source_flags = _analyze_web_source_attachments(context)
+        if source_finding:
+            context.notebook.add_finding(source_finding)
+            findings.append(source_finding)
+            flag_candidates.extend(source_flags)
+
         if not challenge.target or not challenge.target.startswith(("http://", "https://")):
             return SolverResult(
                 solver=self.name,
                 challenge_id=challenge.challenge_id,
-                status="no_http_target",
+                status="flag_candidate" if flag_candidates else ("ok" if source_finding else "no_http_target"),
                 findings=tuple(findings),
+                flag_candidates=tuple(dict.fromkeys(flag_candidates)),
             )
 
         if not context.scope.active_probe:
@@ -182,6 +191,135 @@ def _chain_hints(sample: str) -> list[str]:
     if "java" in lowered or ".class" in lowered or "tomcat" in lowered:
         hints.append("Java")
     return hints
+
+
+def _analyze_web_source_attachments(context: SolverContext) -> tuple[Finding | None, tuple[str, ...]]:
+    route_map: dict[str, list[str]] = {}
+    all_hints: list[str] = []
+    samples: dict[str, list[str]] = {}
+    flag_candidates: list[str] = []
+
+    for attachment_path in context.challenge.attachment_paths:
+        try:
+            resolved = ctf.ensure_existing_file(attachment_path)
+        except FileNotFoundError:
+            continue
+        path = Path(resolved)
+        if path.suffix.lower() not in _SOURCE_SUFFIXES:
+            continue
+        try:
+            source = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        routes = _source_routes(source)
+        hints = _source_bug_class_hints(source, routes)
+        flags = extract_flags(source)
+        route_map[resolved] = routes
+        all_hints.extend(hints)
+        flag_candidates.extend(flags)
+        samples[resolved] = _source_sample_lines(source, tuple(dict.fromkeys((*routes, *hints))))
+
+    routes = tuple(dict.fromkeys(route for routes_for_file in route_map.values() for route in routes_for_file))
+    hints = tuple(dict.fromkeys(all_hints))
+    flags = tuple(dict.fromkeys(flag_candidates))
+    if not route_map and not hints and not flags:
+        return None, ()
+
+    finding = Finding(
+        challenge_id=context.challenge.challenge_id,
+        solver=WebSolver.name,
+        finding="Analyzed web source attachments",
+        evidence={
+            "attachments": list(route_map.keys()),
+            "routes": list(routes),
+            "routes_by_attachment": route_map,
+            "bug_class_hints": list(hints),
+            "source_samples": samples,
+            "flag_candidates": list(flags),
+        },
+        hypothesis=_source_hypothesis(routes, hints, flags),
+        confidence=0.78 if routes or hints else 0.55,
+        next_action=_source_next_action(routes, hints, flags),
+    )
+    return finding, flags
+
+
+def _source_routes(source: str) -> list[str]:
+    patterns = (
+        r"@(?:[A-Za-z_][A-Za-z0-9_]*\.)?route\s*\(\s*['\"]([^'\"]+)['\"]",
+        r"@(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:get|post|put|delete|patch)\s*\(\s*['\"]([^'\"]+)['\"]",
+        r"\b(?:app|router)\.(?:get|post|put|delete|patch|use|all)\s*\(\s*['\"]([^'\"]+)['\"]",
+        r"\b(?:path|re_path)\s*\(\s*['\"]([^'\"]+)['\"]",
+        r"\bRoute::(?:get|post|put|delete|patch|any)\s*\(\s*['\"]([^'\"]+)['\"]",
+    )
+    routes: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, source):
+            route = match.group(1).strip()
+            if route and route not in routes:
+                routes.append(route)
+    return routes
+
+
+def _source_bug_class_hints(source: str, routes: list[str]) -> list[str]:
+    lowered = source.lower()
+    hints: list[str] = []
+    if any(route.lower().startswith("/api/options") for route in routes) or (
+        "/api/options" in lowered and ("commands" in lowered or "options" in lowered)
+    ):
+        hints.append("api option leakage")
+    if (
+        "jwt" in lowered
+        or "jsonwebtoken" in lowered
+        or "secret_key" in lowered
+        or "session" in lowered
+        or "cookie" in lowered
+    ):
+        hints.append("JWT/session")
+    if re.search(r"\b(?:requests|urllib|axios|fetch|http\.get|httpx)\s*\.\s*(?:get|post|request|urlopen)\s*\(", source) and re.search(
+        r"(?:request\.args|request\.form|req\.query|req\.body|\$_(?:GET|POST)|params)", source
+    ):
+        hints.append("SSRF")
+    if re.search(r"\b(?:open|send_file|file_get_contents|include|require)\s*\(", source) and re.search(
+        r"(?:request\.args|request\.form|req\.query|req\.body|\$_(?:GET|POST)|params|filename|path|file)", source
+    ):
+        hints.append("path traversal")
+    if "../" in lowered or "..%2f" in lowered or "safe_join" in lowered:
+        hints.append("path traversal")
+    return list(dict.fromkeys(hints))
+
+
+def _source_sample_lines(source: str, terms: tuple[str, ...], limit: int = 8) -> list[str]:
+    if not terms:
+        return []
+    lowered_terms = tuple(term.lower() for term in terms if term)
+    lines: list[str] = []
+    for line in source.splitlines():
+        if any(term in line.lower() for term in lowered_terms):
+            lines.append(line.strip()[:220])
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _source_hypothesis(routes: tuple[str, ...], hints: tuple[str, ...], flags: tuple[str, ...]) -> str:
+    if flags:
+        return "Source attachments contain a flag-like token that should be verified."
+    if routes and hints:
+        return "Source attachments expose routes and Web bug-class hints for targeted follow-up."
+    if routes:
+        return "Source attachments expose framework routes that should guide scoped probing."
+    return "Source attachments expose Web bug-class hints even without a live target."
+
+
+def _source_next_action(routes: tuple[str, ...], hints: tuple[str, ...], flags: tuple[str, ...]) -> str:
+    if flags:
+        return "Send source-derived candidates to Verifier and preserve the attachment path."
+    if routes and hints:
+        return "Map the listed routes to the live target, then test the hinted bug classes inside declared scope."
+    if routes:
+        return "Use the extracted route list to prioritize same-origin probing once a target is available."
+    return "Review the hinted source sinks and add a target URL before active exploitation."
 
 
 def _follow_visible_links(
