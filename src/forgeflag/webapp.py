@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -85,6 +86,21 @@ def create_handler(db_path: str | Path):
                 challenge_id, suffix = _challenge_route(path)
                 if challenge_id and suffix == "run":
                     self._send_json(self.handle_run_challenge(challenge_id, payload))
+                    return
+                self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            except Exception as exc:  # noqa: BLE001 - API should return JSON errors to the UI.
+                self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+        def do_DELETE(self) -> None:
+            parsed = urlparse(self.path)
+            path = parsed.path
+            try:
+                if path == "/api/challenges":
+                    self._send_json(self.handle_clear_challenges())
+                    return
+                challenge_id = _challenge_id_route(path)
+                if challenge_id:
+                    self._send_json(self.handle_delete_challenge(challenge_id))
                     return
                 self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
             except Exception as exc:  # noqa: BLE001 - API should return JSON errors to the UI.
@@ -180,6 +196,25 @@ def create_handler(db_path: str | Path):
                 llm_config=_llm_config(payload),
             )
             return Manager(cls.notebook, config=config).run_challenge(challenge_id)
+
+        @classmethod
+        def handle_delete_challenge(cls, challenge_id: str) -> dict[str, Any]:
+            # Validate before deleting so accidental unknown IDs surface as API errors.
+            cls.notebook.get_challenge(challenge_id)
+            deleted = cls.notebook.delete_challenge(challenge_id)
+            removed_dirs = _remove_challenge_dirs(cls.db_path.parent, challenge_id)
+            return {
+                "status": "deleted",
+                "challenge_id": challenge_id,
+                "deleted": deleted,
+                "removed_dirs": removed_dirs,
+            }
+
+        @classmethod
+        def handle_clear_challenges(cls) -> dict[str, Any]:
+            deleted = cls.notebook.clear_challenges()
+            removed_dirs = _remove_all_challenge_dirs(cls.db_path.parent)
+            return {"status": "cleared", "deleted": deleted, "removed_dirs": removed_dirs}
 
         @classmethod
         def handle_test_llm(cls, payload: dict[str, Any]) -> dict[str, Any]:
@@ -290,6 +325,13 @@ def _challenge_route(path: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _challenge_id_route(path: str) -> str | None:
+    parts = [unquote(part) for part in path.strip("/").split("/")]
+    if len(parts) == 3 and parts[0] == "api" and parts[1] == "challenges":
+        return parts[2]
+    return None
+
+
 def _required_string(payload: dict[str, Any], key: str) -> str:
     value = str(payload.get(key) or "").strip()
     if not value:
@@ -317,6 +359,26 @@ def _tags(value: object) -> list[str]:
 def _safe_name(value: str) -> str:
     cleaned = "".join(char if char.isalnum() or char in ("-", "_", ".") else "_" for char in value)
     return cleaned.strip("._") or "upload.bin"
+
+
+def _remove_challenge_dirs(root: Path, challenge_id: str) -> list[str]:
+    removed: list[str] = []
+    safe_id = _safe_name(challenge_id)
+    for base in (root / "uploads", root / "artifacts"):
+        path = base / safe_id
+        if path.exists():
+            shutil.rmtree(path)
+            removed.append(str(path))
+    return removed
+
+
+def _remove_all_challenge_dirs(root: Path) -> list[str]:
+    removed: list[str] = []
+    for path in (root / "uploads", root / "artifacts"):
+        if path.exists():
+            shutil.rmtree(path)
+            removed.append(str(path))
+    return removed
 
 
 def _llm_config(payload: dict[str, Any]) -> LLMConfig:
@@ -381,6 +443,7 @@ INDEX_HTML = r"""<!doctype html>
     button { border: 1px solid #0f5d4c; background: var(--accent); color: white; border-radius: 6px; padding: 9px 12px; font: inherit; cursor: pointer; }
     button.secondary { background: white; color: var(--ink); border-color: var(--line); }
     button.warn { background: var(--warn); border-color: var(--warn); }
+    button:disabled { opacity: .58; cursor: wait; }
     .row { display: flex; gap: 8px; align-items: center; }
     .row > * { flex: 1; }
     .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
@@ -460,6 +523,8 @@ INDEX_HTML = r"""<!doctype html>
       <div class="actions">
         <button id="saveBtn">保存题目</button>
         <button class="secondary" id="refreshBtn">刷新列表</button>
+        <button class="warn" id="deleteBtn">删除选中</button>
+        <button class="warn" id="clearBtn">清空全部</button>
       </div>
       <h2 style="margin-top:22px">分类工作台</h2>
       <div class="category-bar" id="categoryFilters"></div>
@@ -1111,18 +1176,54 @@ INDEX_HTML = r"""<!doctype html>
     }
     async function runSelected() {
       if (!state.selected) return status("select a challenge first");
-      status("running...");
+      setRunState(true, `运行中：${state.selected}`);
+      show({ challenge_id: state.selected, status: "running", solvers: [], accepted_flags: [], rejected_flags: [], observations: 0 }, "summary");
       const payload = {
         active_probe: $("activeProbe").checked,
         allowed_hosts: $("allowedHosts").value,
         ...llmPayload()
       };
-      const res = await api(`/api/challenges/${encodeURIComponent(state.selected)}/run`, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(payload) });
-      state.lastSummary = res;
-      state.summaries[state.selected] = res;
-      status(res.status || "done");
-      show(res, "summary");
-      await loadTab("findings");
+      try {
+        const res = await api(`/api/challenges/${encodeURIComponent(state.selected)}/run`, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(payload) });
+        state.lastSummary = res;
+        state.summaries[state.selected] = res;
+        status(`运行完成：${res.status || "done"}`);
+        show(res, "summary");
+        await refresh();
+        await loadTab("findings");
+      } finally {
+        setRunState(false, $("status").textContent);
+      }
+    }
+    function setRunState(running, message) {
+      const button = $("runBtn");
+      button.disabled = running;
+      button.textContent = running ? "运行中..." : "运行选中题目";
+      if (message) status(message);
+    }
+    async function deleteSelectedChallenge() {
+      if (!state.selected) return status("select a challenge first");
+      const challengeId = state.selected;
+      if (!confirm(`删除题目 ${challengeId} 及其运行记录？`)) return;
+      status(`删除中：${challengeId}`);
+      const res = await api(`/api/challenges/${encodeURIComponent(challengeId)}`, { method:"DELETE" });
+      delete state.summaries[challengeId];
+      state.selected = null;
+      state.lastSummary = {};
+      status(`已删除：${challengeId}`);
+      await refresh();
+      show(res, "raw");
+    }
+    async function clearChallenges() {
+      if (!confirm("清空全部题目、运行记录和 Web 上传附件？")) return;
+      status("清空中...");
+      const res = await api("/api/challenges", { method:"DELETE" });
+      state.selected = null;
+      state.lastSummary = {};
+      state.summaries = {};
+      status("已清空全部题目");
+      await refresh();
+      show(res, "raw");
     }
     async function testLLM() {
       if (!$("llmEnabled").checked) $("llmEnabled").checked = true;
@@ -1162,7 +1263,9 @@ INDEX_HTML = r"""<!doctype html>
     }
     $("saveBtn").onclick = () => saveChallenge().catch(e => { status("error"); show({error:e.message}); });
     $("refreshBtn").onclick = () => refresh().catch(e => show({error:e.message}));
-    $("runBtn").onclick = () => runSelected().catch(e => { status("error"); show({error:e.message}); });
+    $("deleteBtn").onclick = () => deleteSelectedChallenge().catch(e => { status("删除失败"); show({error:e.message}); });
+    $("clearBtn").onclick = () => clearChallenges().catch(e => { status("清空失败"); show({error:e.message}); });
+    $("runBtn").onclick = () => runSelected().catch(e => { setRunState(false, "运行失败"); show({error:e.message}); });
     $("llmSaveConfig").onclick = () => saveLLMConfig();
     $("llmTestBtn").onclick = () => testLLM().catch(e => { $("llmConfigStatus").textContent = "测试失败"; show({error:e.message}); });
     $("llmEnabled").onchange = syncLLMSettings;

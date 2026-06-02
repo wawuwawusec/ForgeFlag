@@ -261,6 +261,26 @@ class SQLiteNotebook:
             return None
         return json.loads(row["summary_json"])
 
+    def delete_challenge(self, challenge_id: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        with self._connect() as conn:
+            counts["findings"] = _delete_count(conn, "delete from findings where challenge_id = ?", (challenge_id,))
+            counts["observations"] = _delete_count(conn, "delete from observations where challenge_id = ?", (challenge_id,))
+            counts["tool_runs"] = _delete_count(conn, "delete from tool_runs where challenge_id = ?", (challenge_id,))
+            counts["runs"] = _delete_count(conn, "delete from runs where challenge_id = ?", (challenge_id,))
+            counts["challenges"] = _delete_count(conn, "delete from challenges where challenge_id = ?", (challenge_id,))
+        return counts
+
+    def clear_challenges(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        with self._connect() as conn:
+            counts["findings"] = _delete_count(conn, "delete from findings")
+            counts["observations"] = _delete_count(conn, "delete from observations")
+            counts["tool_runs"] = _delete_count(conn, "delete from tool_runs where challenge_id is not null")
+            counts["runs"] = _delete_count(conn, "delete from runs")
+            counts["challenges"] = _delete_count(conn, "delete from challenges")
+        return counts
+
     def _challenge_from_row(self, row: sqlite3.Row) -> Challenge:
         return Challenge(
             challenge_id=row["challenge_id"],
@@ -307,3 +327,8 @@ def _tool_summary_text(summary: dict[str, Any]) -> str:
     if interesting:
         return f"{tool} {status}: {str(interesting[0])[:180]}"
     return f"{tool} {status}: no compressed highlights"
+
+
+def _delete_count(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -> int:
+    cursor = conn.execute(sql, params)
+    return int(cursor.rowcount if cursor.rowcount is not None else 0)

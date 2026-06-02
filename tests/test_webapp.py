@@ -148,6 +148,48 @@ class WebAppApiTest(unittest.TestCase):
         self.assertEqual(row["accepted_flags"], ["flag{list_status}"])
         self.assertEqual(row["accepted_flag_count"], 1)
 
+    def test_delete_challenge_removes_notebook_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            handler_cls = create_handler(db)
+            handler_cls.handle_create_challenge(
+                {
+                    "challenge_id": "webui-delete",
+                    "category": "misc",
+                    "attachments": [
+                        {
+                            "name": "delete.txt",
+                            "content_base64": base64.b64encode(b"flag{delete_me}\n").decode("ascii"),
+                        }
+                    ],
+                }
+            )
+            handler_cls.notebook.record_run("webui-delete", "completed", {"challenge_id": "webui-delete", "status": "completed"})
+
+            response = handler_cls.handle_delete_challenge("webui-delete")
+            rows = handler_cls.handle_list_challenges()
+
+        self.assertEqual(response["status"], "deleted")
+        self.assertEqual(response["challenge_id"], "webui-delete")
+        self.assertFalse(any(row["challenge_id"] == "webui-delete" for row in rows))
+        self.assertGreaterEqual(response["deleted"]["challenges"], 1)
+
+    def test_clear_challenges_removes_all_notebook_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            handler_cls = create_handler(db)
+            handler_cls.handle_create_challenge({"challenge_id": "webui-clear-a", "category": "misc"})
+            handler_cls.handle_create_challenge({"challenge_id": "webui-clear-b", "category": "web"})
+
+            response = handler_cls.handle_clear_challenges()
+            rows = handler_cls.handle_list_challenges()
+
+        self.assertEqual(response["status"], "cleared")
+        self.assertEqual(rows, [])
+        self.assertGreaterEqual(response["deleted"]["challenges"], 2)
+
     def test_index_contains_category_workspace_controls(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
 
@@ -162,6 +204,11 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("category-group", html)
         self.assertIn('data-tab="catalog"', html)
         self.assertIn('data-tab="artifacts"', html)
+        self.assertIn('id="deleteBtn"', html)
+        self.assertIn('id="clearBtn"', html)
+        self.assertIn("function deleteSelectedChallenge", html)
+        self.assertIn("function clearChallenges", html)
+        self.assertIn("function setRunState", html)
 
     def test_index_renders_human_readable_result_tabs(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
