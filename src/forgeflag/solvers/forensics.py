@@ -207,6 +207,10 @@ def _image_text(image_stego: dict[str, Any] | None) -> str:
     for item in image_stego.get("comments", []):
         if isinstance(item, dict):
             values.append(str(item.get("text_preview", "")))
+    for item in image_stego.get("idat_payloads", []):
+        if isinstance(item, dict):
+            values.append(str(item.get("text_preview", "")))
+            values.extend(str(flag) for flag in item.get("flag_like_strings", []) if isinstance(flag, str))
     trailing = image_stego.get("trailing_data")
     if isinstance(trailing, dict):
         values.append(str(trailing.get("ascii_preview", "")))

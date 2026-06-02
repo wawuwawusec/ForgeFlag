@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import binascii
+import re
 import struct
 import zlib
 from pathlib import Path
@@ -90,6 +91,7 @@ def analyze_image_stego_hints(path: Path) -> dict[str, Any] | None:
 def _analyze_png_stego_hints(data: bytes) -> dict[str, Any] | None:
     chunks: list[dict[str, Any]] = []
     text_chunks: list[dict[str, str]] = []
+    idat_payloads: list[dict[str, Any]] = []
     trailing_data: dict[str, Any] | None = None
     pos = 8
     while pos + 12 <= len(data):
@@ -99,6 +101,14 @@ def _analyze_png_stego_hints(data: bytes) -> dict[str, Any] | None:
         body_end = body_start + size
         crc_end = body_end + 4
         if crc_end > len(data):
+            kind_text = kind.decode("ascii", errors="replace")
+            chunks.append({"type": kind_text, "size": size, "truncated": True})
+            if kind == b"IDAT":
+                idat_payload = _decode_independent_idat_payload(data[body_start:])
+                if idat_payload:
+                    idat_payload["chunk_index"] = len([chunk for chunk in chunks if chunk["type"] == "IDAT"]) - 1
+                    idat_payload["truncated_chunk"] = True
+                    idat_payloads.append(idat_payload)
             break
         kind_text = kind.decode("ascii", errors="replace")
         chunks.append({"type": kind_text, "size": size})
@@ -106,6 +116,11 @@ def _analyze_png_stego_hints(data: bytes) -> dict[str, Any] | None:
         text_chunk = _decode_png_text_chunk(kind, body)
         if text_chunk:
             text_chunks.append(text_chunk)
+        if kind == b"IDAT":
+            idat_payload = _decode_independent_idat_payload(body)
+            if idat_payload:
+                idat_payload["chunk_index"] = len([chunk for chunk in chunks if chunk["type"] == "IDAT"]) - 1
+                idat_payloads.append(idat_payload)
         pos = crc_end
         if kind == b"IEND":
             tail = data[crc_end:]
@@ -113,12 +128,13 @@ def _analyze_png_stego_hints(data: bytes) -> dict[str, Any] | None:
                 trailing_data = _byte_preview(tail)
             break
 
-    if not text_chunks and not trailing_data:
+    if not text_chunks and not idat_payloads and not trailing_data:
         return None
     return {
         "format": "png",
         "chunks": chunks[:80],
         "text_chunks": text_chunks,
+        **({"idat_payloads": idat_payloads} if idat_payloads else {}),
         **({"trailing_data": trailing_data} if trailing_data else {}),
     }
 
@@ -205,6 +221,35 @@ def _byte_preview(data: bytes) -> dict[str, Any]:
         "ascii_preview": _decode_preview(data, limit=500),
         "hex_preview": data[:64].hex(),
     }
+
+
+def _decode_independent_idat_payload(body: bytes) -> dict[str, Any] | None:
+    if not body.startswith((b"\x78\x01", b"\x78\x5e", b"\x78\x9c", b"\x78\xda")):
+        return None
+    try:
+        decompressed = zlib.decompress(body)
+    except zlib.error:
+        return None
+    strings = _printable_strings(decompressed)
+    flags = [item.decode("ascii", errors="replace") for item in strings if b"{" in item and b"}" in item]
+    if not flags and not _looks_like_text_payload(decompressed):
+        return None
+    return {
+        "decompressed_size": len(decompressed),
+        "text_preview": _decode_preview(decompressed, limit=500),
+        **({"flag_like_strings": flags[:10]} if flags else {}),
+    }
+
+
+def _looks_like_text_payload(data: bytes) -> bool:
+    if not data:
+        return False
+    printable = sum(1 for byte in data if 32 <= byte <= 126 or byte in {9, 10, 13})
+    return printable / len(data) >= 0.85
+
+
+def _printable_strings(data: bytes) -> list[bytes]:
+    return re.findall(rb"[ -~]{4,}", data)
 
 
 def _decode_preview(data: bytes, limit: int) -> str:

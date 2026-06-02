@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from forgeflag.image import analyze_image_stego_hints
-from tests.png_fixtures import png_with_text_and_trailing_data
+from tests.png_fixtures import png_with_extra_compressed_idat, png_with_text_and_trailing_data
 
 
 class ImageAnalysisTest(unittest.TestCase):
@@ -49,6 +49,31 @@ class ImageAnalysisTest(unittest.TestCase):
         self.assertEqual(summary["format"], "jpeg")
         self.assertIn("flag{jpeg_comment}", summary["comments"][0]["text_preview"])
         self.assertIn("APP1", summary["app_markers"])
+
+    def test_png_stego_hints_extract_independent_compressed_idat_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "extra-idat.png"
+            image.write_bytes(png_with_extra_compressed_idat("flag{extra_idat_stream}"))
+
+            summary = analyze_image_stego_hints(image)
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["format"], "png")
+        self.assertIn("idat_payloads", summary)
+        self.assertIn("flag{extra_idat_stream}", summary["idat_payloads"][0]["text_preview"])
+
+    def test_png_stego_hints_extract_truncated_extra_idat_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "truncated-extra-idat.png"
+            image.write_bytes(png_with_extra_compressed_idat("flag{truncated_idat_stream}", truncated_length=True))
+
+            summary = analyze_image_stego_hints(image)
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertIn("idat_payloads", summary)
+        self.assertIn("flag{truncated_idat_stream}", summary["idat_payloads"][0]["text_preview"])
 
 
 if __name__ == "__main__":

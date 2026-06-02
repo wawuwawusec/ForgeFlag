@@ -74,6 +74,7 @@ Implemented so far:
 - Reusable image puzzle analysis:
   - PNG IHDR height/CRC mismatch detection with repaired PNG artifact output
   - PNG text chunk, IEND trailing-data, JPEG comment, and JPEG APP marker summaries for stego-style hints
+  - PNG independent/extra IDAT zlib payload extraction, including truncated extra IDAT chunks that hide printable flag text
   - `ForensicsSolver` uses it after local artifact triage
   - `MiscSolver` uses it directly for misc image puzzles before broader puzzle triage and submits image-derived flag candidates to the verifier
 - Archive triage:

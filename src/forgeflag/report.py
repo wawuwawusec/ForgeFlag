@@ -276,6 +276,11 @@ def _human_evidence_items(step: dict[str, Any], evidence: dict[str, Any]) -> lis
             {"label": "转换方法", "value": str(first.get("method") or step.get("finding") or "transform")},
             {"label": "候选结果", "value": str(first.get("value") or first)},
         ]
+    image_stego = evidence.get("image_stego")
+    if isinstance(image_stego, dict):
+        items = _image_stego_evidence_items(image_stego)
+        if items:
+            return items
     return [
         {
             "label": f"{step.get('solver') or 'solver'}: {step.get('finding') or 'finding'}",
@@ -322,6 +327,20 @@ def _reproduction_steps(
             f"打开附件 {filename}，读取题面文本和文件内容。",
             _transform_reproduction_step(method),
             f"得到候选 {value}，交给 verifier 验证通过。",
+        ]
+    image_idat = _first_image_idat_payload(path_steps)
+    if image_idat:
+        filename = _basename(attachments[0]) if attachments else "题目附件"
+        chunk_index = image_idat.get("chunk_index")
+        truncated = bool(image_idat.get("truncated_chunk"))
+        text = image_idat.get("text_preview") or _first_string(image_idat.get("flag_like_strings")) or "flag 候选"
+        flag = _first_string(image_idat.get("flag_like_strings")) or text
+        abnormal = "，且该 chunk 存在截断/长度异常" if truncated else ""
+        return [
+            f"打开附件 {filename}，用 PNG chunk 解析工具检查结构。",
+            f"发现额外的 IDAT chunk：chunk_index={chunk_index}{abnormal}。",
+            f"将该 IDAT 数据按独立 zlib 流解压，得到文本 {text}。",
+            f"提交 {flag}，verifier 验证通过。",
         ]
     if replay_steps:
         return replay_steps[:5]
@@ -391,6 +410,42 @@ def _first_transform_candidate(steps: list[dict[str, Any]]) -> dict[str, Any]:
             if isinstance(candidate, str):
                 return {"value": candidate}
     return {}
+
+
+def _first_image_idat_payload(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    for step in steps:
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        image_stego = evidence.get("image_stego")
+        if not isinstance(image_stego, dict):
+            continue
+        for payload in image_stego.get("idat_payloads", []):
+            if isinstance(payload, dict):
+                return payload
+    return {}
+
+
+def _image_stego_evidence_items(image_stego: dict[str, Any]) -> list[dict[str, str]]:
+    payloads = image_stego.get("idat_payloads")
+    if isinstance(payloads, list) and payloads:
+        first = next((payload for payload in payloads if isinstance(payload, dict)), None)
+        if first:
+            return [
+                {
+                    "label": "额外 IDAT",
+                    "value": (
+                        f"chunk_index={first.get('chunk_index')}, "
+                        f"decompressed_size={first.get('decompressed_size')}, "
+                        f"truncated={bool(first.get('truncated_chunk'))}"
+                    ),
+                },
+                {
+                    "label": "解压文本",
+                    "value": str(first.get("text_preview") or _first_string(first.get("flag_like_strings")) or ""),
+                },
+            ]
+    return []
 
 
 def _recipe_text(value: object) -> str | None:

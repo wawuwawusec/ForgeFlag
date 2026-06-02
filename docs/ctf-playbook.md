@@ -177,6 +177,7 @@ ForgeFlag coverage today:
 - Transform chaining handles common reversible encodings.
 - RSA and hash triage are structured.
 - The corpus smoke includes Base32 decoding and verifies the generated CTF write-up.
+- PNG misc/stego triage should inspect abnormal extra IDAT chunks as possible independent zlib payloads; truncated length fields can still carry recoverable flag text.
 
 ### Misc
 

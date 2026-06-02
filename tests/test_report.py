@@ -303,6 +303,59 @@ class ReportBuilderTest(unittest.TestCase):
         )
         self.assertNotIn("可逆编码/转换 转换", report["writeup"]["markdown"])
 
+    def test_writeup_describes_extra_png_idat_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="png-idat-writeup",
+                solver="MiscSolver",
+                finding="Analyzed misc image artifact",
+                evidence={
+                    "artifact": {"name": "pngcheck.png", "path": "/tmp/pngcheck.png"},
+                    "flag_candidates": ["flag{extra_png_idat}"],
+                    "image_stego": {
+                        "chunks": [
+                            {"type": "IHDR", "size": 13},
+                            {"type": "IDAT", "size": 135317},
+                            {"type": "IDAT", "size": 92, "truncated": True},
+                        ],
+                        "idat_payloads": [
+                            {
+                                "chunk_index": 1,
+                                "decompressed_size": 22,
+                                "text_preview": "flag{extra_png_idat}",
+                                "flag_like_strings": ["flag{extra_png_idat}"],
+                                "truncated_chunk": True,
+                            }
+                        ],
+                    },
+                },
+                confidence=0.78,
+                hypothesis="Image metadata or appended bytes contain a flag-like token.",
+                next_action="Send image-derived flag candidates to Verifier and preserve the image evidence path.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="png-idat-writeup",
+            category=ChallengeCategory.MISC,
+            attachment_paths=("/tmp/pngcheck.png",),
+        )
+
+        report = ReportBuilder().build("png-idat-writeup", ("flag{extra_png_idat}",), findings, [], challenge=challenge)
+
+        sections = {section["title"]: section for section in report["writeup"]["sections"]}
+        self.assertEqual(
+            sections["复现步骤"]["steps"],
+            [
+                "打开附件 pngcheck.png，用 PNG chunk 解析工具检查结构。",
+                "发现额外的 IDAT chunk：chunk_index=1，且该 chunk 存在截断/长度异常。",
+                "将该 IDAT 数据按独立 zlib 流解压，得到文本 flag{extra_png_idat}。",
+                "提交 flag{extra_png_idat}，verifier 验证通过。",
+            ],
+        )
+        evidence = {item["label"]: item["value"] for item in sections["关键证据"]["items"]}
+        self.assertEqual(evidence["额外 IDAT"], "chunk_index=1, decompressed_size=22, truncated=True")
+        self.assertEqual(evidence["解压文本"], "flag{extra_png_idat}")
+
 
 if __name__ == "__main__":
     unittest.main()

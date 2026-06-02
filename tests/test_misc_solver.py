@@ -8,7 +8,7 @@ from pathlib import Path
 from forgeflag.domain import Challenge, ChallengeCategory, RunConfig
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
-from tests.png_fixtures import png_with_text_and_trailing_data, png_with_wrong_declared_height
+from tests.png_fixtures import png_with_extra_compressed_idat, png_with_text_and_trailing_data, png_with_wrong_declared_height
 
 
 class MiscSolverTest(unittest.TestCase):
@@ -57,6 +57,27 @@ class MiscSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Analyzed misc image artifact")
         self.assertIn("image_stego", finding.evidence)
         self.assertEqual(finding.evidence["image_stego"]["text_chunks"][0]["keyword"], "Comment")
+
+    def test_misc_solver_recovers_flag_from_extra_png_idat_stream(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "extra-idat.png"
+            attachment.write_bytes(png_with_extra_compressed_idat("flag{extra_idat_stream}"))
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="extra-idat-misc",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("extra-idat-misc")
+            finding = next(f for f in notebook.findings_for("extra-idat-misc") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{extra_idat_stream}"])
+        self.assertIn("idat_payloads", finding.evidence["image_stego"])
 
     def test_misc_solver_decodes_flag_from_text_attachment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
