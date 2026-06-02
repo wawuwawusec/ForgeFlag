@@ -57,6 +57,9 @@ def create_handler(db_path: str | Path):
             if challenge_id and suffix == "findings":
                 self._send_json(self.handle_findings(challenge_id))
                 return
+            if challenge_id and suffix == "summary":
+                self._send_json(self.handle_summary(challenge_id))
+                return
             if challenge_id and suffix == "observations":
                 self._send_json(self.handle_observations(challenge_id))
                 return
@@ -201,6 +204,22 @@ def create_handler(db_path: str | Path):
                 }
                 for finding in cls.notebook.findings_for(challenge_id)
             ]
+
+        @classmethod
+        def handle_summary(cls, challenge_id: str) -> dict[str, Any]:
+            summary = cls.notebook.latest_run_summary(challenge_id)
+            if isinstance(summary, dict) and summary:
+                return summary
+            # Validate that the challenge exists and return a stable empty run shape.
+            cls.notebook.get_challenge(challenge_id)
+            return {
+                "challenge_id": challenge_id,
+                "status": "not_run",
+                "solvers": [],
+                "accepted_flags": [],
+                "rejected_flags": [],
+                "observations": len(cls.notebook.observations_for(challenge_id)),
+            }
 
         @classmethod
         def handle_observations(cls, challenge_id: str) -> list[dict[str, Any]]:
@@ -502,7 +521,7 @@ INDEX_HTML = r"""<!doctype html>
   <script>
     const categories = ["unknown","web","pwn","reverse","crypto","forensics","traffic","misc","infra"];
     const categoryLabels = { all:"全部", unknown:"未知", web:"Web", pwn:"Pwn", reverse:"Reverse", crypto:"Crypto", forensics:"Forensics", traffic:"Traffic", misc:"Misc", infra:"Infra" };
-    const state = { selected: null, activeCategory: "all", challenges: [], lastSummary: {} };
+    const state = { selected: null, activeCategory: "all", challenges: [], lastSummary: {}, summaries: {} };
     const writeupSectionOrder = ["题目信息", "最终结论", "解题思路", "关键证据", "复现步骤", "工具与观察"];
     const $ = (id) => document.getElementById(id);
     const status = (text) => $("status").textContent = text;
@@ -1085,6 +1104,7 @@ INDEX_HTML = r"""<!doctype html>
       };
       const res = await api(`/api/challenges/${encodeURIComponent(state.selected)}/run`, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(payload) });
       state.lastSummary = res;
+      state.summaries[state.selected] = res;
       status(res.status || "done");
       show(res, "summary");
       await loadTab("findings");
@@ -1099,21 +1119,31 @@ INDEX_HTML = r"""<!doctype html>
     }
     async function loadTab(tab) {
       document.querySelectorAll(".tabs button").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tab));
-      if (tab === "summary") return show(state.lastSummary, "summary");
       if (tab === "tools") return show(await api("/api/tools"), "tools");
       if (tab === "catalog") return show(await api("/api/project-catalog"), "catalog");
       if (!state.selected) return status("select a challenge first");
+      if (tab === "summary") return show(await loadLatestSummary(), "summary");
       if (tab === "agent") return show(await loadAgentView(), "agent");
       show(await api(`/api/challenges/${encodeURIComponent(state.selected)}/${tab}`), tab);
     }
+    async function loadLatestSummary() {
+      if (!state.selected) return state.lastSummary || {};
+      const summary = await api(`/api/challenges/${encodeURIComponent(state.selected)}/summary`);
+      state.lastSummary = summary;
+      state.summaries[state.selected] = summary;
+      return summary;
+    }
     async function loadAgentView() {
       const challenge = encodeURIComponent(state.selected);
-      const [report, findings, observations] = await Promise.all([
+      const [summary, report, findings, observations] = await Promise.all([
+        api(`/api/challenges/${challenge}/summary`),
         api(`/api/challenges/${challenge}/report`),
         api(`/api/challenges/${challenge}/findings`),
         api(`/api/challenges/${challenge}/observations`)
       ]);
-      return { challenge_id: state.selected, summary: state.lastSummary || {}, report, findings, observations };
+      state.lastSummary = summary;
+      state.summaries[state.selected] = summary;
+      return { challenge_id: state.selected, summary, report, findings, observations };
     }
     $("saveBtn").onclick = () => saveChallenge().catch(e => { status("error"); show({error:e.message}); });
     $("refreshBtn").onclick = () => refresh().catch(e => show({error:e.message}));

@@ -87,6 +87,43 @@ class WebAppApiTest(unittest.TestCase):
         self.assertEqual(summary["status"], "flag_found")
         self.assertEqual(summary["accepted_flags"], ["flag{web_ui_run}"])
 
+    def test_summary_endpoint_returns_latest_run_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            handler_cls = create_handler(db)
+            handler_cls.handle_create_challenge({"challenge_id": "webui-summary", "category": "misc"})
+            handler_cls.notebook.record_run(
+                "webui-summary",
+                "flag_found",
+                {
+                    "challenge_id": "webui-summary",
+                    "status": "flag_found",
+                    "accepted_flags": ["flag{persisted_summary}"],
+                    "solvers": [{"solver": "MiscSolver", "status": "ok", "findings": 1}],
+                    "observations": 3,
+                },
+            )
+
+            payload = handler_cls.handle_summary("webui-summary")
+
+        self.assertEqual(payload["status"], "flag_found")
+        self.assertEqual(payload["accepted_flags"], ["flag{persisted_summary}"])
+        self.assertEqual(payload["solvers"][0]["solver"], "MiscSolver")
+
+    def test_summary_endpoint_returns_not_run_for_new_challenge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            handler_cls = create_handler(db)
+            handler_cls.handle_create_challenge({"challenge_id": "webui-not-run", "category": "misc"})
+
+            payload = handler_cls.handle_summary("webui-not-run")
+
+        self.assertEqual(payload["challenge_id"], "webui-not-run")
+        self.assertEqual(payload["status"], "not_run")
+        self.assertEqual(payload["accepted_flags"], [])
+
     def test_index_contains_category_workspace_controls(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
 
@@ -118,6 +155,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("function renderToolGroups", html)
         self.assertIn("tool-group", html)
         self.assertIn("查看原始 JSON", html)
+        self.assertIn("function loadLatestSummary", html)
+        self.assertIn("/summary", html)
 
     def test_index_contains_agent_timeline_view(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
