@@ -34,6 +34,17 @@ class Observer:
                         },
                     )
                 )
+            retrieved_knowledge = finding.evidence.get("retrieved_knowledge")
+            if isinstance(retrieved_knowledge, list) and retrieved_knowledge:
+                observations.append(
+                    Observation(
+                        challenge_id=challenge_id,
+                        source=solver_name,
+                        kind="knowledge_retrieval",
+                        summary=f"Retrieved {len(retrieved_knowledge)} knowledge blocks for LLM planning",
+                        evidence={"items": [item for item in retrieved_knowledge if isinstance(item, dict)][:10]},
+                    )
+                )
             if finding.confidence < self.confidence_threshold:
                 continue
             observations.append(

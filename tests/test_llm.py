@@ -504,9 +504,15 @@ class LLMSolverTest(unittest.TestCase):
                 solvers=[LLMSolver(provider)],
             ).run_challenge("new-dns")
 
-        self.assertIn("retrieved_knowledge:", provider.prompt)
-        self.assertIn("Old DNS exfil", provider.prompt)
-        self.assertIn("Base32 DNS labels", provider.prompt)
+            self.assertIn("retrieved_knowledge:", provider.prompt)
+            self.assertIn("Old DNS exfil", provider.prompt)
+            self.assertIn("Base32 DNS labels", provider.prompt)
+            finding = next(finding for finding in notebook.findings_for("new-dns") if finding.solver == "LLMSolver")
+            retrieved = finding.evidence["retrieved_knowledge"]
+            self.assertTrue(any(item["title"] == "Old DNS exfil" for item in retrieved))
+            observations = notebook.observations_for("new-dns")
+            knowledge_observation = next(observation for observation in observations if observation.kind == "knowledge_retrieval")
+            self.assertTrue(any(item["title"] == "Old DNS exfil" for item in knowledge_observation.evidence["items"]))
 
     def test_llm_solver_prompt_uses_unknown_category_routing_playbook(self) -> None:
         class RecordingProvider:

@@ -834,7 +834,15 @@ INDEX_HTML = r"""<!doctype html>
         asList(evidence.retrieved_knowledge).forEach(item => items.push(item));
         asList(evidence.plan && evidence.plan.retrieved_knowledge).forEach(item => items.push(item));
       });
-      observations.filter(obs => String(obs.kind || "").includes("knowledge")).forEach(obs => items.push({ source: obs.source, title: obs.summary, ...(obs.evidence || {}) }));
+      observations.filter(obs => String(obs.kind || "").includes("knowledge")).forEach(obs => {
+        const evidence = obs.evidence || {};
+        const nested = asList(evidence.items);
+        if (nested.length) {
+          nested.forEach(item => items.push(item));
+        } else {
+          items.push({ source: obs.source, title: obs.summary, ...evidence });
+        }
+      });
       return items;
     }
     function renderToolSummary(obs) {

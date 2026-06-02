@@ -5,7 +5,7 @@ import json
 from typing import Any
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
-from forgeflag.knowledge import format_knowledge_blocks, retrieved_knowledge_for
+from forgeflag.knowledge import KnowledgeBlock, format_knowledge_blocks, retrieved_knowledge_for
 from forgeflag.llm import LLMProvider
 from forgeflag.llm_prompts import category_playbook
 from forgeflag.solvers.base import SolverContext
@@ -44,12 +44,13 @@ class LLMSolver:
         if not self.provider.enabled:
             return SolverResult(self.name, context.challenge.challenge_id, "disabled")
 
+        knowledge_blocks = _knowledge_blocks(context)
         try:
-            response = self.provider.generate(_instructions(), _prompt(context))
+            response = self.provider.generate(_instructions(), _prompt(context, knowledge_blocks))
         except Exception as exc:  # noqa: BLE001 - LLM planning must not block scoped tool solvers.
-            return self._unavailable_result(context, str(exc))
+            return self._unavailable_result(context, str(exc), knowledge_blocks)
         if response.raw.get("status") == "unavailable":
-            return self._unavailable_result(context, str(response.raw.get("error") or response.content))
+            return self._unavailable_result(context, str(response.raw.get("error") or response.content), knowledge_blocks)
 
         plan = _parse_plan(response.content)
         evidence: dict[str, Any] = {
@@ -57,6 +58,9 @@ class LLMSolver:
             "model": self.provider.model,
             "strategy": response.content,
         }
+        retrieved = _knowledge_evidence(knowledge_blocks)
+        if retrieved:
+            evidence["retrieved_knowledge"] = retrieved
         if plan:
             evidence["plan"] = plan.to_evidence()
 
@@ -72,16 +76,25 @@ class LLMSolver:
         context.notebook.add_finding(finding)
         return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
 
-    def _unavailable_result(self, context: SolverContext, error: str) -> SolverResult:
+    def _unavailable_result(
+        self,
+        context: SolverContext,
+        error: str,
+        knowledge_blocks: list[KnowledgeBlock] | tuple[KnowledgeBlock, ...] = (),
+    ) -> SolverResult:
+        evidence: dict[str, Any] = {
+            "provider": self.provider.name,
+            "model": self.provider.model,
+            "error": error,
+        }
+        retrieved = _knowledge_evidence(knowledge_blocks)
+        if retrieved:
+            evidence["retrieved_knowledge"] = retrieved
         finding = Finding(
             challenge_id=context.challenge.challenge_id,
             solver=self.name,
             finding="LLM planning unavailable",
-            evidence={
-                "provider": self.provider.name,
-                "model": self.provider.model,
-                "error": error,
-            },
+            evidence=evidence,
             hypothesis="The configured LLM could not be used, so ForgeFlag should continue with deterministic solvers.",
             confidence=0.2,
             next_action="Fix the LLM configuration or disable 大模型分析, then rerun if model guidance is needed.",
@@ -101,26 +114,12 @@ def _instructions() -> str:
     )
 
 
-def _prompt(context: SolverContext) -> str:
+def _prompt(context: SolverContext, knowledge_blocks: list[KnowledgeBlock] | tuple[KnowledgeBlock, ...] | None = None) -> str:
     challenge = context.challenge
     observations = "\n".join(f"- {observation.kind}: {observation.summary}" for observation in context.observations)
-    query = " ".join(
-        [
-            challenge.title or "",
-            challenge.description or "",
-            " ".join(challenge.tags),
-            " ".join(challenge.attachment_paths),
-            observations,
-        ]
-    )
-    knowledge = format_knowledge_blocks(
-        retrieved_knowledge_for(
-            challenge.category,
-            query,
-            notebook=context.notebook,
-            current_challenge_id=challenge.challenge_id,
-        )
-    )
+    if knowledge_blocks is None:
+        knowledge_blocks = _knowledge_blocks(context)
+    knowledge = format_knowledge_blocks(list(knowledge_blocks))
     return "\n".join(
         [
             f"challenge_id: {challenge.challenge_id}",
@@ -136,6 +135,43 @@ def _prompt(context: SolverContext) -> str:
             observations or "- none",
         ]
     )
+
+
+def _knowledge_blocks(context: SolverContext) -> list[KnowledgeBlock]:
+    challenge = context.challenge
+    observations = "\n".join(f"- {observation.kind}: {observation.summary}" for observation in context.observations)
+    query = " ".join(
+        [
+            challenge.title or "",
+            challenge.description or "",
+            " ".join(challenge.tags),
+            " ".join(challenge.attachment_paths),
+            observations,
+        ]
+    )
+    return retrieved_knowledge_for(
+        challenge.category,
+        query,
+        notebook=context.notebook,
+        current_challenge_id=challenge.challenge_id,
+    )
+
+
+def _knowledge_evidence(blocks: list[KnowledgeBlock] | tuple[KnowledgeBlock, ...]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for block in blocks[:3]:
+        content = block.content
+        if len(content) > 500:
+            content = content[:497].rstrip() + "..."
+        items.append(
+            {
+                "source": block.source,
+                "title": block.title,
+                "category": block.category.value,
+                "body": content,
+            }
+        )
+    return items
 
 
 def _parse_plan(content: str) -> LLMPlan | None:
