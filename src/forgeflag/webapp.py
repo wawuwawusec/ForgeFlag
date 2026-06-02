@@ -455,10 +455,10 @@ INDEX_HTML = r"""<!doctype html>
     .llm-settings[hidden] { display: none; }
     .llm-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .llm-status { color: var(--muted); font-size: 12px; }
-    .category-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 16px; }
-    .category-pill { background: white; color: var(--ink); border-color: var(--line); display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; }
-    .category-pill.active { background: var(--accent); color: white; border-color: var(--accent); }
-    .category-pill span:last-child { font-size: 12px; opacity: .85; }
+    .category-bar, .status-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 16px; }
+    .category-pill, .status-pill { background: white; color: var(--ink); border-color: var(--line); display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; }
+    .category-pill.active, .status-pill.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .category-pill span:last-child, .status-pill span:last-child { font-size: 12px; opacity: .85; }
     .list { display: grid; gap: 8px; margin-top: 12px; }
     .item { border: 1px solid var(--line); background: white; border-radius: 6px; padding: 10px; cursor: pointer; }
     .item.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
@@ -531,6 +531,9 @@ INDEX_HTML = r"""<!doctype html>
       <h2 style="margin-top:22px">分类工作台</h2>
       <div class="category-bar" id="categoryFilters"></div>
       <div class="meta" id="categoryCounts"></div>
+      <h2 style="margin-top:22px">状态筛选</h2>
+      <div class="status-bar" id="statusFilters"></div>
+      <div class="meta" id="statusCounts"></div>
       <h2 style="margin-top:22px">题目列表</h2>
       <div class="list" id="challengeList"></div>
     </aside>
@@ -596,7 +599,9 @@ INDEX_HTML = r"""<!doctype html>
   <script>
     const categories = ["unknown","web","pwn","reverse","crypto","forensics","traffic","misc","infra"];
     const categoryLabels = { all:"全部", unknown:"未知", web:"Web", pwn:"Pwn", reverse:"Reverse", crypto:"Crypto", forensics:"Forensics", traffic:"Traffic", misc:"Misc", infra:"Infra" };
-    const state = { selected: null, activeCategory: "all", challenges: [], lastSummary: {}, summaries: {} };
+    const statusFilters = ["all","solved","ran","not_run"];
+    const statusLabels = { all:"全部", solved:"已出 flag", ran:"已运行未出", not_run:"未运行" };
+    const state = { selected: null, activeCategory: "all", activeStatus: "all", challenges: [], lastSummary: {}, summaries: {} };
     const writeupSectionOrder = ["题目信息", "最终结论", "解题思路", "关键证据", "复现步骤", "工具与观察"];
     const $ = (id) => document.getElementById(id);
     const status = (text) => $("status").textContent = text;
@@ -678,10 +683,38 @@ INDEX_HTML = r"""<!doctype html>
           if (category !== "all") $("category").value = category;
           renderChallengeList();
           renderCategoryFilters(state.challenges);
+          renderStatusFilters(state.challenges);
         };
         filters.appendChild(btn);
       });
       $("categoryCounts").textContent = `当前分类：${categoryLabels[state.activeCategory] || state.activeCategory}，题目数：${counts[state.activeCategory] || 0}`;
+    }
+    function statusCounts(challenges) {
+      const rows = challenges.filter(ch => state.activeCategory === "all" || ch.category === state.activeCategory);
+      const counts = Object.fromEntries(statusFilters.map(status => [status, 0]));
+      counts.all = rows.length;
+      rows.forEach(ch => {
+        const key = statusBucket(ch);
+        counts[key] = (counts[key] || 0) + 1;
+      });
+      return counts;
+    }
+    function renderStatusFilters(challenges) {
+      const counts = statusCounts(challenges);
+      const filters = $("statusFilters");
+      filters.innerHTML = "";
+      statusFilters.forEach(filter => {
+        const btn = document.createElement("button");
+        btn.className = "status-pill" + (state.activeStatus === filter ? " active" : "");
+        btn.innerHTML = `<span>${statusLabels[filter] || filter}</span><span>${counts[filter] || 0}</span>`;
+        btn.onclick = () => {
+          state.activeStatus = filter;
+          renderChallengeList();
+          renderStatusFilters(state.challenges);
+        };
+        filters.appendChild(btn);
+      });
+      $("statusCounts").textContent = `当前状态：${statusLabels[state.activeStatus] || state.activeStatus}，题目数：${counts[state.activeStatus] || 0}`;
     }
     async function api(path, options={}) {
       const res = await fetch(path, options);
@@ -705,15 +738,16 @@ INDEX_HTML = r"""<!doctype html>
       const challenges = await api("/api/challenges");
       state.challenges = challenges;
       renderCategoryFilters(challenges);
+      renderStatusFilters(challenges);
       renderChallengeList();
       show(challenges, "raw");
     }
     function renderChallengeList() {
       const list = $("challengeList");
       list.innerHTML = "";
-      const visible = state.challenges.filter(ch => state.activeCategory === "all" || ch.category === state.activeCategory);
+      const visible = state.challenges.filter(ch => (state.activeCategory === "all" || ch.category === state.activeCategory) && statusMatches(ch));
       if (!visible.length) {
-        list.innerHTML = `<div class="empty-state">当前分类暂无题目。</div>`;
+        list.innerHTML = `<div class="empty-state">当前筛选暂无题目。</div>`;
         return;
       }
       list.innerHTML = renderChallengeGroups(visible);
@@ -750,6 +784,14 @@ INDEX_HTML = r"""<!doctype html>
       const badgeClass = status === "flag_found" ? "badge" : (status === "not_run" ? "badge muted" : "badge warn");
       const suffix = count ? ` · ${count} flag` : "";
       return `<span class="${badgeClass}">${escapeHtml(status)}${escapeHtml(suffix)}</span>`;
+    }
+    function statusBucket(challenge) {
+      if ((challenge.accepted_flag_count || 0) > 0 || challenge.latest_status === "flag_found") return "solved";
+      if (challenge.latest_status && challenge.latest_status !== "not_run") return "ran";
+      return "not_run";
+    }
+    function statusMatches(challenge) {
+      return state.activeStatus === "all" || statusBucket(challenge) === state.activeStatus;
     }
     function renderData(tab, data) {
       const intro = tabIntro(tab);
