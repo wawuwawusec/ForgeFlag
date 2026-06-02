@@ -929,6 +929,7 @@ INDEX_HTML = r"""<!doctype html>
       const flags = asList(writeup.final_flags).length ? asList(writeup.final_flags) : asList(data.summary && data.summary.accepted_flags);
       const llmPlans = collectLLMPlans(findings, observations);
       const actionQueues = observations.filter(obs => obs.kind === "llm_action_queue");
+      const postRunCritics = observations.filter(obs => obs.kind === "llm_post_run_critic");
       const knowledge = collectKnowledge(findings, observations);
       const toolSummaries = observations.filter(obs => obs.kind === "tool_summary");
       const traceSteps = collectTraceSteps(report, observations);
@@ -946,6 +947,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="kv-grid">
             <div class="kv"><span>LLM Plans</span><strong>${llmPlans.length}</strong></div>
             <div class="kv"><span>Action Queues</span><strong>${actionQueues.length}</strong></div>
+            <div class="kv"><span>Critics</span><strong>${postRunCritics.length}</strong></div>
             <div class="kv"><span>Tool Summaries</span><strong>${toolSummaries.length}</strong></div>
           </div>
         </div>
@@ -956,6 +958,10 @@ INDEX_HTML = r"""<!doctype html>
         <div class="result-card">
           <div class="card-head"><div class="card-title"><h3>行动队列</h3><div class="meta">LLM 建议如何影响后续 solver 调度。</div></div></div>
           ${actionQueues.length ? actionQueues.map(renderActionQueue).join("") : `<div class="empty-state">暂无行动队列。LLM 返回 suggested_solvers 后会显示排队、已存在和无效建议。</div>`}
+        </div>
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>Post-run Critic</h3><div class="meta">卡点、缺失证据和下一轮建议。</div></div></div>
+          ${postRunCritics.length ? postRunCritics.map(renderPostRunCritic).join("") : `<div class="empty-state">暂无 critic。启用大模型后，未出 flag 的运行会生成复盘纠错建议。</div>`}
         </div>
         <div class="result-card">
           <div class="card-head"><div class="card-title"><h3>知识检索</h3><div class="meta">本地 playbook 与历史 write-up 给模型补充的上下文。</div></div></div>
@@ -1017,6 +1023,25 @@ INDEX_HTML = r"""<!doctype html>
         ${unknown.length ? `<div class="meta">无效建议：${unknown.map(escapeHtml).join(", ")}</div>` : ""}
         ${actions.length ? `<div class="meta">下一步：${actions.map(escapeHtml).join("；")}</div>` : ""}
         ${tools.length ? `<div class="meta">工具提示：${tools.map(escapeHtml).join(", ")}</div>` : ""}
+      </div>`;
+    }
+    function renderPostRunCritic(obs) {
+      const evidence = obs.evidence || {};
+      const blockers = asList(evidence.blockers);
+      const missing = asList(evidence.missing_evidence);
+      const solvers = asList(evidence.suggested_solvers);
+      const tools = asList(evidence.tool_hints);
+      const actions = asList(evidence.next_actions);
+      return `<div class="kv">
+        <span>${escapeHtml(evidence.provider || obs.source || "LLMCritic")}</span>
+        <strong>${escapeHtml(evidence.summary || obs.summary || "Post-run critic")}</strong>
+        ${blockers.length ? `<div class="meta">卡点：${blockers.map(escapeHtml).join("；")}</div>` : ""}
+        ${missing.length ? `<div class="meta">缺失证据：${missing.map(escapeHtml).join("；")}</div>` : ""}
+        ${solvers.length ? `<div class="meta">建议 solver：${solvers.map(escapeHtml).join(", ")}</div>` : ""}
+        ${tools.length ? `<div class="meta">工具路线：${tools.map(escapeHtml).join(", ")}</div>` : ""}
+        ${actions.length ? `<div class="meta">下一轮：${actions.map(escapeHtml).join("；")}</div>` : ""}
+        ${evidence.rerun_reason ? `<div class="meta">重跑理由：${escapeHtml(evidence.rerun_reason)}</div>` : ""}
+        ${evidence.error ? `<div class="meta">Error：${escapeHtml(evidence.error)}</div>` : ""}
       </div>`;
     }
     function collectKnowledge(findings, observations) {

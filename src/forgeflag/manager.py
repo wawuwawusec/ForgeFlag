@@ -4,6 +4,7 @@ from forgeflag.domain import ChallengeCategory, Observation, RunConfig
 from forgeflag.harness import Harness
 from forgeflag.ida import IDAAdapter, build_ida_adapter
 from forgeflag.llm import UnavailableLLMProvider, build_llm_provider
+from forgeflag.llm_critic import build_post_run_critic_observation
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.observer import Observer
 from forgeflag.report import ReportBuilder
@@ -143,8 +144,43 @@ class Manager:
                 self.notebook.observations_for(challenge_id),
                 challenge=challenge,
             )
+        else:
+            critic = self._post_run_critic(challenge, summary, findings)
+            if critic is not None:
+                self.notebook.add_observation(critic)
+                summary["post_run_critic"] = critic.evidence
         self.notebook.record_run(challenge_id, status, summary)
         return summary
+
+    def _post_run_critic(
+        self,
+        challenge,
+        summary: dict[str, object],
+        findings,
+    ) -> Observation | None:
+        solver_rows = summary.get("solvers")
+        if not _ran_non_llm_solver(solver_rows):
+            return None
+        provider = self._critic_provider()
+        if provider is None:
+            return None
+        return build_post_run_critic_observation(
+            challenge=challenge,
+            provider=provider,
+            run_summary=summary,
+            findings=list(findings),
+            observations=list(self.notebook.observations_for(challenge.challenge_id)),
+        )
+
+    def _critic_provider(self):
+        for solver in self.solvers:
+            if isinstance(solver, LLMSolver):
+                return solver.provider
+        try:
+            provider = build_llm_provider(self.config.llm_config)
+        except ValueError:
+            return None
+        return provider if provider.enabled else None
 
     def _select_solvers(self, category: ChallengeCategory) -> list[Solver]:
         selected: list[Solver] = []
@@ -238,3 +274,14 @@ def _dedupe(values: list[str]) -> list[str]:
         seen.add(cleaned)
         result.append(cleaned)
     return result
+
+
+def _ran_non_llm_solver(solver_rows: object) -> bool:
+    if not isinstance(solver_rows, list):
+        return False
+    for row in solver_rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("solver") != "LLMSolver" and row.get("status") != "skipped":
+            return True
+    return False

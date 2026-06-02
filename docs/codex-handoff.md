@@ -33,6 +33,8 @@ Implemented so far:
   - `forgeflag.knowledge` retrieves matching `docs/ctf-playbook.md` method cards and prior notebook write-up Markdown for LLM prompt grounding
   - structured Planner v2 JSON plans become `llm_solver_plan` observations and can insert suggested solvers into the remaining queue
   - Planner v2 accepts plain or markdown-fenced JSON and records `summary`, `hypotheses`, `suggested_solvers`, `next_actions`, `tool_hints`, `expected_evidence`, and `fallback_plan`
+  - Post-run Critic runs after LLM-enabled runs that do not find a flag and records `llm_post_run_critic` observations with blockers, missing evidence, suggested solvers, tool hints, next actions, and rerun reason
+  - Web UI Agent view renders Post-run Critic guidance as a first-class card instead of burying it in debug JSON
   - LLM provider/config failures are recorded as `LLMSolver` `config_error` findings and do not block deterministic solvers
 - Optional IDA MCP binary-analysis layer:
   - `IDAMCPConfig` reads `FORGEFLAG_IDA_MCP_ENABLED`, `FORGEFLAG_IDA_MCP_COMMAND`, `FORGEFLAG_IDA_MCP_READ_ONLY`, and `FORGEFLAG_IDA_MCP_TIMEOUT_SECONDS`

@@ -44,6 +44,8 @@ After each solver run, the manager records a `solve_trace_step` observation with
 
 `LLMSolver` is optional and disabled unless an LLM provider is configured. The prompt includes a category-specific playbook for Web, Crypto, Forensics, Traffic, Reverse, Pwn, Misc, Infra, Recon, or Unknown routing, then asks for free-form strategy text or compact Planner v2 JSON with `summary`, `hypotheses`, `suggested_solvers`, `next_actions`, `tool_hints`, `expected_evidence`, and `fallback_plan`; the observer promotes structured plans into shared observations for the manager to use in solver scheduling.
 
+After an LLM-enabled run stalls without an accepted flag, the manager can call a Post-run Critic. The critic compares findings, observations, solver results, and missing evidence, then records an `llm_post_run_critic` observation with blockers, missing evidence, suggested solvers, tool hints, next actions, and rerun reason.
+
 ### Local Knowledge Retrieval
 
 ForgeFlag has a lightweight local retriever for LLM planning. It indexes method-card blocks from `docs/ctf-playbook.md` and successful write-up Markdown already stored in the notebook, then ranks blocks by category match and keyword overlap with the current challenge text, tags, attachments, and observations. Retrieved blocks are injected into the LLM prompt as `retrieved_knowledge` without requiring an external vector database.

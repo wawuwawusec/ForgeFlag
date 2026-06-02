@@ -613,6 +613,118 @@ class LLMSolverTest(unittest.TestCase):
         self.assertEqual(llm_finding.finding, "LLM planning unavailable")
         self.assertIn("ZAI_API_KEY", llm_finding.evidence["error"])
 
+    def test_manager_records_post_run_critic_when_llm_run_stalls_without_flag(self) -> None:
+        class CriticProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def __init__(self) -> None:
+                self.prompts: list[str] = []
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.prompts.append(prompt)
+                if "post-run critic" in instructions:
+                    return LLMResponse(
+                        content=json.dumps(
+                            {
+                                "summary": "No flag yet; image evidence stopped at metadata only.",
+                                "blockers": ["No low-bit-plane or chunk payload extraction was attempted."],
+                                "missing_evidence": ["IDAT payload decode result"],
+                                "suggested_solvers": ["MiscSolver"],
+                                "tool_hints": ["pngcheck", "zlib decompress extra IDAT"],
+                                "next_actions": ["Parse PNG chunks and independently decompress suspicious IDAT payloads."],
+                                "rerun_reason": "New evidence route may expose embedded flag text.",
+                            }
+                        ),
+                        raw={"id": "critic"},
+                    )
+                return LLMResponse(content='{"summary":"Initial plan only"}', raw={"id": "plan"})
+
+        class StuckSolver:
+            name = "StuckSolver"
+            supported_categories = {ChallengeCategory.MISC}
+
+            def solve(self, context: SolverContext):
+                from forgeflag.domain import Finding, SolverResult
+
+                finding = Finding(
+                    challenge_id=context.challenge.challenge_id,
+                    solver=self.name,
+                    finding="Stopped after image metadata",
+                    evidence={"image_stego": {"text_chunks": []}},
+                    confidence=0.72,
+                    next_action="Try deeper PNG chunk payload extraction.",
+                )
+                context.notebook.add_finding(finding)
+                return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
+        provider = CriticProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="critic-stalled", category=ChallengeCategory.MISC))
+
+            summary = Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(provider), StuckSolver()],
+            ).run_challenge("critic-stalled")
+            observations = notebook.observations_for("critic-stalled")
+
+        critic = next(observation for observation in observations if observation.kind == "llm_post_run_critic")
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(summary["post_run_critic"]["suggested_solvers"], ["MiscSolver"])
+        self.assertEqual(critic.evidence["missing_evidence"], ["IDAT payload decode result"])
+        self.assertIn("Parse PNG chunks", critic.evidence["next_actions"][0])
+        self.assertEqual(len(provider.prompts), 2)
+        self.assertIn("run_status: completed", provider.prompts[1])
+
+    def test_manager_skips_post_run_critic_after_flag_found(self) -> None:
+        class CountingProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.calls += 1
+                return LLMResponse(content='{"summary":"Initial plan only"}')
+
+        class FlagSolver:
+            name = "FlagSolver"
+            supported_categories = {ChallengeCategory.MISC}
+
+            def solve(self, context: SolverContext):
+                from forgeflag.domain import Finding, SolverResult
+
+                finding = Finding(
+                    challenge_id=context.challenge.challenge_id,
+                    solver=self.name,
+                    finding="Recovered flag",
+                    evidence={"flag_candidates": ["flag{critic_skip}"]},
+                    confidence=0.9,
+                )
+                context.notebook.add_finding(finding)
+                return SolverResult(self.name, context.challenge.challenge_id, "flag_candidate", (finding,), ("flag{critic_skip}",))
+
+        provider = CountingProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="critic-solved", category=ChallengeCategory.MISC))
+
+            summary = Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(provider), FlagSolver()],
+            ).run_challenge("critic-solved")
+            observations = notebook.observations_for("critic-solved")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(provider.calls, 1)
+        self.assertFalse(any(observation.kind == "llm_post_run_critic" for observation in observations))
+
 
 if __name__ == "__main__":
     unittest.main()

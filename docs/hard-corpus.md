@@ -49,6 +49,8 @@ Each row reports:
 - `score` / `max_score`: one point for flag success plus one point per required evidence item.
 - `improvement_hint`: the next solver or LLM capability suggested by the case.
 
+Required evidence is intentionally broader than a flag: cases can score classification, bug class or crypto primitive, reproduction-oriented evidence, solver/tool routing, and Post-run Critic guidance when a run stalls.
+
 ## Current Cases
 
 | ID | Category | Pattern | Expected |
@@ -98,4 +100,4 @@ The hard corpus is where the GLM integration should help most:
 - Classify hard primitives such as AES mode misuse, MAC algebra, pickle sandbox, and format strings.
 - Propose exact solver/tool routing, for example WebSolver followed by ReverseSolver for WAR analysis.
 - Generate safe solve-script outlines without executing exploit payloads automatically.
-- Critique failed runs by comparing missing evidence against the case playbook.
+- Critique failed runs by comparing missing evidence against the case playbook. ForgeFlag now records this as `llm_post_run_critic` observations with blockers, missing evidence, suggested solvers, tool hints, next actions, and a rerun reason.

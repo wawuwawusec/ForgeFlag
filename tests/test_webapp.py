@@ -261,9 +261,12 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("LLM 规划", html)
         self.assertIn("行动队列", html)
         self.assertIn("知识检索", html)
+        self.assertIn("Post-run Critic", html)
+        self.assertIn("卡点、缺失证据和下一轮建议", html)
         self.assertIn("工具摘要", html)
         self.assertIn("SolveTrace", html)
         self.assertIn("function renderActionQueue", html)
+        self.assertIn("function renderPostRunCritic", html)
 
     def test_project_catalog_endpoint_lists_recommended_projects(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
