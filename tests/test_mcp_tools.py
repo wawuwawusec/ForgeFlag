@@ -108,6 +108,22 @@ class McpToolTest(unittest.TestCase):
         self.assertEqual(payload["status"], "missing")
         self.assertEqual(payload["evidence"], ["not installed"])
 
+    def test_tcp_interact_mcp_tool_returns_structured_payload(self) -> None:
+        with patch(
+            "forgeflag.mcp_server.ctf.tcp_interact",
+            return_value=ToolResult(
+                tool="tcp_interact",
+                target="127.0.0.1:31337",
+                status="success",
+                raw={"transcript": "ready"},
+            ),
+        ):
+            payload = mcp_server.tcp_interact("127.0.0.1:31337", payload="hello")
+
+        self.assertEqual(payload["tool"], "tcp_interact")
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["raw"]["transcript"], "ready")
+
 
 if __name__ == "__main__":
     unittest.main()

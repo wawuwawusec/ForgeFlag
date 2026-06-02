@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import tempfile
+import socketserver
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -58,6 +60,45 @@ class PwnSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["tool_statuses"]["checksec_binary"], "success")
         self.assertEqual(finding.evidence["tool_statuses"]["ropgadget_scan"], "missing")
         self.assertEqual(finding.evidence["tool_statuses"]["ropper_scan"], "missing")
+
+    def test_pwn_solver_interacts_with_scoped_tcp_service_target(self) -> None:
+        class PwnBannerHandler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                self.request.sendall(b"pwn service ready\nflag{pwn_tcp_service}\n")
+
+        server = socketserver.TCPServer(("127.0.0.1", 0), PwnBannerHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            target = f"127.0.0.1:{server.server_address[1]}"
+            with tempfile.TemporaryDirectory() as tmp:
+                notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+                challenge = Challenge(
+                    challenge_id="pwn-service",
+                    category=ChallengeCategory.PWN,
+                    target=target,
+                )
+                notebook.add_challenge(challenge)
+
+                result = PwnSolver().solve(
+                    SolverContext(
+                        challenge=challenge,
+                        notebook=notebook,
+                        scope=ScopePolicy(allowed_hosts=("127.0.0.1",), active_probe=True),
+                    )
+                )
+                finding = notebook.findings_for("pwn-service")[0]
+                observations = notebook.observations_for("pwn-service")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(result.status, "flag_candidate")
+        self.assertEqual(result.flag_candidates, ("flag{pwn_tcp_service}",))
+        self.assertEqual(finding.finding, "Interacted with scoped pwn service")
+        self.assertEqual(finding.evidence["tool_status"], "success")
+        self.assertIn("flag{pwn_tcp_service}", finding.evidence["transcript"])
+        self.assertTrue(any(observation.kind == "tool_summary" for observation in observations))
 
 
 if __name__ == "__main__":

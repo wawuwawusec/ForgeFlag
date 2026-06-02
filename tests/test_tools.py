@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import shutil
+import socketserver
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -18,6 +20,7 @@ from forgeflag.tools.ctf import (
     ropper_scan,
     rsactftool_attack,
     strings_extract,
+    tcp_interact,
     tshark_flag_scan,
     tshark_dns_summary,
     tshark_http_artifact_scan,
@@ -131,6 +134,34 @@ class ToolRunnerTest(unittest.TestCase):
 
         self.assertEqual(result.status, "error")
         self.assertIn("not in the ForgeFlag catalog", result.evidence[0])
+
+    def test_tcp_interact_reads_scoped_service_banner(self) -> None:
+        class BannerHandler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                self.request.sendall(b"welcome flag{tcp_banner}\n")
+
+        server = socketserver.TCPServer(("127.0.0.1", 0), BannerHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            target = f"127.0.0.1:{server.server_address[1]}"
+            result = tcp_interact(
+                target,
+                scope=ScopePolicy(allowed_hosts=("127.0.0.1",), active_probe=True),
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("welcome flag{tcp_banner}", result.raw["transcript"])
+        self.assertIn("bytes_received=", result.evidence[1])
+
+    def test_tcp_interact_refuses_when_active_probe_disabled(self) -> None:
+        result = tcp_interact("127.0.0.1:31337", scope=ScopePolicy(allowed_hosts=("127.0.0.1",)))
+
+        self.assertEqual(result.status, "refused")
+        self.assertIn("active probing is disabled", result.evidence[0])
 
     @unittest.skipUnless(shutil.which("file"), "file command is not available")
     def test_file_identify_local_artifact(self) -> None:

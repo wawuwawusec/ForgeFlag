@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import socket
 import tempfile
 from urllib.parse import urlparse
 
@@ -296,11 +297,73 @@ def ffuf_route_discovery(
                 pass
 
 
+def tcp_interact(
+    target: str,
+    payload: bytes | str = b"",
+    timeout_seconds: int = 5,
+    receive_bytes: int = 4096,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    scope = scope or ScopePolicy()
+    try:
+        scope.require_active_allowed(target)
+        host, port = _tcp_host_port(target)
+    except ValueError as exc:
+        return ToolResult(tool="tcp_interact", target=target, status="refused", evidence=[str(exc)])
+
+    timeout_seconds = max(1, min(timeout_seconds, 15))
+    receive_bytes = max(1, min(receive_bytes, 16_384))
+    data = payload.encode("utf-8") if isinstance(payload, str) else payload[:1024]
+    received = b""
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
+            sock.settimeout(timeout_seconds)
+            if data:
+                sock.sendall(data)
+            try:
+                received = sock.recv(receive_bytes)
+            except socket.timeout:
+                received = b""
+    except OSError as exc:
+        return ToolResult(tool="tcp_interact", target=target, status="error", evidence=[f"network error: {exc}"])
+
+    transcript = received.decode("utf-8", errors="replace")
+    return ToolResult(
+        tool="tcp_interact",
+        target=target,
+        status="success",
+        evidence=[f"bytes_sent={len(data)}", f"bytes_received={len(received)}"],
+        raw={
+            "host": host,
+            "port": port,
+            "payload_preview": data.decode("utf-8", errors="replace")[:200],
+            "transcript": transcript,
+        },
+    )
+
+
 def ensure_existing_file(path: str) -> str:
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_file():
         raise FileNotFoundError(f"file not found: {resolved}")
     return str(resolved)
+
+
+def _tcp_host_port(target: str) -> tuple[str, int]:
+    parsed = urlparse(target)
+    if parsed.scheme in {"tcp", "nc"} and parsed.hostname and parsed.port:
+        return parsed.hostname, int(parsed.port)
+    if parsed.scheme and parsed.hostname and parsed.port:
+        return parsed.hostname, int(parsed.port)
+    value = target.strip().removeprefix("nc ").strip()
+    parts = value.split()
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0], int(parts[1])
+    if ":" in value:
+        host, port_text = value.rsplit(":", 1)
+        if host and port_text.isdigit():
+            return host.strip("/"), int(port_text)
+    raise ValueError("target must include host and port for tcp_interact")
 
 
 def _tshark_contains_literal(value: str) -> str:

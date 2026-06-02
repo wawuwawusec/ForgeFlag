@@ -164,6 +164,18 @@ if FastMCP is not None:
             )
         )
 
+    @mcp.tool()
+    def tcp_interact(target: str, payload: str = "", receive_bytes: int = 4096) -> dict[str, Any]:
+        """Open one scoped TCP service interaction and return a bounded transcript."""
+        return _result_payload(
+            ctf.tcp_interact(
+                target,
+                payload=payload,
+                receive_bytes=receive_bytes,
+                scope=_scope_from_env(active_probe=True),
+            )
+        )
+
 
 def main() -> None:
     if FastMCP is None:

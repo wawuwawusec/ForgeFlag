@@ -40,6 +40,7 @@ Implemented so far:
   - default config is disabled and keeps existing placeholder behavior
 - Local pwn/reverse binary triage:
   - PwnSolver runs `file`, `strings`, `checksec`, `ROPgadget`, and `ropper` against registered attachments when IDA MCP is disabled
+  - PwnSolver runs a bounded `tcp_interact` transcript against scoped service targets when no binary attachment is registered and active probing is enabled
   - ReverseSolver runs `file`, `strings`, `ROPgadget`, and `ropper` against registered attachments when IDA MCP is disabled
   - missing gadget tools are recorded as structured `missing` tool results, not fatal errors
 - Harness loop controls.
@@ -90,6 +91,7 @@ Implemented so far:
   - allowlisted `ToolRunner`
   - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `ffuf`, `nmap_tcp_basic`
   - `forgeflag.tool_compression` adds compact `compressed_summary` data to stored tool runs and promotes it into `tool_summary` observations
+  - `tcp_interact` opens one scoped TCP service interaction, captures a bounded transcript, and is exposed through the optional MCP server
   - `forgeflag tools` CLI inventory
   - `ToolRunner` avoids counting unavailable pyenv shims as runnable tools
   - `ToolRunner` can use Docker fallback for missing host wrappers through `FORGEFLAG_TOOL_DOCKER_IMAGE` and `FORGEFLAG_TOOL_DOCKER_MOUNT`

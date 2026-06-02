@@ -32,6 +32,10 @@ The observer filters noisy solver output into high-value observations. The manag
 
 Tool runs keep their raw stdout/stderr in SQLite, but ForgeFlag also stores a compact `compressed_summary` with extracted flags, interesting lines, errors, hints, truncation state, and tool metadata. Each scoped tool run with a challenge id is promoted into a `tool_summary` observation so later solvers and LLM planning can consume concise evidence instead of long command output.
 
+### Interactive Service Sessions
+
+ForgeFlag starts with a bounded `tcp_interact` primitive for CTF service targets. It requires active probing and an allowlisted host, opens a single TCP connection, optionally sends a small payload, captures a bounded transcript, and records the result as ordinary tool evidence. `PwnSolver` uses this when a pwn challenge has a service target but no binary attachment, preserving the transcript for later pwntools-style follow-up without attempting automatic exploitation.
+
 ### SolveTrace
 
 After each solver run, the manager records a `solve_trace_step` observation with the step index, solver status, finding summaries, flag candidates, progress signal, and any matching LLM plan rationale. Reports use these trace observations to expose the full solver timeline and a per-flag shortest discovery path.

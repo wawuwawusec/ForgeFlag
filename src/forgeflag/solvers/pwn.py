@@ -23,6 +23,9 @@ class PwnSolver:
         if context.challenge.attachment_paths:
             return self._solve_with_local_tools(context)
 
+        if context.challenge.target:
+            return self._solve_with_service_interaction(context)
+
         finding = Finding(
             challenge_id=context.challenge.challenge_id,
             solver=self.name,
@@ -34,6 +37,34 @@ class PwnSolver:
         )
         context.notebook.add_finding(finding)
         return SolverResult(self.name, context.challenge.challenge_id, "placeholder", (finding,))
+
+    def _solve_with_service_interaction(self, context: SolverContext) -> SolverResult:
+        result = ctf.tcp_interact(context.challenge.target or "", scope=context.scope)
+        context.notebook.add_tool_result(context.challenge.challenge_id, result)
+        transcript = str(result.raw.get("transcript", ""))
+        flags = extract_flags(transcript)
+        finding = Finding(
+            challenge_id=context.challenge.challenge_id,
+            solver=self.name,
+            finding="Interacted with scoped pwn service",
+            evidence={
+                "target": context.challenge.target,
+                "tool_status": result.status,
+                "transcript": transcript[:1000],
+                "flag_candidates": list(flags),
+            },
+            hypothesis=_service_hypothesis(result.status, flags),
+            confidence=0.78 if flags else (0.55 if result.status == "success" else 0.25),
+            next_action=_service_next_action(result.status, flags),
+        )
+        context.notebook.add_finding(finding)
+        return SolverResult(
+            self.name,
+            context.challenge.challenge_id,
+            "flag_candidate" if flags else result.status,
+            (finding,),
+            flags,
+        )
 
     def _solve_with_local_tools(self, context: SolverContext) -> SolverResult:
         findings: list[Finding] = []
@@ -182,6 +213,22 @@ def _local_next_action(flags: tuple[str, ...]) -> str:
     if flags:
         return "Send candidates to Verifier and preserve local tool outputs as replay evidence."
     return "Use checksec results to choose exploit strategy, then generate a pwntools workspace."
+
+
+def _service_hypothesis(status: str, flags: tuple[str, ...]) -> str:
+    if flags:
+        return "A scoped TCP service interaction returned a flag-like token in the initial transcript."
+    if status == "success":
+        return "The service is reachable and produced a transcript suitable for pwntools follow-up."
+    return "The scoped service interaction did not complete, so exploit workflow needs target or scope correction."
+
+
+def _service_next_action(status: str, flags: tuple[str, ...]) -> str:
+    if flags:
+        return "Send candidates to Verifier and preserve the TCP transcript as replay evidence."
+    if status == "success":
+        return "Use the transcript to build a minimal pwntools harness with expected prompts and payload steps."
+    return "Check target host/port and active probe scope before retrying service interaction."
 
 
 def _hypothesis(analysis: IDAAnalysis, flags: tuple[str, ...]) -> str:

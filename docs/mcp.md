@@ -43,8 +43,9 @@ Current MCP tools:
 - `tshark_flag_scan`
 - `nmap_tcp_basic`
 - `ffuf_route_discovery`
+- `tcp_interact`
 
-Network-capable tools refuse to run unless the target host is listed in `FORGEFLAG_ALLOWED_HOSTS`.
+Network-capable tools refuse to run unless the target host is listed in `FORGEFLAG_ALLOWED_HOSTS`. Active network tools such as `nmap_tcp_basic`, `ffuf_route_discovery`, and `tcp_interact` use active-probe scope inside the MCP wrapper and still enforce the allowed-host list.
 
 ## External Analysis Adapters
 
