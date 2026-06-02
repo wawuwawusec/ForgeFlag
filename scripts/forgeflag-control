@@ -7,11 +7,13 @@ PID_FILE="$STATE_DIR/mcp.pid"
 LOG_FILE="$STATE_DIR/mcp.log"
 WEB_PID_FILE="$STATE_DIR/web.pid"
 WEB_LOG_FILE="$STATE_DIR/web.log"
+DOCKER_ENV_FILE="$STATE_DIR/docker.env"
 WEB_SCREEN="forgeflag-web"
 MCP_SCREEN="forgeflag-mcp"
 DB_PATH="${FORGEFLAG_DB:-$STATE_DIR/notebook.sqlite}"
 WEB_HOST="${FORGEFLAG_WEB_HOST:-127.0.0.1}"
 WEB_PORT="${FORGEFLAG_WEB_PORT:-8080}"
+TOOL_DOCKER_IMAGE="${FORGEFLAG_TOOL_DOCKER_IMAGE:-forgeflag-ctf:latest}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 FORGEFLAG_BIN="$ROOT_DIR/.venv/bin/forgeflag"
@@ -26,12 +28,15 @@ Commands:
   restart [--mcp]     Stop, then start
   status              Show notebook, CLI, tool, and MCP status
   smoke               Run the local offline smoke test
+  docker-build        Build the ForgeFlag CTF tool image and enable Docker tool fallback
+  docker-smoke        Run wrapper smoke checks with Docker fallback enabled
 
 Environment:
   FORGEFLAG_DB        Notebook path, default .forgeflag/notebook.sqlite
   FORGEFLAG_ALLOWED_HOSTS  Comma-separated allowlist for MCP network tools
   FORGEFLAG_WEB_HOST       Web UI host, default 127.0.0.1
   FORGEFLAG_WEB_PORT       Web UI port, default 8080
+  FORGEFLAG_TOOL_DOCKER_IMAGE  Docker image for tool fallback, default forgeflag-ctf:latest
   PYTHON_BIN          Python executable used to create .venv, default python3
 EOF
 }
@@ -45,6 +50,12 @@ load_env() {
     set -a
     # shellcheck disable=SC1091
     source "$ROOT_DIR/.env"
+    set +a
+  fi
+  if [[ -f "$DOCKER_ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$DOCKER_ENV_FILE"
     set +a
   fi
 }
@@ -248,6 +259,11 @@ status() {
   else
     echo "cli=missing"
   fi
+  if command -v docker >/dev/null 2>&1 && docker image inspect "${FORGEFLAG_TOOL_DOCKER_IMAGE:-$TOOL_DOCKER_IMAGE}" >/dev/null 2>&1; then
+    echo "tool_docker=ready image=${FORGEFLAG_TOOL_DOCKER_IMAGE:-$TOOL_DOCKER_IMAGE}"
+  else
+    echo "tool_docker=missing image=${FORGEFLAG_TOOL_DOCKER_IMAGE:-$TOOL_DOCKER_IMAGE}"
+  fi
   if [[ -f "$DB_PATH" ]]; then
     echo "notebook=ready"
   else
@@ -274,6 +290,27 @@ status() {
   if [[ -x "$VENV_PYTHON" ]]; then
     run_forgeflag tools
   fi
+}
+
+docker_build() {
+  ensure_state_dir
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "docker command not found; start OrbStack or install Docker" >&2
+    return 1
+  fi
+  local image="${FORGEFLAG_TOOL_DOCKER_IMAGE:-$TOOL_DOCKER_IMAGE}"
+  docker build -f "$ROOT_DIR/docker/Dockerfile.ctf" --target forgeflag-default -t "$image" "$ROOT_DIR"
+  {
+    printf 'FORGEFLAG_TOOL_DOCKER_IMAGE=%q\n' "$image"
+    printf 'FORGEFLAG_TOOL_DOCKER_MOUNT=%q\n' "$ROOT_DIR"
+  } > "$DOCKER_ENV_FILE"
+  echo "Docker tool fallback enabled image=$image env=$DOCKER_ENV_FILE"
+}
+
+docker_smoke() {
+  ensure_venv
+  load_env
+  "$ROOT_DIR/scripts/forgeflag-tool-smoke" --include-active-network
 }
 
 start() {
@@ -309,6 +346,8 @@ case "$command" in
   restart) ensure_state_dir; stop_web; stop_mcp; start "$@" ;;
   status) load_env; status ;;
   smoke) ensure_venv; make -C "$ROOT_DIR" smoke ;;
+  docker-build) load_env; docker_build ;;
+  docker-smoke) docker_smoke ;;
   -h|--help|help|"") usage ;;
   *) echo "unknown command: $command" >&2; usage; exit 2 ;;
 esac

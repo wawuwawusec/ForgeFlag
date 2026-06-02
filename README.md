@@ -112,11 +112,17 @@ PYTHONPATH=src python3 -m forgeflag.cli tools
 
 ## Tooling
 
-Build the CTF tool container:
+Build and enable the CTF tool container with Docker or OrbStack:
 
 ```bash
-docker build -f docker/Dockerfile.ctf -t forgeflag-ctf .
+scripts/forgeflag-control docker-build
+scripts/forgeflag-control docker-smoke
+scripts/forgeflag-control restart
 ```
+
+`docker-build` builds `forgeflag-ctf:latest`, writes `.forgeflag/docker.env`, and enables automatic Docker fallback for missing host tools. `ToolRunner` still prefers host commands when present, but can run container-backed wrappers such as `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, and `ffuf` with project paths mounted under `/workspace`. Use `scripts/forgeflag-control status`, `.venv/bin/forgeflag tools`, or `/api/tools` to inspect whether each wrapper is using `host`, `docker`, or `missing`.
+
+Hashcat is installed in the image, but GPU/OpenCL access depends on the Docker runtime. On OrbStack without a passed-through cracking device, the smoke test reports hashcat as skipped while John CPU dictionary checks can still run.
 
 Run the optional MCP server:
 

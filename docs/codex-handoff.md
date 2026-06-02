@@ -85,6 +85,7 @@ Implemented so far:
   - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `ffuf`, `nmap_tcp_basic`
   - `forgeflag tools` CLI inventory
   - `ToolRunner` avoids counting unavailable pyenv shims as runnable tools
+  - `ToolRunner` can use Docker fallback for missing host wrappers through `FORGEFLAG_TOOL_DOCKER_IMAGE` and `FORGEFLAG_TOOL_DOCKER_MOUNT`
   - `scripts/forgeflag-tool-smoke` performs fixture-backed runtime smoke checks for wrapper execution
 - Curated CTF project catalog:
   - `forgeflag catalog` and `forgeflag catalog --category <category>`
@@ -111,12 +112,14 @@ Implemented so far:
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category
   - Includes community source notes and method cards for Web, Crypto, Forensics/Stego, Traffic, Reverse, Pwn, and Misc
 - One-command lifecycle script:
-  - `scripts/forgeflag-control start/status/smoke/stop`
+  - `scripts/forgeflag-control start/status/smoke/stop/docker-build/docker-smoke`
   - Web UI start uses `.venv/bin/python -m forgeflag.cli` and stores the managed Python process PID in `.forgeflag/web.pid`
   - status cleans invalid/stale PID files and reports managed Web/MCP state
+  - status reports `tool_docker=ready|missing`
 - CTF Dockerfile:
   - `docker/Dockerfile.ctf`
   - default `forgeflag-core` / `forgeflag-default` image keeps heavyweight tools out of the base venv
+  - default image includes common Kali CLI tools plus Python CTF packages such as `ROPgadget`, `ropper`, `RsaCtfTool`, `pwntools`, `angr`, and `z3-solver`
   - explicit Docker targets: `forgeflag-volatility`, `forgeflag-sagemath`, `forgeflag-ghidra-headless`
 - Tool container guidance:
   - `docs/tool-containers.md`
@@ -144,7 +147,13 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 120 tests OK
+- Docker fallback enabled through OrbStack:
+  - image: `forgeflag-ctf:latest`
+  - env file: `.forgeflag/docker.env`
+  - host wrappers: `file`, `strings`, `binwalk`, `exiftool`, `tshark`, `nmap_tcp_basic`
+  - Docker wrappers: `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`
+  - hashcat is installed, but current OrbStack runtime does not expose an OpenCL/CUDA device, so cracking smoke skips hashcat device execution
+- Tests passed: 123 tests OK
 
 Useful commands:
 
@@ -162,6 +171,8 @@ make smoke
 scripts/forgeflag-control start
 scripts/forgeflag-control status
 scripts/forgeflag-control smoke
+scripts/forgeflag-control docker-build
+scripts/forgeflag-control docker-smoke
 scripts/forgeflag-control stop
 .venv/bin/forgeflag --db .forgeflag/notebook.sqlite web --host 127.0.0.1 --port 8080
 .venv/bin/forgeflag --db .forgeflag/notebook.sqlite artifacts <challenge_id>
@@ -211,6 +222,7 @@ screen -S forgeflag-mcp -X quit
 
 Recent commits:
 
+- `f7e22fc Add CTF tool smoke verification`
 - `f785f05 Rename project metadata to ForgeFlag`
 - `14bbd6c Add CTF toolchain MCP wrappers`
 - `6794090 Add scoped web response analysis`
@@ -225,8 +237,7 @@ Recommended next milestone:
    - HTTP object export when a capture contains downloaded files
    - Scapy helpers for DNS exfil reconstruction across split labels/packets
 2. Promote selected project catalog items into wrappers:
-   - `ffuf` and `sqlmap` only behind active-probe scope controls
-   - `ROPgadget`/`ropper` for pwn and reverse
+   - `sqlmap` only behind active-probe scope controls
    - `Scapy` helper for custom traffic parsing
 3. Add archive/carving follow-up from `binwalk_scan`.
 4. Add image/stego metadata hints.

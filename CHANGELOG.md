@@ -49,3 +49,5 @@
 - Expanded the curated CTF tool catalog to 90+ entries and changed the Web UI Tools tab to show both runnable wrappers and recommended install/integration candidates.
 - Added `scripts/forgeflag-tool-smoke` for fixture-backed wrapper runtime verification and surfaced the smoke command in the Web UI Tools tab.
 - Fixed tool availability checks so missing pyenv shims are not reported as runnable wrappers.
+- Added OrbStack/Docker tool fallback via `scripts/forgeflag-control docker-build`, `.forgeflag/docker.env`, and Docker-backed wrapper execution for missing host tools.
+- Added Docker smoke verification for container-backed wrappers, including path rewriting for mounted artifacts and `--key=/path` arguments.

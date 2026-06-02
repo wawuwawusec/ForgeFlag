@@ -8,6 +8,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         binutils \
         binwalk \
+        build-essential \
         checksec \
         curl \
         ffuf \
@@ -21,10 +22,14 @@ RUN apt-get update \
         jq \
         less \
         libimage-exiftool-perl \
+        libgmp-dev \
+        libmpc-dev \
+        libmpfr-dev \
         libssl-dev \
         nmap \
         p7zip-full \
         python3 \
+        python3-dev \
         python3-pip \
         python3-venv \
         radare2 \
@@ -45,8 +50,10 @@ RUN apt-get update \
         mcp[cli] \
         pwntools \
         pycryptodome \
+        git+https://github.com/RsaCtfTool/RsaCtfTool.git \
         ropper \
         z3-solver \
+    && if ! command -v RsaCtfTool >/dev/null 2>&1 && command -v RsaCtfTool.py >/dev/null 2>&1; then ln -s "$(command -v RsaCtfTool.py)" /usr/local/bin/RsaCtfTool; fi \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

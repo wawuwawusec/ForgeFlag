@@ -7,10 +7,27 @@ ForgeFlag keeps heavyweight CTF tools out of the local Python venv. Use Docker t
 Build the default CTF image:
 
 ```bash
-docker build -f docker/Dockerfile.ctf -t forgeflag-ctf .
+scripts/forgeflag-control docker-build
 ```
 
-The default target is `forgeflag-default`, based on `forgeflag-core`. It includes common CTF CLI tools, `pwntools`, `angr`, `ROPgadget`, `ropper`, `z3-solver`, `tshark`, and scoped web tooling. It deliberately does not include SageMath, Volatility, or Ghidra.
+The default target is `forgeflag-default`, based on `forgeflag-core`. It includes common CTF CLI tools, `pwntools`, `angr`, `ROPgadget`, `ropper`, `RsaCtfTool`, `z3-solver`, `tshark`, and scoped web tooling. It deliberately does not include SageMath, Volatility, or Ghidra.
+
+`docker-build` tags the image as `forgeflag-ctf:latest` by default and writes `.forgeflag/docker.env`:
+
+```bash
+FORGEFLAG_TOOL_DOCKER_IMAGE=forgeflag-ctf:latest
+FORGEFLAG_TOOL_DOCKER_MOUNT=/path/to/ForgeFlag
+```
+
+`scripts/forgeflag-control start`, `restart`, `status`, and `docker-smoke` load this file automatically. Restart the Web UI after building so `/api/tools` and the Tools view reflect the Docker fallback state.
+
+You can still build manually:
+
+```bash
+docker build -f docker/Dockerfile.ctf --target forgeflag-default -t forgeflag-ctf:latest .
+```
+
+Then set `FORGEFLAG_TOOL_DOCKER_IMAGE` and `FORGEFLAG_TOOL_DOCKER_MOUNT` yourself.
 
 ## Heavyweight Targets
 
@@ -55,11 +72,30 @@ The default smoke only runs local/offline wrapper checks. It reports missing too
 Optional bounded checks:
 
 ```bash
+scripts/forgeflag-control docker-smoke
 scripts/forgeflag-tool-smoke --include-active-network
 scripts/forgeflag-tool-smoke --include-cracking
 ```
 
-The active-network mode only targets a local temporary service or `127.0.0.1` through ForgeFlag scope controls. Cracking mode uses a tiny dictionary fixture and should stay opt-in because hashcat/John environments vary by host.
+The active-network mode only targets a local temporary service or `127.0.0.1` through ForgeFlag scope controls. Cracking mode uses a tiny dictionary fixture and should stay opt-in because hashcat/John environments vary by host. Hashcat needs an exposed OpenCL/CUDA device; on OrbStack without such a device, the smoke check records hashcat as skipped instead of failing the project. John runs CPU dictionary checks through the Docker fallback.
+
+## Automatic Docker Fallback
+
+ForgeFlag wrapper inventory now reports separate host and Docker availability:
+
+```bash
+scripts/forgeflag-control status
+.venv/bin/forgeflag tools
+curl -s http://127.0.0.1:8080/api/tools
+```
+
+`ToolRunner` prefers a host executable when present. If a wrapper command is missing locally and `FORGEFLAG_TOOL_DOCKER_IMAGE` points to an existing image, it runs the command through:
+
+```bash
+docker run --rm -e TERM=xterm -v "$FORGEFLAG_TOOL_DOCKER_MOUNT:/workspace" -w /workspace "$FORGEFLAG_TOOL_DOCKER_IMAGE" ...
+```
+
+Absolute paths under the mounted project are rewritten to `/workspace/...`, including `--wordlist=/path/to/file` style arguments. This keeps uploaded artifacts and generated wordlists visible to container-backed tools such as `ffuf` and `john`.
 
 ## Read-Only Adapter Pattern
 

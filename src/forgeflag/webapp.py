@@ -761,11 +761,13 @@ INDEX_HTML = r"""<!doctype html>
             const categories = row.categories ? row.categories.join(", ") : (row.category || "");
             const description = row.description || row.purpose || row.notes || "";
             const install = row.install_hint ? `<div class="meta">Install: ${escapeHtml(row.install_hint)}</div>` : "";
+            const source = kind === "tool" && row.source ? `<div class="meta">Source: ${escapeHtml(row.source)}</div>` : "";
             return `<div class="kv">
               <span>${escapeHtml(categories || row.integration || "")}</span>
               <strong>${escapeHtml(name)}</strong>
               <div class="meta">${escapeHtml(description)}</div>
               ${row.why ? `<div class="meta">${escapeHtml(row.why)}</div>` : ""}
+              ${source}
               ${install}
               <span class="${badgeClass}">${escapeHtml(badge)}</span>
             </div>`;

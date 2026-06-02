@@ -25,7 +25,7 @@ from forgeflag.tools.ctf import (
     tshark_tcp_streams,
     tshark_traffic_analysis,
 )
-from forgeflag.tools.runner import ToolRunner
+from forgeflag.tools.runner import ToolRunner, _docker_arg
 
 
 class ToolRunnerTest(unittest.TestCase):
@@ -55,6 +55,56 @@ class ToolRunnerTest(unittest.TestCase):
 
         checksec = next(row for row in inventory if row["name"] == "checksec")
         self.assertFalse(checksec["available"])
+
+    def test_inventory_marks_docker_fallback_as_available(self) -> None:
+        def fake_which(command: str) -> str | None:
+            if command == "docker":
+                return "/usr/local/bin/docker"
+            return None
+
+        completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"[]", stderr=b"")
+        with patch.dict("os.environ", {"FORGEFLAG_TOOL_DOCKER_IMAGE": "forgeflag-ctf:test"}):
+            with patch("forgeflag.tools.runner.shutil.which", side_effect=fake_which):
+                with patch("forgeflag.tools.runner.subprocess.run", return_value=completed):
+                    inventory = ToolRunner(ScopePolicy()).inventory()
+
+        ropper = next(row for row in inventory if row["name"] == "ropper")
+        self.assertTrue(ropper["available"])
+        self.assertFalse(ropper["host_available"])
+        self.assertTrue(ropper["docker_available"])
+        self.assertEqual(ropper["source"], "docker")
+
+    def test_run_uses_docker_fallback_for_mount_paths(self) -> None:
+        mount = Path("/tmp/forgeflag")
+        artifact = mount / "artifact.bin"
+
+        def fake_which(command: str) -> str | None:
+            if command == "docker":
+                return "/usr/local/bin/docker"
+            return None
+
+        completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"ok\n", stderr=b"")
+        with patch.dict(
+            "os.environ",
+            {
+                "FORGEFLAG_TOOL_DOCKER_IMAGE": "forgeflag-ctf:test",
+                "FORGEFLAG_TOOL_DOCKER_MOUNT": str(mount),
+            },
+        ):
+            with patch("forgeflag.tools.runner.shutil.which", side_effect=fake_which):
+                with patch("forgeflag.tools.runner.subprocess.run", return_value=completed) as run:
+                    result = ToolRunner(ScopePolicy()).run("ropper", ["--file", str(artifact), "--nocolor"])
+
+        self.assertEqual(result.status, "success")
+        argv = run.call_args.args[0]
+        self.assertIn("forgeflag-ctf:test", argv)
+        self.assertIn("/workspace/artifact.bin", argv)
+        self.assertIn("--file", argv)
+
+    def test_docker_arg_rewrites_key_value_mount_paths(self) -> None:
+        rewritten = _docker_arg("--wordlist=/tmp/forgeflag/words.txt", Path("/tmp/forgeflag"))
+
+        self.assertEqual(rewritten, "--wordlist=/workspace/words.txt")
 
     def test_network_tool_refuses_without_active_scope(self) -> None:
         runner = ToolRunner(ScopePolicy(allowed_hosts=("127.0.0.1",), active_probe=False))

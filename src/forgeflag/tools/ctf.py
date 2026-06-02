@@ -267,7 +267,7 @@ def ffuf_route_discovery(
     runner = ToolRunner(scope)
     wordlist_path = ""
     try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as wordlist:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=_tool_temp_dir()) as wordlist:
             wordlist_path = wordlist.name
             wordlist.write("\n".join(words) + "\n")
         return runner.run(
@@ -330,3 +330,12 @@ def _route_words(words: tuple[str, ...], limit: int = 32) -> tuple[str, ...]:
             continue
         cleaned.append(value[:80])
     return tuple(cleaned[:limit]) or ("admin", "login", "flag", "robots.txt")
+
+
+def _tool_temp_dir() -> str | None:
+    docker_mount = os.environ.get("FORGEFLAG_TOOL_DOCKER_MOUNT")
+    if not docker_mount:
+        return None
+    path = Path(docker_mount).expanduser().resolve() / ".forgeflag" / "tool-temp"
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
