@@ -23,6 +23,7 @@ from forgeflag.tools.ctf import (
     tcp_interact,
     tshark_flag_scan,
     tshark_dns_summary,
+    tshark_http_object_export,
     tshark_http_artifact_scan,
     tshark_http_requests,
     tshark_follow_tcp_stream,
@@ -246,6 +247,24 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertIn('http.file_data contains "f1ag"', display_filter)
         self.assertIn('http.file_data contains "&#102;"', display_filter)
         self.assertIn("http.file_data", args)
+
+    def test_tshark_http_object_export_uses_export_objects_directory(self) -> None:
+        expected = ToolResult(tool="tshark", target=None, status="success")
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "objects"
+            with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+                runner = Mock()
+                runner.run.return_value = expected
+                runner_cls.return_value = runner
+
+                result = tshark_http_object_export("/tmp/capture.pcap", str(output_dir))
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "tshark",
+            ["-r", "/tmp/capture.pcap", "--export-objects", f"http,{output_dir.resolve()}"],
+            timeout_seconds=20,
+        )
 
     def test_tshark_dns_summary_extracts_dns_fields(self) -> None:
         expected = ToolResult(tool="tshark", target=None, status="success")

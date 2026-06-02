@@ -40,6 +40,7 @@ Current MCP tools:
 - `tshark_tcp_streams`
 - `tshark_http_requests`
 - `tshark_http_artifact_scan`
+- `tshark_http_object_export`
 - `tshark_flag_scan`
 - `nmap_tcp_basic`
 - `ffuf_route_discovery`

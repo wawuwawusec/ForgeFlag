@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+import shutil
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
@@ -86,6 +88,19 @@ class TrafficSolver:
         decoded_http_artifacts = _decoded_http_artifacts(
             str(dict(labeled_results)["tshark_http_artifact_scan"].raw.get("stdout", ""))
         )
+        http_object_exports = _export_http_objects(
+            context,
+            pcap_path,
+            "\n".join(
+                [
+                    str(dict(labeled_results)["tshark_pcap_summary"].raw.get("stdout", "")),
+                    str(dict(labeled_results)["tshark_traffic_analysis"].raw.get("stdout", "")),
+                    str(dict(labeled_results)["tshark_tcp_streams"].raw.get("stdout", "")),
+                    str(dict(labeled_results)["tshark_http_requests"].raw.get("stdout", "")),
+                    str(dict(labeled_results)["tshark_http_artifact_scan"].raw.get("stdout", "")),
+                ]
+            ),
+        )
         dns_summary = dns_summary_from_tshark(str(dict(labeled_results)["tshark_dns_summary"].raw.get("stdout", "")))
         tcp_streams = tcp_stream_shortlist(
             str(dict(labeled_results)["tshark_tcp_streams"].raw.get("stdout", "")),
@@ -95,7 +110,13 @@ class TrafficSolver:
         tcp_stream_payloads = _follow_tcp_stream_payloads(context, pcap_path, tcp_streams)
         decoded_dns_hints = [str(value) for value in dns_summary.get("decoded_query_hints", [])]
         stream_payload_text = "\n".join(str(item.get("sample", "")) for item in tcp_stream_payloads)
-        flags = extract_flags("\n".join([combined_output, *decoded_http_artifacts, *decoded_dns_hints, stream_payload_text]))
+        exported_object_text = "\n".join(
+            "\n".join([str(item.get("text_preview", "")), *[str(flag) for flag in item.get("flags", [])]])
+            for item in http_object_exports
+        )
+        flags = extract_flags(
+            "\n".join([combined_output, *decoded_http_artifacts, *decoded_dns_hints, stream_payload_text, exported_object_text])
+        )
         flag_candidates.extend(flags)
 
         finding = Finding(
@@ -108,6 +129,7 @@ class TrafficSolver:
                 "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
                 "http_requests": _interesting_lines(str(dict(labeled_results)["tshark_http_requests"].raw.get("stdout", ""))),
                 "decoded_http_artifacts": decoded_http_artifacts[:20],
+                "http_object_exports": http_object_exports,
                 "dns_summary": dns_summary,
                 "tcp_streams": tcp_streams,
                 "tcp_stream_payloads": tcp_stream_payloads,
@@ -164,6 +186,51 @@ def _follow_tcp_stream_payloads(
     return payloads
 
 
+def _export_http_objects(
+    context: SolverContext,
+    pcap_path: str,
+    http_hint_output: str,
+    limit: int = 20,
+) -> list[dict[str, object]]:
+    if "http" not in http_hint_output.lower():
+        return []
+
+    export_dir = _http_object_export_dir(context, pcap_path)
+    if export_dir.exists():
+        shutil.rmtree(export_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    result = ctf.tshark_http_object_export(pcap_path, str(export_dir), scope=context.scope)
+    context.notebook.add_tool_result(context.challenge.challenge_id, result)
+    candidate_paths = [Path(path) for path in result.artifacts] if result.artifacts else list(export_dir.rglob("*"))
+    summaries: list[dict[str, object]] = []
+    for path in sorted(candidate_paths):
+        if not path.is_file():
+            continue
+        summaries.append(_exported_object_summary(path))
+        if len(summaries) >= limit:
+            break
+    return summaries
+
+
+def _http_object_export_dir(context: SolverContext, pcap_path: str) -> Path:
+    artifacts_root = Path(context.notebook.path).parent / "artifacts"
+    return artifacts_root / _safe_component(context.challenge.challenge_id) / "http-objects" / _safe_component(Path(pcap_path).stem)
+
+
+def _exported_object_summary(path: Path) -> dict[str, object]:
+    data = path.read_bytes()
+    preview = _compact_text(data[:4096].decode("utf-8", errors="replace"))
+    return {
+        "name": path.name,
+        "path": str(path),
+        "size_bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "text_preview": preview,
+        "flags": list(extract_flags(preview)),
+    }
+
+
 def _decoded_http_artifacts(output: str) -> list[str]:
     decoded: list[str] = []
     for line in output.splitlines():
@@ -194,6 +261,12 @@ def _interesting_lines(output: str, limit: int = 40) -> list[str]:
 def _compact_text(value: str, limit: int = 500) -> str:
     text = " ".join(value.replace("\x00", " ").split())
     return text[:limit]
+
+
+def _safe_component(value: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in ("-", "_", ".") else "_" for char in value.strip())
+    cleaned = cleaned.strip("._")
+    return cleaned or "artifact"
 
 
 def _traffic_hypothesis(flags: tuple[str, ...]) -> str:

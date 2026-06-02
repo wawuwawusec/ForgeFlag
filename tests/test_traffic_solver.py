@@ -124,6 +124,10 @@ class TrafficSolverTest(unittest.TestCase):
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": artifact_stdout}),
                 ),
                 patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_object_export",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
                     "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
                 ),
@@ -301,6 +305,10 @@ class TrafficSolverTest(unittest.TestCase):
                     return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
                 ),
                 patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_object_export",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
                     "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
                     return_value=ToolResult(
                         tool="tshark",
@@ -318,6 +326,71 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(summary["accepted_flags"], ["flag{follow_stream_payload}"])
         self.assertEqual(finding.evidence["tcp_stream_payloads"][0]["stream_id"], "3")
         self.assertIn("flag{follow_stream_payload}", finding.evidence["tcp_stream_payloads"][0]["flags"])
+
+    def test_traffic_solver_exports_http_objects_and_records_file_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "capture.pcap"
+            attachment.write_bytes(b"pcap fixture placeholder")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-http-export",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+            http_stdout = "12|4|GET|example.test|/download/loot.txt|curl/8"
+
+            def export_objects(path: str, output_dir: str, scope=None) -> ToolResult:
+                del path, scope
+                exported = Path(output_dir) / "loot.txt"
+                exported.parent.mkdir(parents=True, exist_ok=True)
+                exported.write_text("downloaded flag{http_object_export}\n", encoding="utf-8")
+                return ToolResult(tool="tshark", target=None, status="success", artifacts=[str(exported)], raw={"stdout": ""})
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "HTTP"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "http frames"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "12|4|10.0.0.2|4444|10.0.0.3|80|HTTP|GET /download/loot.txt HTTP/1.1"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": http_stdout}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch("forgeflag.solvers.traffic.ctf.tshark_http_object_export", side_effect=export_objects),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-http-export")
+                finding = next(f for f in notebook.findings_for("traffic-http-export") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{http_object_export}"])
+        self.assertEqual(finding.evidence["http_object_exports"][0]["name"], "loot.txt")
+        self.assertIn("flag{http_object_export}", finding.evidence["http_object_exports"][0]["flags"])
 
     def test_traffic_solver_skips_non_pcap_attachments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

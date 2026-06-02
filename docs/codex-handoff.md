@@ -81,16 +81,17 @@ Implemented so far:
   - supports zip, tar, and gzip structure summaries
   - `ForensicsSolver` and `MiscSolver` record archive entries, encryption state, comments, and interesting names without extracting by default
 - Scoped TrafficSolver workflow:
-  - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, `tshark_flag_scan`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, and `tshark_http_artifact_scan`
+  - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, `tshark_flag_scan`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, and `tshark_http_object_export`
   - HTTP artifact payload decoding via shared transform candidates before flag extraction
   - DNS query/TXT/rcode summary, encoded DNS query-label hints, and TCP stream shortlist evidence
+  - HTTP object export summaries with file name, path, size, SHA256, text preview, and recovered flags
   - shortlisted TCP stream follow-up with stream id, hints, payload sample, and recovered flag evidence
   - support for common CTF typo markers such as `f1ag{...}`
   - structured tool evidence in notebook
   - flag candidate extraction from packet capture output
 - CTF tool layer:
   - allowlisted `ToolRunner`
-  - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `ffuf`, `nmap_tcp_basic`
+  - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_http_object_export`, `tshark_flag_scan`, `ffuf`, `nmap_tcp_basic`
   - `forgeflag.tool_compression` adds compact `compressed_summary` data to stored tool runs and promotes it into `tool_summary` observations
   - `tcp_interact` opens one scoped TCP service interaction, captures a bounded transcript, and is exposed through the optional MCP server
   - `forgeflag tools` CLI inventory
@@ -122,8 +123,8 @@ Implemented so far:
 - Web-run hard/expert CTF corpus benchmark:
   - `scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeup patterns
-  - Covers hidden Web APIs, crypto primitive misuse, DNS exfil, TCP stream follow-up, mail/PowerShell forensics, packed reverse, format-string pwn, pickle sandbox, and Web-to-Java chains
-  - Current strict result: 10/10 full score through the Web API
+  - Covers hidden Web APIs, crypto primitive misuse, DNS exfil, TCP stream follow-up, HTTP object export, mail/PowerShell forensics, packed reverse, format-string pwn, pickle sandbox, and Web-to-Java chains
+  - Current strict result: 11/11 full score through the Web API
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category

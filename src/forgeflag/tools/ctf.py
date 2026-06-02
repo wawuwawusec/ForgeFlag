@@ -246,6 +246,17 @@ def tshark_http_artifact_scan(path: str, scope: ScopePolicy | None = None) -> To
     )
 
 
+def tshark_http_object_export(path: str, output_dir: str, scope: ScopePolicy | None = None) -> ToolResult:
+    destination = Path(output_dir).expanduser().resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run(
+        "tshark",
+        ["-r", path, "--export-objects", f"http,{destination}"],
+        timeout_seconds=20,
+    )
+
+
 def tshark_flag_scan(
     path: str,
     needle: str = "flag{",

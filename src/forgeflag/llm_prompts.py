@@ -38,7 +38,7 @@ _CATEGORY_PLAYBOOKS: dict[ChallengeCategory, tuple[str, ...]] = {
         "For DNS exfiltration, group by base domain, preserve label order, and try Base32/Base64/hex on labels.",
         "For HTTP, extract URLs, hosts, cookies, auth headers, uploaded/downloaded objects, forms, compressed or encoded bodies.",
         "suggested_solvers: TrafficSolver",
-        "tool_hints: tshark_flag_scan, tshark_dns_summary, tshark_tcp_streams, tshark_http_requests, tshark_http_artifact_scan",
+        "tool_hints: tshark_flag_scan, tshark_dns_summary, tshark_tcp_streams, tshark_http_requests, tshark_http_artifact_scan, tshark_http_object_export",
     ),
     ChallengeCategory.REVERSE: (
         "Start with file, strings, imports, symbols, section names, packer indicators, architecture, and endianness.",

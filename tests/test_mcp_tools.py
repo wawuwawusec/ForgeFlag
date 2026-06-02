@@ -39,6 +39,22 @@ class McpToolTest(unittest.TestCase):
         self.assertEqual(payload["status"], "success")
         self.assertEqual(payload["evidence"], ["http clue"])
 
+    def test_tshark_http_object_export_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pcap = Path(tmp) / "capture.pcapng"
+            output_dir = Path(tmp) / "objects"
+            pcap.write_bytes(b"not a real pcapng for wrapper dispatch")
+            with patch(
+                "forgeflag.mcp_server.ctf.tshark_http_object_export",
+                return_value=ToolResult(tool="tshark", target=None, status="success", evidence=["exported"]),
+            ) as export:
+                payload = mcp_server.tshark_http_object_export(str(pcap), str(output_dir))
+
+        export.assert_called_once_with(str(pcap.resolve()), str(output_dir), mcp_server._scope_from_env())
+        self.assertEqual(payload["tool"], "tshark")
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["evidence"], ["exported"])
+
     def test_tshark_dns_summary_mcp_tool_returns_structured_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             pcap = Path(tmp) / "capture.pcap"
