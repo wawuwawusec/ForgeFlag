@@ -478,6 +478,10 @@ INDEX_HTML = r"""<!doctype html>
     .empty-state { border: 1px dashed var(--line); border-radius: 6px; padding: 18px; color: var(--muted); background: #fbfcfd; }
     .result-card { border: 1px solid var(--line); border-radius: 6px; background: white; padding: 14px; display: grid; gap: 10px; }
     .result-card h3 { margin: 0; font-size: 15px; }
+    .writeup-hero { border-color: #b9d8cc; background: #f7fcfa; }
+    .writeup-section-body { margin: 0; line-height: 1.65; color: #2f3b43; }
+    .writeup-section-body:empty { display: none; }
+    .writeup-section .steps li { margin: 8px 0; line-height: 1.55; }
     .tab-intro { border: 1px solid #cfe4dc; border-radius: 6px; background: #f2faf7; color: #24463d; padding: 10px 12px; font-size: 13px; }
     .tab-intro strong { display: block; margin-bottom: 3px; color: var(--ink); }
     .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; flex-wrap: wrap; }
@@ -604,7 +608,7 @@ INDEX_HTML = r"""<!doctype html>
     const statusFilters = ["all","solved","ran","not_run"];
     const statusLabels = { all:"全部", solved:"已出 flag", ran:"已运行未出", not_run:"未运行" };
     const state = { selected: null, activeCategory: "all", activeStatus: "all", challenges: [], lastSummary: {}, summaries: {} };
-    const writeupSectionOrder = ["题目信息", "最终结论", "解题思路", "关键证据", "复现步骤", "工具与观察"];
+    const writeupSectionOrder = ["题目概览", "解题思路", "复现步骤", "关键证据"];
     const $ = (id) => document.getElementById(id);
     const status = (text) => $("status").textContent = text;
     const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
@@ -1088,24 +1092,24 @@ INDEX_HTML = r"""<!doctype html>
       const writeup = data.writeup || {};
       const sections = asList(writeup.sections);
       return `
-        <div class="result-card">
+        <div class="result-card writeup-hero">
           <div class="card-head">
             <div class="card-title">
               <h3>${escapeHtml(writeup.title || data.challenge_id || "Write-up")}</h3>
-              <div class="meta">Write-up 风格复盘 · ${escapeHtml(writeup.category || "unknown")}</div>
+              <div class="meta">精简复盘 · ${escapeHtml(writeup.category || "unknown")} · 重点是如何复现拿到 flag</div>
             </div>
             <span class="badge">accepted</span>
           </div>
           ${flagChips(writeup.final_flags)}
         </div>
         ${sections.map(section => `
-          <div class="result-card">
+          <div class="result-card writeup-section">
             <div class="card-head">
               <div class="card-title">
                 <h3>${escapeHtml(section.title || "Section")}</h3>
-                <div class="meta">${escapeHtml(section.body || "")}</div>
               </div>
             </div>
+            <p class="writeup-section-body">${escapeHtml(section.body || "")}</p>
             ${section.flags ? flagChips(section.flags) : ""}
             ${asList(section.items).map(item => `
               <div class="kv">
@@ -1118,7 +1122,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="card-head">
             <div class="card-title">
               <h3>Markdown Write-up</h3>
-              <div class="meta">可复制到博客、论坛或赛后复盘。</div>
+              <div class="meta">同样的精简内容，方便复制到博客、论坛或赛后复盘。</div>
             </div>
           </div>
           <pre class="raw-json">${escapeHtml(writeup.markdown || "")}</pre>

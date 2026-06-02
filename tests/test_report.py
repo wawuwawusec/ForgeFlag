@@ -80,10 +80,11 @@ class ReportBuilderTest(unittest.TestCase):
         writeup = report["writeup"]
         self.assertEqual(writeup["title"], "Base32 warmup")
         self.assertEqual(writeup["final_flags"], ["flag{writeup_style}"])
-        self.assertIn("题目信息", [section["title"] for section in writeup["sections"]])
+        self.assertIn("题目概览", [section["title"] for section in writeup["sections"]])
         self.assertIn("解题思路", [section["title"] for section in writeup["sections"]])
         self.assertIn("关键证据", [section["title"] for section in writeup["sections"]])
         self.assertIn("复现步骤", [section["title"] for section in writeup["sections"]])
+        self.assertNotIn("工具与观察", [section["title"] for section in writeup["sections"]])
         self.assertIn("# Base32 warmup", writeup["markdown"])
         self.assertIn("flag{writeup_style}", writeup["markdown"])
 
@@ -134,7 +135,7 @@ class ReportBuilderTest(unittest.TestCase):
             [step["solver"] for step in report["flags"][0]["trace_path"]],
             ["ReconSolver", "MiscSolver"],
         )
-        self.assertIn("最短发现路径", [section["title"] for section in report["writeup"]["sections"]])
+        self.assertIn("复现步骤", [section["title"] for section in report["writeup"]["sections"]])
 
     def test_report_uses_latest_solve_trace_after_rerun(self) -> None:
         findings = [
@@ -204,12 +205,61 @@ class ReportBuilderTest(unittest.TestCase):
             [(step["solver"], step["status"]) for step in report["writeup"]["shortest_discovery_path"]],
             [("ReconSolver", "ok"), ("CryptoSolver", "flag_candidate")],
         )
-        tool_section = next(section for section in report["writeup"]["sections"] if section["title"] == "工具与观察")
-        tool_items = [(item["label"], item["value"]) for item in tool_section["items"]]
-        self.assertEqual(
-            tool_items.count(("CryptoSolver", "Recovered Python random XOR flag candidates")),
-            1,
+        self.assertNotIn("工具与观察", [section["title"] for section in report["writeup"]["sections"]])
+
+    def test_writeup_prioritizes_reproducible_python_random_xor_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="crypto-repro",
+                solver="CryptoSolver",
+                finding="Recovered Python random XOR flag candidates",
+                evidence={
+                    "python_random_xor": {
+                        "enc": "1027275529278332342097876075445098700759415489",
+                        "flags": ["flag{just_a_seed}"],
+                        "key_bits": 150,
+                        "method": "python_random_xor",
+                        "plaintext_preview": "flag{just_a_seed}",
+                        "seed": 3277,
+                    }
+                },
+                confidence=0.86,
+                hypothesis="Python random was seeded from a small range before deriving an XOR key, so seed brute force recovered plaintext.",
+                next_action="Send recovered candidates to Verifier and preserve the seed/key evidence for replay.",
+            )
+        ]
+        observations = [
+            Observation(
+                challenge_id="crypto-repro",
+                source="CryptoSolver",
+                kind="flag_candidate",
+                summary="flag{just_a_seed}",
+                evidence={"candidate": "flag{just_a_seed}"},
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="crypto-repro",
+            category=ChallengeCategory.CRYPTO,
+            attachment_paths=("/tmp/easy_seed.py",),
         )
+
+        report = ReportBuilder().build("crypto-repro", ("flag{just_a_seed}",), findings, observations, challenge=challenge)
+
+        sections = {section["title"]: section for section in report["writeup"]["sections"]}
+        self.assertEqual(list(sections), ["题目概览", "解题思路", "复现步骤", "关键证据"])
+        self.assertIn("弱随机种子", sections["解题思路"]["body"])
+        self.assertEqual(
+            sections["复现步骤"]["steps"],
+            [
+                "打开附件 easy_seed.py，确认它用小范围 seed 初始化 Python random，并用 getrandbits(150) 生成 XOR key。",
+                "遍历 seed 取值范围，按相同逻辑执行 random.seed(seed) 和 random.getrandbits(150)。",
+                "用 ciphertext XOR key 还原明文，并按 flag 格式筛选候选结果。",
+                "命中 seed=3277，明文为 flag{just_a_seed}。",
+            ],
+        )
+        evidence_labels = [item["label"] for item in sections["关键证据"]["items"]]
+        self.assertEqual(evidence_labels, ["密文整数", "key 位数", "命中 seed", "还原明文"])
+        self.assertIn("seed=3277", report["writeup"]["markdown"])
 
 
 if __name__ == "__main__":

@@ -109,11 +109,12 @@ class ReportBuilder:
         trace_path = flag_reports[0]["trace_path"] if flag_reports else solve_trace[:5]
         observation_steps = flag_reports[0]["observations"] if flag_reports else []
         replay_steps = flag_reports[0]["replay_steps"] if flag_reports else []
+        reproduction_steps = _reproduction_steps(path_steps, trace_path, replay_steps, attachments)
 
         sections = [
             {
-                "title": "题目信息",
-                "body": challenge.description if challenge and challenge.description else "暂无题面描述，以下复盘基于 ForgeFlag 运行证据生成。",
+                "title": "题目概览",
+                "body": challenge.description if challenge and challenge.description else "基于附件和运行证据整理的精简复盘。",
                 "items": _non_empty_items(
                     [
                         ("分类", category),
@@ -124,40 +125,19 @@ class ReportBuilder:
                 ),
             },
             {
-                "title": "最终结论",
-                "body": "Verifier 已接受以下 flag。" if accepted_flags else "本次运行尚未确认 flag。",
-                "flags": list(accepted_flags),
-            },
-            {
                 "title": "解题思路",
                 "body": _approach_summary(path_steps, findings),
-                "items": [
-                    {
-                        "label": step.get("solver") or "solver",
-                        "value": step.get("hypothesis") or step.get("finding") or "记录关键分析步骤。",
-                    }
-                    for step in path_steps
-                ],
-            },
-            {
-                "title": "关键证据",
-                "body": "这些发现或观察直接支撑最终 flag。",
-                "items": _evidence_items(path_steps, observation_steps),
-            },
-            {
-                "title": "最短发现路径",
-                "body": "按 solver 执行轨迹压缩出的发现路径，方便从答题者视角复盘每一步为什么存在。",
-                "steps": _trace_replay_steps(trace_path),
+                "items": _approach_items(path_steps, trace_path),
             },
             {
                 "title": "复现步骤",
-                "body": "按下面顺序可以复现最短发现路径。",
-                "steps": replay_steps or _trace_replay_steps(trace_path) or _fallback_replay_steps(path_steps),
+                "body": "照下面做即可复现获取 flag 的过程。",
+                "steps": reproduction_steps,
             },
             {
-                "title": "工具与观察",
-                "body": "保留相关 solver、观察与证据摘要，方便赛后补写完整 write-up。",
-                "items": _tool_observation_items(findings, observations),
+                "title": "关键证据",
+                "body": "只保留支撑结论的关键参数和结果，完整内部日志可在 Raw JSON 中查看。",
+                "items": _evidence_items(path_steps, observation_steps),
             },
         ]
         markdown = _markdown_writeup(title, challenge_id, category, list(accepted_flags), sections)
@@ -206,25 +186,48 @@ def _dedupe_steps(steps: list[dict[str, Any]], keys: tuple[str, ...]) -> list[di
 
 
 def _approach_summary(path_steps: list[dict[str, Any]], findings: list[Finding]) -> str:
+    random_xor = _first_nested(path_steps, "python_random_xor")
+    if random_xor:
+        return "关键点是弱随机种子：题目用小范围 seed 初始化 Python random，再生成 XOR key；遍历 seed 后即可还原明文。"
+    rsa_recovery = _first_nested(path_steps, "rsa_recovery")
+    if rsa_recovery:
+        return "关键点是 RSA 参数足够恢复私钥或明文；利用已知因子/私钥参数计算明文后提取 flag。"
     if path_steps:
         solvers = " -> ".join(step.get("solver") or "solver" for step in path_steps)
-        return f"从相关证据看，最短路径由 {solvers} 完成：先定位可疑线索，再提取候选 flag，并交给 verifier 确认。"
+        return f"最短有效路径由 {solvers} 完成：定位可疑线索，提取候选 flag，并交给 verifier 确认。"
     if findings:
         solvers = " -> ".join(dict.fromkeys(finding.solver for finding in findings))
         return f"本次运行记录了 {solvers} 的分析结果，但没有找到直接关联 flag 的最短证据路径。"
     return "暂无 solver 证据。"
 
 
+def _approach_items(path_steps: list[dict[str, Any]], trace_path: list[dict[str, Any]]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for step in path_steps[:3]:
+        items.append(
+            {
+                "label": step.get("solver") or "solver",
+                "value": step.get("hypothesis") or step.get("finding") or "记录关键分析步骤。",
+            }
+        )
+    if not items:
+        for step in trace_path[:3]:
+            items.append(
+                {
+                    "label": step.get("solver") or "solver",
+                    "value": step.get("rationale") or step.get("summary") or "执行该 solver 并保留输出证据。",
+                }
+            )
+    return items
+
+
 def _evidence_items(path_steps: list[dict[str, Any]], observation_steps: list[dict[str, Any]]) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for step in path_steps:
         evidence = step.get("evidence") or {}
-        items.append(
-            {
-                "label": f"{step.get('solver') or 'solver'}: {step.get('finding') or 'finding'}",
-                "value": _short_text(evidence),
-            }
-        )
+        items.extend(_human_evidence_items(step, evidence))
+    if items:
+        return items[:6]
     for observation in observation_steps:
         items.append(
             {
@@ -233,6 +236,75 @@ def _evidence_items(path_steps: list[dict[str, Any]], observation_steps: list[di
             }
         )
     return items[:6]
+
+
+def _human_evidence_items(step: dict[str, Any], evidence: dict[str, Any]) -> list[dict[str, str]]:
+    random_xor = evidence.get("python_random_xor")
+    if isinstance(random_xor, dict):
+        items = [
+            ("密文整数", random_xor.get("enc")),
+            ("key 位数", random_xor.get("key_bits")),
+            ("命中 seed", random_xor.get("seed")),
+            ("还原明文", random_xor.get("plaintext_preview") or ", ".join(_string_list(random_xor.get("flags")))),
+        ]
+        return [{"label": label, "value": str(value)} for label, value in items if value not in (None, "")]
+    rsa_recovery = evidence.get("rsa_recovery")
+    if isinstance(rsa_recovery, dict):
+        items = [
+            ("恢复方法", rsa_recovery.get("method")),
+            ("恢复 flag", ", ".join(_string_list(rsa_recovery.get("flags")))),
+        ]
+        return [{"label": label, "value": str(value)} for label, value in items if value not in (None, "")]
+    transform_candidates = evidence.get("transform_candidates")
+    if isinstance(transform_candidates, list) and transform_candidates:
+        first = transform_candidates[0] if isinstance(transform_candidates[0], dict) else {"value": transform_candidates[0]}
+        return [
+            {"label": "转换方法", "value": str(first.get("method") or step.get("finding") or "transform")},
+            {"label": "候选结果", "value": str(first.get("value") or first)},
+        ]
+    return [
+        {
+            "label": f"{step.get('solver') or 'solver'}: {step.get('finding') or 'finding'}",
+            "value": _short_text(evidence),
+        }
+    ]
+
+
+def _reproduction_steps(
+    path_steps: list[dict[str, Any]],
+    trace_path: list[dict[str, Any]],
+    replay_steps: list[str],
+    attachments: list[str],
+) -> list[str]:
+    random_xor = _first_nested(path_steps, "python_random_xor")
+    if random_xor:
+        filename = _basename(attachments[0]) if attachments else "题目附件"
+        key_bits = random_xor.get("key_bits") or "对应位数"
+        seed = random_xor.get("seed")
+        preview = random_xor.get("plaintext_preview") or _first_string(random_xor.get("flags")) or "flag 候选"
+        return [
+            f"打开附件 {filename}，确认它用小范围 seed 初始化 Python random，并用 getrandbits({key_bits}) 生成 XOR key。",
+            "遍历 seed 取值范围，按相同逻辑执行 random.seed(seed) 和 random.getrandbits(150)。" if key_bits == 150 else f"遍历 seed 取值范围，按相同逻辑执行 random.seed(seed) 和 random.getrandbits({key_bits})。",
+            "用 ciphertext XOR key 还原明文，并按 flag 格式筛选候选结果。",
+            f"命中 seed={seed}，明文为 {preview}。" if seed is not None else f"得到明文 {preview}。",
+        ]
+    rsa_recovery = _first_nested(path_steps, "rsa_recovery")
+    if rsa_recovery:
+        method = rsa_recovery.get("method") or "RSA recovery"
+        flags = _string_list(rsa_recovery.get("flags"))
+        result = flags[0] if flags else "flag 候选"
+        return [
+            "从题目文本或附件中提取 RSA 参数 n/e/c 以及可用的 p/q/d 等信息。",
+            f"使用 {method} 恢复私钥或直接计算明文整数。",
+            "把明文整数转回 bytes，并按 flag 格式提取结果。",
+            f"得到 {result}。",
+        ]
+    if replay_steps:
+        return replay_steps[:5]
+    trace_steps = _trace_replay_steps(trace_path)
+    if trace_steps:
+        return trace_steps[:5]
+    return _fallback_replay_steps(path_steps)
 
 
 def _fallback_replay_steps(path_steps: list[dict[str, Any]]) -> list[str]:
@@ -268,6 +340,32 @@ def _tool_observation_items(findings: list[Finding], observations: list[Observat
 def _short_text(value: Any) -> str:
     text = str(value)
     return text if len(text) <= 360 else text[:357] + "..."
+
+
+def _first_nested(steps: list[dict[str, Any]], key: str) -> dict[str, Any]:
+    for step in steps:
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        value = evidence.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _first_string(value: object) -> str | None:
+    values = _string_list(value)
+    return values[0] if values else None
+
+
+def _basename(path: str) -> str:
+    return path.rstrip("/").rsplit("/", 1)[-1] or path
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
 
 
 def _markdown_writeup(
