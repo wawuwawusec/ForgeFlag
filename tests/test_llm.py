@@ -191,6 +191,175 @@ class LLMSolverTest(unittest.TestCase):
         self.assertEqual(observations[0].kind, "llm_solver_plan")
         self.assertEqual(observations[0].evidence["suggested_solvers"], ["TrafficSolver"])
 
+    def test_llm_solver_parses_planner_v2_markdown_json(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                return LLMResponse(
+                    content="""```json
+{
+  "summary": "PCAP challenge with possible HTTP payload flag.",
+  "hypotheses": ["The flag is in a TCP stream.", 3],
+  "suggested_solvers": ["TrafficSolver", "TrafficSolver", "UnknownSolver"],
+  "next_actions": ["Run tshark flag scan.", "Inspect HTTP streams."],
+  "tool_hints": ["tshark_flag_scan", "tshark_http_requests"],
+  "expected_evidence": ["flag-like token in packet bytes"],
+  "fallback_plan": ["List TCP streams if direct scan misses."]
+}
+```""",
+                    raw={"id": "fake-response"},
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-v2", category=ChallengeCategory.TRAFFIC))
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(FakeProvider())],
+            ).run_challenge("llm-v2")
+            finding = notebook.findings_for("llm-v2")[0]
+            observations = notebook.observations_for("llm-v2")
+
+        plan = finding.evidence["plan"]
+        self.assertEqual(plan["summary"], "PCAP challenge with possible HTTP payload flag.")
+        self.assertEqual(plan["hypotheses"], ["The flag is in a TCP stream."])
+        self.assertEqual(plan["suggested_solvers"], ["TrafficSolver", "UnknownSolver"])
+        self.assertEqual(plan["expected_evidence"], ["flag-like token in packet bytes"])
+        self.assertEqual(plan["fallback_plan"], ["List TCP streams if direct scan misses."])
+        self.assertEqual(finding.next_action, "Run tshark flag scan.")
+        self.assertEqual(observations[0].evidence["expected_evidence"], ["flag-like token in packet bytes"])
+        self.assertEqual(observations[0].evidence["fallback_plan"], ["List TCP streams if direct scan misses."])
+
+    def test_llm_solver_falls_back_when_planner_v2_json_is_invalid(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                return LLMResponse(content="```json\n{\"summary\": \"broken\", \n```", raw={"id": "fake-response"})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-bad-json", category=ChallengeCategory.MISC))
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(FakeProvider())],
+            ).run_challenge("llm-bad-json")
+            finding = notebook.findings_for("llm-bad-json")[0]
+            observations = notebook.observations_for("llm-bad-json")
+
+        self.assertNotIn("plan", finding.evidence)
+        self.assertIn("broken", finding.evidence["strategy"])
+        self.assertEqual(finding.confidence, 0.55)
+        self.assertFalse(any(observation.kind == "llm_solver_plan" for observation in observations))
+
+    def test_llm_solver_extracts_json_fence_from_explanatory_text(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                return LLMResponse(
+                    content='Plan follows:\n```json\n{"summary":"Use misc transforms","suggested_solvers":["MiscSolver"]}\n```',
+                    raw={"id": "fake-response"},
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-prose-json", category=ChallengeCategory.MISC))
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(FakeProvider())],
+            ).run_challenge("llm-prose-json")
+            finding = notebook.findings_for("llm-prose-json")[0]
+
+        self.assertEqual(finding.evidence["plan"]["summary"], "Use misc transforms")
+        self.assertEqual(finding.evidence["plan"]["suggested_solvers"], ["MiscSolver"])
+
+    def test_llm_solver_ignores_empty_plan_json(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                return LLMResponse(content="{}", raw={"id": "fake-response"})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-empty-json", category=ChallengeCategory.MISC))
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(FakeProvider())],
+            ).run_challenge("llm-empty-json")
+            finding = notebook.findings_for("llm-empty-json")[0]
+
+        self.assertNotIn("plan", finding.evidence)
+        self.assertEqual(finding.confidence, 0.55)
+
+    def test_manager_filters_unknown_and_duplicate_llm_solver_suggestions(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                return LLMResponse(
+                    content=json.dumps(
+                        {
+                            "summary": "Try extra solver once.",
+                            "suggested_solvers": [
+                                "ExtraSolver",
+                                "ExtraSolver",
+                                "../../BadSolver",
+                                "LLMSolver",
+                            ],
+                        }
+                    )
+                )
+
+        class ExtraSolver:
+            name = "ExtraSolver"
+            supported_categories = {ChallengeCategory.TRAFFIC}
+
+            def solve(self, context: SolverContext):
+                from forgeflag.domain import Finding, SolverResult
+
+                finding = Finding(
+                    challenge_id=context.challenge.challenge_id,
+                    solver=self.name,
+                    finding="Extra solver ran once",
+                    evidence={"ran": True},
+                    confidence=0.8,
+                )
+                context.notebook.add_finding(finding)
+                return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-filter", category=ChallengeCategory.MISC))
+
+            summary = Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(FakeProvider()), ExtraSolver()],
+            ).run_challenge("llm-filter")
+
+        self.assertEqual([row["solver"] for row in summary["solvers"]], ["LLMSolver", "ExtraSolver"])
+
     def test_manager_adds_solver_suggested_by_llm_plan_observation(self) -> None:
         class FakeProvider:
             name = "fake"

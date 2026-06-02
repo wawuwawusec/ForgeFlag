@@ -28,6 +28,9 @@ class Observer:
                             "suggested_solvers": _string_list(plan.get("suggested_solvers")),
                             "next_actions": _string_list(plan.get("next_actions")),
                             "tool_hints": _string_list(plan.get("tool_hints")),
+                            "hypotheses": _string_list(plan.get("hypotheses")),
+                            "expected_evidence": _string_list(plan.get("expected_evidence")),
+                            "fallback_plan": _string_list(plan.get("fallback_plan")),
                         },
                     )
                 )

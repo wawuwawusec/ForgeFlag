@@ -1,11 +1,34 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from typing import Any
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.llm import LLMProvider
 from forgeflag.solvers.base import SolverContext
+
+
+@dataclass(frozen=True)
+class LLMPlan:
+    summary: str = ""
+    hypotheses: tuple[str, ...] = ()
+    suggested_solvers: tuple[str, ...] = ()
+    next_actions: tuple[str, ...] = ()
+    tool_hints: tuple[str, ...] = ()
+    expected_evidence: tuple[str, ...] = ()
+    fallback_plan: tuple[str, ...] = ()
+
+    def to_evidence(self) -> dict[str, Any]:
+        return {
+            "summary": self.summary,
+            "hypotheses": list(self.hypotheses),
+            "suggested_solvers": list(self.suggested_solvers),
+            "next_actions": list(self.next_actions),
+            "tool_hints": list(self.tool_hints),
+            "expected_evidence": list(self.expected_evidence),
+            "fallback_plan": list(self.fallback_plan),
+        }
 
 
 class LLMSolver:
@@ -33,7 +56,7 @@ class LLMSolver:
             "strategy": response.content,
         }
         if plan:
-            evidence["plan"] = plan
+            evidence["plan"] = plan.to_evidence()
 
         finding = Finding(
             challenge_id=context.challenge.challenge_id,
@@ -70,7 +93,9 @@ def _instructions() -> str:
         "You are ForgeFlag's planning model for authorized CTF/lab challenges. "
         "Suggest scoped, evidence-driven next steps only. Do not propose unauthorized access, arbitrary shell exposure, "
         "or unscoped network activity. Prefer reproducible tool workflows and explain what evidence to collect. "
-        "When possible, return compact JSON with keys: summary, suggested_solvers, next_actions, tool_hints."
+        "Return compact JSON with keys: summary, hypotheses, suggested_solvers, next_actions, tool_hints, "
+        "expected_evidence, fallback_plan. suggested_solvers must use exact ForgeFlag solver names such as "
+        "WebSolver, CryptoSolver, ReverseSolver, PwnSolver, ForensicsSolver, TrafficSolver, MiscSolver, or InfraSolver."
     )
 
 
@@ -92,25 +117,45 @@ def _prompt(context: SolverContext) -> str:
     )
 
 
-def _parse_plan(content: str) -> dict[str, Any]:
+def _parse_plan(content: str) -> LLMPlan | None:
     try:
-        raw = json.loads(content)
+        raw = json.loads(_strip_markdown_json_fence(content))
     except json.JSONDecodeError:
-        return {}
+        return None
     if not isinstance(raw, dict):
-        return {}
-    return {
-        "summary": _string(raw.get("summary")),
-        "suggested_solvers": _string_list(raw.get("suggested_solvers")),
-        "next_actions": _string_list(raw.get("next_actions")),
-        "tool_hints": _string_list(raw.get("tool_hints")),
-    }
+        return None
+    plan = LLMPlan(
+        summary=_string(raw.get("summary")),
+        hypotheses=tuple(_deduped_string_list(raw.get("hypotheses"))),
+        suggested_solvers=tuple(_deduped_string_list(raw.get("suggested_solvers"))),
+        next_actions=tuple(_deduped_string_list(raw.get("next_actions"))),
+        tool_hints=tuple(_deduped_string_list(raw.get("tool_hints"))),
+        expected_evidence=tuple(_deduped_string_list(raw.get("expected_evidence"))),
+        fallback_plan=tuple(_deduped_string_list(raw.get("fallback_plan"))),
+    )
+    if not any(plan.to_evidence().values()):
+        return None
+    return plan
 
 
-def _next_action(plan: dict[str, Any]) -> str:
-    actions = plan.get("next_actions") if plan else None
-    if isinstance(actions, list) and actions:
-        return str(actions[0])
+def _strip_markdown_json_fence(content: str) -> str:
+    stripped = content.strip()
+    fence_start = stripped.find("```")
+    if fence_start > 0:
+        fence_end = stripped.find("```", fence_start + 3)
+        if fence_end > fence_start:
+            return _strip_markdown_json_fence(stripped[fence_start : fence_end + 3])
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if len(lines) >= 3 and lines[0].strip().startswith("```") and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return stripped
+
+
+def _next_action(plan: LLMPlan | None) -> str:
+    if plan and plan.next_actions:
+        return plan.next_actions[0]
     return "Dispatch scoped specialist solvers and verify every candidate against notebook evidence."
 
 
@@ -118,7 +163,19 @@ def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _string_list(value: object) -> list[str]:
+def _deduped_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, str)][:10]
+    items: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        cleaned = item.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        items.append(cleaned)
+        if len(items) >= 10:
+            break
+    return items

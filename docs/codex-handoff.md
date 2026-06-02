@@ -27,7 +27,8 @@ Implemented so far:
   - `OpenAIResponsesProvider` uses the Responses API via standard-library HTTP
   - `ZhipuChatCompletionsProvider` uses `/chat/completions` at `https://open.bigmodel.cn/api/paas/v4`
   - `LLMSolver` writes scoped strategy guidance; it does not submit unverified flag candidates
-  - structured JSON plans become `llm_solver_plan` observations and can insert suggested solvers into the remaining queue
+  - structured Planner v2 JSON plans become `llm_solver_plan` observations and can insert suggested solvers into the remaining queue
+  - Planner v2 accepts plain or markdown-fenced JSON and records `summary`, `hypotheses`, `suggested_solvers`, `next_actions`, `tool_hints`, `expected_evidence`, and `fallback_plan`
   - LLM provider/config failures are recorded as `LLMSolver` `config_error` findings and do not block deterministic solvers
 - Optional IDA MCP binary-analysis layer:
   - `IDAMCPConfig` reads `FORGEFLAG_IDA_MCP_ENABLED`, `FORGEFLAG_IDA_MCP_COMMAND`, `FORGEFLAG_IDA_MCP_READ_ONLY`, and `FORGEFLAG_IDA_MCP_TIMEOUT_SECONDS`
