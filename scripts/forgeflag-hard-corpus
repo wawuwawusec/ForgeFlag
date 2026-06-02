@@ -1,0 +1,446 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+from pathlib import Path
+import socket
+import struct
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKDIR = ROOT / ".forgeflag" / "hard-corpus"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run hard public-CTF-pattern cases through ForgeFlag Web.")
+    parser.add_argument("--url", default="http://127.0.0.1:8080", help="ForgeFlag Web UI base URL")
+    parser.add_argument("--list", action="store_true", help="List hard corpus cases without running them")
+    parser.add_argument("--keep", action="store_true", help="Keep generated challenges in the Web notebook after running")
+    parser.add_argument("--strict", action="store_true", help="Exit non-zero when any hard benchmark score is incomplete")
+    parser.add_argument("--llm", action="store_true", help="Enable configured LLM planning for benchmark runs")
+    args = parser.parse_args()
+
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    fixtures = build_fixtures()
+    cases = hard_cases(fixtures)
+    if args.list:
+        print(json.dumps({"cases": [_case_listing(case) for case in cases]}, indent=2, ensure_ascii=False))
+        return 0
+
+    web_server = start_web_server()
+    rows: list[dict[str, object]] = []
+    try:
+        for case in cases:
+            delete_challenge(args.url, str(case["challenge_id"]))
+            create_challenge(args.url, case)
+            summary = run_challenge(args.url, case, llm_enabled=args.llm)
+            findings = get_json(args.url, f"/api/challenges/{case['challenge_id']}/findings")
+            observations = get_json(args.url, f"/api/challenges/{case['challenge_id']}/observations")
+            report = get_json(args.url, f"/api/challenges/{case['challenge_id']}/report")
+            rows.append(score_case(case, summary, findings, observations, report))
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        if args.strict and any(not row["ok"] for row in rows):
+            return 1
+        return 0
+    finally:
+        web_server.shutdown()
+        web_server.server_close()
+        if not args.keep:
+            for case in cases:
+                delete_challenge(args.url, str(case["challenge_id"]))
+
+
+def build_fixtures() -> dict[str, Path]:
+    web_source = WORKDIR / "flag-command-source.txt"
+    web_source.write_text(
+        "HTB Cyber Apocalypse Flag Command pattern: browser code asks /api/options for hidden commands.\n",
+        encoding="utf-8",
+    )
+
+    crypto_ctr = WORKDIR / "aes-ctr-reuse.txt"
+    crypto_ctr.write_text(
+        "\n".join(
+            [
+                "DownUnderCTF-style hard crypto pattern.",
+                "cipher = AES.new(key, AES.MODE_CTR, nonce=b'fixed')",
+                "c1 = 4f7a0b1a...",
+                "c2 = 4c651d09...",
+                "Two messages were encrypted under the same CTR nonce.",
+                "Goal: detect keystream reuse and request a crib/XOR workflow, not guess the flag.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    poly1305 = WORKDIR / "poly1305-otm.txt"
+    poly1305.write_text(
+        "Poly1305 one-time MAC key was reused across messages. Recovering the key requires algebra over the MAC equations.\n",
+        encoding="utf-8",
+    )
+
+    traffic = WORKDIR / "dns-split-base32.pcap"
+    write_dns_pcap(traffic, "flag{hard_dns_split}")
+
+    eml = WORKDIR / "powershell-email.eml"
+    encoded = base64.b64encode(b"powershell -enc ZmxhZ3toYXJkX21haWxfdHJpYWdlfQ==").decode("ascii")
+    eml.write_text(
+        f"Subject: urgent\nFrom: attacker@example.test\n\nSuspicious attachment command:\n{encoded}\n",
+        encoding="utf-8",
+    )
+
+    reverse_source = WORKDIR / "packed-away-sample.c"
+    reverse_source.write_text(
+        '#include <stdio.h>\n'
+        'const char *marker = "UPX! packed binary marker; unpack before decompilation";\n'
+        'int main(void) { puts(marker); return 0; }\n',
+        encoding="utf-8",
+    )
+    reverse_bin = WORKDIR / "packed-away-sample"
+    compile_c(reverse_source, reverse_bin)
+
+    pwn_source = WORKDIR / "format-string.c"
+    pwn_source.write_text(
+        "#include <stdio.h>\n"
+        "int main(void) { char name[128]; fgets(name, sizeof(name), stdin); printf(name); return 0; }\n",
+        encoding="utf-8",
+    )
+
+    pickle = WORKDIR / "pickle-sandbox.py"
+    pickle.write_text(
+        "import pickle\nBLACKLIST = ['os', 'system', 'eval']\nblob = input('pickle> ')\npickle.loads(bytes.fromhex(blob))\n",
+        encoding="utf-8",
+    )
+
+    java_reverse = WORKDIR / "dark-portal-notes.txt"
+    java_reverse.write_text(
+        "Real World CTF Dark Portal pattern: web LFI downloads ROOT.war, then Java handlers need static analysis passes.\n",
+        encoding="utf-8",
+    )
+
+    return {
+        "web_source": web_source,
+        "crypto_ctr": crypto_ctr,
+        "poly1305": poly1305,
+        "traffic": traffic,
+        "eml": eml,
+        "reverse": reverse_bin,
+        "pwn_source": pwn_source,
+        "pickle": pickle,
+        "java_reverse": java_reverse,
+    }
+
+
+def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
+    return [
+        {
+            "challenge_id": "hard-web-api-options",
+            "category": "web",
+            "difficulty": "hard",
+            "title": "Hidden API command option",
+            "description": "HTB Flag Command style: client-side code hints at /api/options; the hidden API value carries the flag.",
+            "target": "http://127.0.0.1:18093/",
+            "attachments": [fixtures["web_source"]],
+            "active_probe": True,
+            "expected_flag": "flag{hard_web_option_leak}",
+            "required_evidence": ["api/options", "hidden API", "flag{hard_web_option_leak}"],
+            "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
+            "improvement_hint": "WebSolver should extract script-mentioned routes and probe same-origin API endpoints.",
+        },
+        {
+            "challenge_id": "hard-crypto-aes-ctr-reuse",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "AES CTR nonce reuse",
+            "description": "DUCTF hard crypto style: identify stream cipher nonce reuse before attempting crib-based recovery.",
+            "attachments": [fixtures["crypto_ctr"]],
+            "active_probe": False,
+            "expected_flag": None,
+            "required_evidence": ["CTR", "nonce", "keystream"],
+            "source_url": "https://github.com/DownUnderCTF/Challenges_2024_Public",
+            "improvement_hint": "CryptoSolver/LLM should classify AES mode misuse and propose XOR crib workflow.",
+        },
+        {
+            "challenge_id": "hard-crypto-poly1305-reuse",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "Poly1305 one-time key reuse",
+            "description": "DUCTF Poly1305 OTM style: reused one-time MAC key requires algebraic recovery.",
+            "attachments": [fixtures["poly1305"]],
+            "active_probe": False,
+            "expected_flag": None,
+            "required_evidence": ["Poly1305", "one-time", "algebra"],
+            "source_url": "https://github.com/DownUnderCTF/Challenges_2024_Public",
+            "improvement_hint": "LLM planner should route MAC algebra cases to Sage/Python solve-script generation.",
+        },
+        {
+            "challenge_id": "hard-traffic-dns-split",
+            "category": "traffic",
+            "difficulty": "hard",
+            "title": "Split DNS exfiltration",
+            "description": "Forensics traffic style: reconstruct encoded DNS labels from a packet capture.",
+            "attachments": [fixtures["traffic"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_dns_split}",
+            "required_evidence": ["dns_summary", "decoded_query_hints", "flag{hard_dns_split}"],
+            "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
+            "improvement_hint": "TrafficSolver should keep reconstructing DNS labels and preserve replayable query evidence.",
+        },
+        {
+            "challenge_id": "hard-forensics-mail-powershell",
+            "category": "forensics",
+            "difficulty": "hard",
+            "title": "Suspicious mail PowerShell triage",
+            "description": "HTB/CrewCTF forensics style: inspect email content, encoded PowerShell, and staged payload clues.",
+            "attachments": [fixtures["eml"]],
+            "active_probe": False,
+            "expected_flag": None,
+            "required_evidence": ["PowerShell", "base64", "mail"],
+            "source_url": "https://siunam321.github.io/ctf/CrewCTF-2023/",
+            "improvement_hint": "ForensicsSolver should decode encoded PowerShell and summarize mail headers/body artifacts.",
+        },
+        {
+            "challenge_id": "hard-reverse-packed-away",
+            "category": "reverse",
+            "difficulty": "hard",
+            "title": "Packed binary triage",
+            "description": "HTB PackedAway/DUCTF reverse style: identify packer indicators before decompilation.",
+            "attachments": [fixtures["reverse"]],
+            "active_probe": False,
+            "expected_flag": None,
+            "required_evidence": ["UPX", "packed", "strings"],
+            "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
+            "improvement_hint": "ReverseSolver should promote packer hints and suggest unpacking workflow.",
+        },
+        {
+            "challenge_id": "hard-pwn-format-string",
+            "category": "pwn",
+            "difficulty": "hard",
+            "title": "Format string source triage",
+            "description": "Pwn style: source exposes printf(user_input), requiring stack offset/leak/write planning.",
+            "attachments": [fixtures["pwn_source"]],
+            "active_probe": False,
+            "expected_flag": None,
+            "required_evidence": ["printf", "format string", "pwntools"],
+            "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
+            "improvement_hint": "PwnSolver should inspect source text and generate a format-string exploit workspace outline.",
+        },
+        {
+            "challenge_id": "hard-misc-pickle-sandbox",
+            "category": "misc",
+            "difficulty": "hard",
+            "title": "Pickle sandbox escape",
+            "description": "HTB pickle challenge style: blacklist plus pickle.loads requires object-chain analysis.",
+            "attachments": [fixtures["pickle"]],
+            "active_probe": False,
+            "expected_flag": None,
+            "required_evidence": ["pickle", "blacklist", "sandbox"],
+            "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
+            "improvement_hint": "MiscSolver/LLM should identify pickle sinks and propose safe sandbox-escape reasoning steps.",
+        },
+        {
+            "challenge_id": "expert-web-java-reverse-chain",
+            "category": "web",
+            "difficulty": "expert",
+            "title": "Web to Java reverse chain",
+            "description": "Real World CTF style: LFI retrieves a WAR, then static Java analysis is needed.",
+            "target": "http://127.0.0.1:18093/portal",
+            "attachments": [fixtures["java_reverse"]],
+            "active_probe": True,
+            "expected_flag": None,
+            "required_evidence": ["LFI", "WAR", "Java"],
+            "source_url": "https://gist.github.com/stong/5236143fdb6a3b656ac295e534988902",
+            "improvement_hint": "LLM planner should support multi-stage chains and queue WebSolver then ReverseSolver.",
+        },
+    ]
+
+
+def _case_listing(case: dict[str, object]) -> dict[str, object]:
+    return {
+        key: case[key]
+        for key in ("challenge_id", "category", "difficulty", "title", "expected_flag", "required_evidence", "source_url")
+    }
+
+
+def score_case(
+    case: dict[str, object],
+    summary: dict[str, object],
+    findings: object,
+    observations: object,
+    report: object,
+) -> dict[str, object]:
+    haystack = json.dumps({"summary": summary, "findings": findings, "observations": observations, "report": report}, ensure_ascii=False)
+    accepted = summary.get("accepted_flags", []) if isinstance(summary, dict) else []
+    expected_flag = case.get("expected_flag")
+    flag_ok = expected_flag is None or expected_flag in accepted
+    required = [str(item) for item in case["required_evidence"]]
+    matched = [item for item in required if item.lower() in haystack.lower()]
+    missing = [item for item in required if item not in matched]
+    score = (1 if flag_ok else 0) + len(matched)
+    max_score = 1 + len(required)
+    return {
+        "challenge_id": case["challenge_id"],
+        "category": case["category"],
+        "difficulty": case["difficulty"],
+        "status": summary.get("status") if isinstance(summary, dict) else "unknown",
+        "expected_flag": expected_flag,
+        "accepted_flags": accepted,
+        "flag_ok": flag_ok,
+        "matched_evidence": matched,
+        "missing_evidence": missing,
+        "score": score,
+        "max_score": max_score,
+        "ok": score == max_score,
+        "source_url": case["source_url"],
+        "improvement_hint": case["improvement_hint"],
+    }
+
+
+class HardWebHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path == "/api/options":
+            body = json.dumps(
+                {
+                    "commands": ["look", "status", "blip-blop"],
+                    "hidden_api": "flag{hard_web_option_leak}",
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+        elif self.path == "/portal":
+            body = b"Portal accepts file:// URLs. Try reading /opt/tomcat/webapps/ROOT.war for Java handler analysis."
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+        else:
+            body = b'<!doctype html><title>Flag Command</title><script>fetch("/api/options")</script><p>start</p>'
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+def start_web_server() -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer(("127.0.0.1", 18093), HardWebHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def create_challenge(base_url: str, case: dict[str, object]) -> None:
+    payload = {
+        "challenge_id": case["challenge_id"],
+        "category": case["category"],
+        "title": case["title"],
+        "target": case.get("target", ""),
+        "description": case["description"],
+        "tags": f"hard-corpus,{case['difficulty']},{case['category']}",
+        "attachments": [
+            {
+                "name": path.name,
+                "content_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+            }
+            for path in case.get("attachments", [])
+        ],
+    }
+    post_json(base_url, "/api/challenges", payload)
+
+
+def run_challenge(base_url: str, case: dict[str, object], llm_enabled: bool) -> dict[str, object]:
+    return post_json(
+        base_url,
+        f"/api/challenges/{case['challenge_id']}/run",
+        {
+            "active_probe": case["active_probe"],
+            "allowed_hosts": "127.0.0.1,localhost",
+            "llm_enabled": llm_enabled,
+            "llm_provider": "zhipu" if llm_enabled else "disabled",
+        },
+    )
+
+
+def delete_challenge(base_url: str, challenge_id: str) -> None:
+    request = urllib.request.Request(base_url.rstrip("/") + f"/api/challenges/{challenge_id}", method="DELETE")
+    try:
+        with urllib.request.urlopen(request, timeout=20):
+            return
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        return
+
+
+def post_json(base_url: str, path: str, payload: dict[str, object]) -> dict[str, object]:
+    request = urllib.request.Request(
+        base_url.rstrip("/") + path,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def get_json(base_url: str, path: str) -> dict[str, object] | list[dict[str, object]]:
+    with urllib.request.urlopen(base_url.rstrip("/") + path, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def compile_c(source: Path, output: Path) -> None:
+    subprocess.run(["clang", str(source), "-o", str(output)], check=True)
+
+
+def write_dns_pcap(path: Path, flag: str) -> None:
+    encoded = base64.b32encode(flag.encode("utf-8")).decode("ascii").rstrip("=").lower()
+    query = ".".join([encoded[:18], encoded[18:36], encoded[36:]]) + ".exfil.test"
+    payload = dns_query(query)
+    packet = ethernet_frame(ipv4_packet(udp_datagram(payload)))
+    with path.open("wb") as handle:
+        handle.write(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
+        ts = int(time.time())
+        handle.write(struct.pack("<IIII", ts, 0, len(packet), len(packet)))
+        handle.write(packet)
+
+
+def dns_query(name: str) -> bytes:
+    labels = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.split(".") if part)
+    return struct.pack("!HHHHHH", 0x4242, 0x0100, 1, 0, 0, 0) + labels + b"\x00" + struct.pack("!HH", 1, 1)
+
+
+def udp_datagram(payload: bytes) -> bytes:
+    length = 8 + len(payload)
+    return struct.pack("!HHHH", 53000, 53, length, 0) + payload
+
+
+def ipv4_packet(payload: bytes) -> bytes:
+    src = socket.inet_aton("10.10.10.2")
+    dst = socket.inet_aton("8.8.8.8")
+    total_length = 20 + len(payload)
+    header = struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 17, 0, src, dst)
+    checksum = internet_checksum(header)
+    return struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 17, checksum, src, dst) + payload
+
+
+def ethernet_frame(payload: bytes) -> bytes:
+    return b"\xaa\xaa\xaa\xaa\xaa\xaa" + b"\xbb\xbb\xbb\xbb\xbb\xbb" + b"\x08\x00" + payload
+
+
+def internet_checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\x00"
+    total = sum(struct.unpack("!%dH" % (len(data) // 2), data))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

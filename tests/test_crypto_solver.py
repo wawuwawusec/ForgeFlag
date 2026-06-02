@@ -128,6 +128,51 @@ print(enc)
         self.assertEqual(finding.evidence["hashes"]["candidates"][0]["type"], "md5_or_ntlm")
         self.assertIn("hashcat", finding.evidence["hashes"]["recommended_tools"])
 
+    def test_crypto_solver_identifies_aes_ctr_nonce_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "ctr.py"
+            attachment.write_text(
+                "cipher = AES.new(key, AES.MODE_CTR, nonce=b'fixed')\n"
+                "Two ciphertexts reuse the same nonce, so recover the keystream with XOR cribbing.\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-ctr-reuse",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-ctr-reuse")
+            finding = next(f for f in notebook.findings_for("crypto-ctr-reuse") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(finding.finding, "Identified crypto primitive misuse pattern")
+        self.assertEqual(finding.evidence["pattern"], "aes_ctr_nonce_reuse")
+        self.assertIn("nonce", finding.next_action.lower())
+        self.assertIn("keystream", finding.next_action.lower())
+
+    def test_crypto_solver_identifies_poly1305_one_time_key_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-poly1305-reuse",
+                    category=ChallengeCategory.CRYPTO,
+                    description="Poly1305 one-time MAC key was reused; solve algebra equations over message/tag pairs.",
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-poly1305-reuse")
+            finding = next(f for f in notebook.findings_for("crypto-poly1305-reuse") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(finding.evidence["pattern"], "poly1305_one_time_key_reuse")
+        self.assertIn("algebra", finding.next_action.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

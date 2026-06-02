@@ -9,6 +9,7 @@ from forgeflag.flags import extract_flags
 from forgeflag.image import analyze_image_stego_hints, analyze_png_ihdr
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
+from forgeflag.transforms import TransformCandidate, candidates_to_payload, transform_candidates
 
 
 class ForensicsSolver:
@@ -79,9 +80,13 @@ class ForensicsSolver:
             str(result.raw.get("stdout", "")) + "\n" + str(result.raw.get("stderr", ""))
             for _, result in labeled_results
         )
+        decoded_candidates = _forensic_transform_candidates(combined_output)
+        decoded_flags = extract_flags("\n".join(candidate.value for candidate in decoded_candidates))
         png_ihdr = analyze_png_ihdr(Path(resolved))
         image_stego = analyze_image_stego_hints(Path(resolved))
-        flags = tuple(dict.fromkeys((*extract_flags(combined_output), *extract_flags(_image_text(image_stego)))))
+        flags = tuple(
+            dict.fromkeys((*extract_flags(combined_output), *decoded_flags, *extract_flags(_image_text(image_stego))))
+        )
         archive = analyze_archive(resolved)
         archive_text_previews = preview_archive_text(resolved) if archive else []
         archive_flags = extract_flags("\n".join(str(item.get("text_preview", "")) for item in archive_text_previews))
@@ -100,6 +105,11 @@ class ForensicsSolver:
                 "tool_statuses": {label: result.status for label, result in labeled_results},
                 "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
                 "flag_candidates": list(flags),
+                **(
+                    {"decoded_transform_candidates": candidates_to_payload(decoded_candidates)}
+                    if decoded_candidates
+                    else {}
+                ),
                 **({"png_ihdr": png_ihdr} if png_ihdr else {}),
                 **({"image_stego": image_stego} if image_stego else {}),
                 **({"archive": archive} if archive else {}),
@@ -127,6 +137,24 @@ def _tool_sample(result) -> dict[str, str]:
         "stdout": stdout[:500],
         "stderr": stderr[:500],
     }
+
+
+def _forensic_transform_candidates(text: str) -> tuple[TransformCandidate, ...]:
+    candidates = list(transform_candidates(text))
+    seen = {(candidate.value, candidate.recipe, candidate.source) for candidate in candidates}
+    for candidate in candidates[:40]:
+        for nested in transform_candidates(candidate.value, max_depth=2, max_candidates=30):
+            combined = TransformCandidate(
+                value=nested.value,
+                recipe=(*candidate.recipe, *nested.recipe),
+                source=candidate.source,
+            )
+            key = (combined.value, combined.recipe, combined.source)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(combined)
+    return tuple(candidates)
 
 
 def _forensics_hypothesis(

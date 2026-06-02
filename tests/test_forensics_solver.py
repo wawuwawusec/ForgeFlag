@@ -41,6 +41,33 @@ class ForensicsSolverTest(unittest.TestCase):
         self.assertIn("file", forensic_finding.evidence["tool_statuses"])
         self.assertIn("strings", forensic_finding.evidence["tool_statuses"])
 
+    def test_forensics_solver_decodes_base64_mail_payload_hints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "powershell.eml"
+            attachment.write_text(
+                "Subject: urgent\n\nSuspicious command:\n"
+                "cG93ZXJzaGVsbCAtZW5jIFpteGhaM3RrWldOdlpHVmtYMlJoZEdGOUNnPT0=\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="forensics-mail-base64",
+                    category=ChallengeCategory.FORENSICS,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("forensics-mail-base64")
+            finding = next(f for f in notebook.findings_for("forensics-mail-base64") if f.solver == "ForensicsSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{decoded_data}"])
+        self.assertIn("decoded_transform_candidates", finding.evidence)
+        recipes = {tuple(candidate["recipe"]) for candidate in finding.evidence["decoded_transform_candidates"]}
+        self.assertIn(("base64_decode", "base64_decode"), recipes)
+
     def test_forensics_solver_leaves_pcap_traffic_analysis_to_traffic_solver(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

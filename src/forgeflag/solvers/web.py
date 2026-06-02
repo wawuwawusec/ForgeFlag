@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urldefrag, urljoin, urlparse
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
@@ -8,6 +9,10 @@ from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
 from forgeflag.tools.http_probe import HttpProbeTool
 from forgeflag.web_analysis import HtmlSummary, summarize_html
+
+
+_SCRIPT_ROUTE_PATTERN = re.compile(r"""["'](\/[A-Za-z0-9][A-Za-z0-9._~!$&()*+,;=:@%\/?#[\]-]*)["']""")
+_STATIC_ROUTE_SUFFIXES = (".css", ".gif", ".ico", ".jpg", ".jpeg", ".js", ".map", ".png", ".svg", ".webp")
 
 
 class WebSolver:
@@ -78,6 +83,8 @@ class WebSolver:
                 "target": challenge.target,
                 "tool_status": tool_result.status,
                 "tool_evidence": tool_result.evidence,
+                "response_sample": sample[:500],
+                "chain_hints": _chain_hints(sample),
                 "html": html.as_evidence(),
                 "flag_candidates": list(flags),
             },
@@ -93,6 +100,12 @@ class WebSolver:
             context.notebook.add_finding(link_finding)
             findings.append(link_finding)
             flag_candidates.extend(link_flags)
+
+        script_finding, script_flags = _follow_script_mentioned_routes(context, challenge.target, sample)
+        if script_finding:
+            context.notebook.add_finding(script_finding)
+            findings.append(script_finding)
+            flag_candidates.extend(script_flags)
 
         ffuf_result = ctf.ffuf_route_discovery(
             challenge.target,
@@ -120,7 +133,7 @@ class WebSolver:
         return SolverResult(
             solver=self.name,
             challenge_id=challenge.challenge_id,
-            status="flag_candidate" if flags else "ok",
+            status="flag_candidate" if flag_candidates else "ok",
             findings=tuple(findings),
             flag_candidates=tuple(dict.fromkeys(flag_candidates)),
         )
@@ -157,6 +170,18 @@ def _route_words_from_html(html: HtmlSummary) -> tuple[str, ...]:
         if action:
             words.append(action.split("/", 1)[0])
     return tuple(dict.fromkeys(words))
+
+
+def _chain_hints(sample: str) -> list[str]:
+    lowered = sample.lower()
+    hints: list[str] = []
+    if "lfi" in lowered or "file://" in lowered or "../" in lowered or "..%2f" in lowered:
+        hints.append("LFI")
+    if ".war" in lowered or "webapps" in lowered:
+        hints.append("WAR")
+    if "java" in lowered or ".class" in lowered or "tomcat" in lowered:
+        hints.append("Java")
+    return hints
 
 
 def _follow_visible_links(
@@ -199,6 +224,46 @@ def _follow_visible_links(
     return finding, flags
 
 
+def _follow_script_mentioned_routes(
+    context: SolverContext,
+    target: str,
+    sample: str,
+    limit: int = 8,
+) -> tuple[Finding | None, tuple[str, ...]]:
+    targets = _script_route_targets(target, sample, limit)
+    if not targets:
+        return None, ()
+
+    probe = HttpProbeTool(context.scope)
+    statuses: dict[str, str] = {}
+    samples: dict[str, str] = {}
+    flag_candidates: list[str] = []
+    for url in targets:
+        result = probe.run(url)
+        context.notebook.add_tool_result(context.challenge.challenge_id, result)
+        statuses[url] = result.status
+        route_sample = str(result.raw.get("sample", ""))
+        samples[url] = route_sample[:500]
+        flag_candidates.extend(extract_flags(route_sample))
+
+    flags = tuple(dict.fromkeys(flag_candidates))
+    finding = Finding(
+        challenge_id=context.challenge.challenge_id,
+        solver=WebSolver.name,
+        finding="Followed scoped script-mentioned web routes",
+        evidence={
+            "followed_urls": targets,
+            "tool_statuses": statuses,
+            "samples": samples,
+            "flag_candidates": list(flags),
+        },
+        hypothesis=_script_route_hypothesis(flags),
+        confidence=0.84 if flags else 0.55,
+        next_action=_script_route_next_action(flags),
+    )
+    return finding, flags
+
+
 def _scoped_link_targets(target: str, html: HtmlSummary, limit: int) -> list[str]:
     parsed_target = urlparse(target)
     urls: list[str] = []
@@ -219,6 +284,30 @@ def _scoped_link_targets(target: str, html: HtmlSummary, limit: int) -> list[str
     return urls
 
 
+def _script_route_targets(target: str, sample: str, limit: int) -> list[str]:
+    parsed_target = urlparse(target)
+    target_without_fragment = urldefrag(target).url
+    urls: list[str] = []
+    for match in _SCRIPT_ROUTE_PATTERN.finditer(sample):
+        path = match.group(1).strip()
+        if not path or path.startswith(("//", "/#", "/javascript:")):
+            continue
+        parsed_path = urlparse(path)
+        if parsed_path.path.lower().endswith(_STATIC_ROUTE_SUFFIXES):
+            continue
+        joined = urldefrag(urljoin(target, path)).url
+        parsed_joined = urlparse(joined)
+        if parsed_joined.scheme not in {"http", "https"}:
+            continue
+        if (parsed_joined.scheme, parsed_joined.netloc) != (parsed_target.scheme, parsed_target.netloc):
+            continue
+        if joined != target_without_fragment and joined not in urls:
+            urls.append(joined)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
 def _linked_hypothesis(flags: tuple[str, ...]) -> str:
     if flags:
         return "A same-origin visible link returned a flag-like token."
@@ -229,6 +318,18 @@ def _linked_next_action(flags: tuple[str, ...]) -> str:
     if flags:
         return "Send linked-route candidates to Verifier and preserve the followed URL path."
     return "Inspect linked pages, then expand to forms or route discovery if needed."
+
+
+def _script_route_hypothesis(flags: tuple[str, ...]) -> str:
+    if flags:
+        return "A same-origin route referenced by client-side script returned a flag-like token."
+    return "Client-side script referenced reachable same-origin routes that may hide API state."
+
+
+def _script_route_next_action(flags: tuple[str, ...]) -> str:
+    if flags:
+        return "Send script-route candidates to Verifier and record the API path as the reproduction step."
+    return "Inspect script-referenced API responses and add parameter-aware follow-up if needed."
 
 
 def _ffuf_hypothesis(status: str) -> str:

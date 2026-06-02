@@ -178,6 +178,31 @@ class MiscSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Analyzed misc hash candidates")
         self.assertEqual(finding.evidence["hashes"]["candidates"][0]["type"], "md5_or_ntlm")
 
+    def test_misc_solver_identifies_pickle_blacklist_sandbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "sandbox.py"
+            attachment.write_text(
+                "import pickle\nBLACKLIST = ['os', 'system']\nblob = input('pickle> ')\npickle.loads(bytes.fromhex(blob))\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-pickle-sandbox",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-pickle-sandbox")
+            finding = next(f for f in notebook.findings_for("misc-pickle-sandbox") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(finding.finding, "Identified misc sandbox serialization pattern")
+        self.assertEqual(finding.evidence["pattern"], "pickle blacklist sandbox")
+        self.assertIn("blacklist", finding.next_action.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

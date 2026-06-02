@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import re
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
@@ -84,6 +86,12 @@ class PwnSolver:
                 )
                 context.notebook.add_finding(finding)
                 findings.append(finding)
+                continue
+
+            source_finding = _source_vulnerability_finding(context, resolved)
+            if source_finding:
+                context.notebook.add_finding(source_finding)
+                findings.append(source_finding)
                 continue
 
             labeled_results = [
@@ -201,6 +209,47 @@ def _tool_sample(result) -> dict[str, str]:
     stdout = str(result.raw.get("stdout", ""))
     stderr = str(result.raw.get("stderr", ""))
     return {"stdout": stdout[:500], "stderr": stderr[:500]}
+
+
+def _source_vulnerability_finding(context: SolverContext, resolved: str) -> Finding | None:
+    path = Path(resolved)
+    if path.suffix.lower() not in {".c", ".cc", ".cpp", ".h", ".hpp"}:
+        return None
+    try:
+        source = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    if not _has_format_string_sink(source):
+        return None
+    return Finding(
+        challenge_id=context.challenge.challenge_id,
+        solver=PwnSolver.name,
+        finding="Identified pwn source vulnerability pattern",
+        evidence={
+            "artifact": resolved,
+            "pattern": "format string",
+            "dangerous_calls": ["printf"],
+            "source_sample": "\n".join(_matching_source_lines(source, ("printf", "fgets", "scanf"))),
+        },
+        hypothesis="User-controlled data appears to reach printf as the format argument, which is a format string vulnerability.",
+        confidence=0.74,
+        next_action="Build a pwntools harness, find the stack offset with %p probes, then plan leak/write primitives against the provided binary or service.",
+    )
+
+
+def _has_format_string_sink(source: str) -> bool:
+    return bool(re.search(r"\bprintf\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)", source))
+
+
+def _matching_source_lines(source: str, terms: tuple[str, ...], limit: int = 8) -> list[str]:
+    lines: list[str] = []
+    lowered_terms = tuple(term.lower() for term in terms)
+    for line in source.splitlines():
+        if any(term in line.lower() for term in lowered_terms):
+            lines.append(line.strip()[:220])
+        if len(lines) >= limit:
+            break
+    return lines
 
 
 def _local_hypothesis(flags: tuple[str, ...]) -> str:

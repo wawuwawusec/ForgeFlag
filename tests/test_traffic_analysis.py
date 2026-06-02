@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import unittest
 
 from forgeflag.traffic_analysis import dns_summary_from_tshark, tcp_stream_shortlist
@@ -30,6 +31,14 @@ class TrafficAnalysisTest(unittest.TestCase):
         summary = dns_summary_from_tshark(output)
 
         self.assertIn("flag{dns_subdomain}", summary["decoded_query_hints"])
+
+    def test_dns_summary_decodes_split_encoded_query_labels(self) -> None:
+        encoded = base64.b32encode(b"flag{hard_dns_split}").decode("ascii").rstrip("=")
+        query = f"{encoded[:14]}.{encoded[14:28]}.{encoded[28:]}.exfil.test"
+
+        summary = dns_summary_from_tshark(f"42|{query}|||0")
+
+        self.assertIn("flag{hard_dns_split}", summary["decoded_query_hints"])
 
     def test_tcp_stream_shortlist_ranks_http_and_flag_streams(self) -> None:
         tcp_output = "\n".join(

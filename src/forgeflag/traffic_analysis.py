@@ -7,6 +7,22 @@ from forgeflag.flags import extract_flags
 from forgeflag.transforms import transform_candidates
 
 
+_COMMON_DNS_SUFFIX_LABELS = {
+    "c2",
+    "com",
+    "corp",
+    "dns",
+    "example",
+    "exfil",
+    "internal",
+    "lan",
+    "local",
+    "net",
+    "org",
+    "test",
+}
+
+
 def dns_summary_from_tshark(output: str, limit: int = 20) -> dict[str, object]:
     query_counts: Counter[str] = Counter()
     txt_answers: list[str] = []
@@ -132,12 +148,26 @@ def _query_payload_candidates(query: str) -> list[str]:
     labels = [label for label in query.rstrip(".").split(".") if label]
     candidates: list[str] = []
     for label in labels:
-        if len(label) >= 8 and label not in candidates:
-            candidates.append(label)
+        _add_payload_candidate(candidates, label)
+
+    prefix_payload_labels: list[str] = []
+    for label in labels:
+        if label.lower() in _COMMON_DNS_SUFFIX_LABELS:
+            break
+        if len(label) >= 4:
+            prefix_payload_labels.append(label)
+    for start in range(len(prefix_payload_labels)):
+        for end in range(start + 2, len(prefix_payload_labels) + 1):
+            _add_payload_candidate(candidates, "".join(prefix_payload_labels[start:end]))
+
     joined = "".join(label for label in labels if len(label) >= 4)
-    if len(joined) >= 8 and joined not in candidates:
-        candidates.append(joined)
+    _add_payload_candidate(candidates, joined)
     return candidates
+
+
+def _add_payload_candidate(candidates: list[str], value: str) -> None:
+    if len(value) >= 8 and value not in candidates:
+        candidates.append(value)
 
 
 def _streams_from_http_requests(output: str) -> set[str]:

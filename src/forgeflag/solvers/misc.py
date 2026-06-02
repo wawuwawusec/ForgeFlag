@@ -39,6 +39,11 @@ class MiscSolver:
             )
 
         text = "\n".join(_text_inputs(context))
+        sandbox_finding = _sandbox_serialization_finding(context, text)
+        if sandbox_finding:
+            context.notebook.add_finding(sandbox_finding)
+            return SolverResult(self.name, context.challenge.challenge_id, "ok", (sandbox_finding,))
+
         hash_summary = hash_summary_from_text(text)
         if hash_summary["candidates"]:
             finding = Finding(
@@ -167,6 +172,42 @@ def _text_inputs(context: SolverContext) -> list[str]:
             continue
         values.append(raw.decode("utf-8", errors="ignore"))
     return [value for value in values if value.strip()]
+
+
+def _sandbox_serialization_finding(context: SolverContext, text: str) -> Finding | None:
+    lowered = text.lower()
+    if "pickle.loads" not in lowered and "pickle.load" not in lowered:
+        return None
+    if "blacklist" not in lowered and "sandbox" not in lowered:
+        return None
+    return Finding(
+        challenge_id=context.challenge.challenge_id,
+        solver=MiscSolver.name,
+        finding="Identified misc sandbox serialization pattern",
+        evidence={
+            "pattern": "pickle blacklist sandbox",
+            "evidence_terms": _matched_terms(lowered, ("pickle", "blacklist", "sandbox", "loads")),
+            "source_lines": _matching_lines(text, ("pickle", "blacklist", "sandbox", "loads")),
+        },
+        hypothesis="The attachment uses pickle deserialization inside a blacklist-style sandbox, a common CTF object-chain escape pattern.",
+        confidence=0.72,
+        next_action="Treat the blacklist as bypassable evidence: inspect allowed globals/opcodes, then build a safe local pickle payload reproduction path.",
+    )
+
+
+def _matched_terms(lowered: str, terms: tuple[str, ...]) -> list[str]:
+    return [term for term in terms if term.lower() in lowered]
+
+
+def _matching_lines(text: str, terms: tuple[str, ...], limit: int = 8) -> list[str]:
+    lowered_terms = tuple(term.lower() for term in terms)
+    lines: list[str] = []
+    for line in text.splitlines():
+        if any(term in line.lower() for term in lowered_terms):
+            lines.append(line.strip()[:220])
+        if len(lines) >= limit:
+            break
+    return lines
 
 
 def _transform_hypothesis(flags: tuple[str, ...]) -> str:

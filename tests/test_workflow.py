@@ -55,6 +55,37 @@ class LinkedFlagHandler(BaseHTTPRequestHandler):
         return
 
 
+class ScriptRouteHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path == "/api/options":
+            body = b'{"hidden_api":"flag{script_api_route}"}'
+            content_type = "application/json"
+        else:
+            body = b'<!doctype html><title>Script</title><script>fetch("/api/options")</script>'
+            content_type = "text/html; charset=utf-8"
+        self.send_response(200)
+        self.send_header("content-type", content_type)
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+class PlainTextPortalHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        body = b"Portal LFI accepts file:// URLs. Read /opt/tomcat/webapps/ROOT.war for Java handler analysis."
+        self.send_response(200)
+        self.send_header("content-type", "text/plain")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
 class WorkflowTest(unittest.TestCase):
     def test_manager_records_recon_and_web_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -172,6 +203,67 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(summary["accepted_flags"], ["flag{linked_web_route}"])
         linked_finding = next(f for f in findings if f.finding == "Followed scoped visible web links")
         self.assertIn("/flag", linked_finding.evidence["followed_urls"][0])
+
+    def test_web_solver_follows_script_mentioned_routes_for_flags(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ScriptRouteHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            target = f"http://127.0.0.1:{server.server_port}/"
+            with tempfile.TemporaryDirectory() as tmp:
+                notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+                notebook.add_challenge(
+                    Challenge(
+                        challenge_id="web-script-route",
+                        category=ChallengeCategory.WEB,
+                        target=target,
+                    )
+                )
+
+                summary = Manager(
+                    notebook,
+                    RunConfig(active_probe=True, allowed_hosts=("127.0.0.1",)),
+                ).run_challenge("web-script-route")
+                findings = notebook.findings_for("web-script-route")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{script_api_route}"])
+        script_finding = next(f for f in findings if f.finding == "Followed scoped script-mentioned web routes")
+        self.assertIn("/api/options", script_finding.evidence["followed_urls"][0])
+
+    def test_web_solver_records_plain_text_response_sample_for_chain_hints(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PlainTextPortalHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            target = f"http://127.0.0.1:{server.server_port}/portal"
+            with tempfile.TemporaryDirectory() as tmp:
+                notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+                notebook.add_challenge(
+                    Challenge(
+                        challenge_id="web-plain-chain",
+                        category=ChallengeCategory.WEB,
+                        target=target,
+                    )
+                )
+
+                Manager(
+                    notebook,
+                    RunConfig(active_probe=True, allowed_hosts=("127.0.0.1",)),
+                ).run_challenge("web-plain-chain")
+                findings = notebook.findings_for("web-plain-chain")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        web_finding = next(f for f in findings if f.finding == "Analyzed scoped HTTP response structure")
+        self.assertIn("LFI", web_finding.evidence["response_sample"])
+        self.assertIn("ROOT.war", web_finding.evidence["response_sample"])
+        self.assertIn("LFI", web_finding.evidence["chain_hints"])
+        self.assertIn("WAR", web_finding.evidence["chain_hints"])
 
     def test_web_solver_records_scoped_ffuf_route_discovery(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), FlagHandler)

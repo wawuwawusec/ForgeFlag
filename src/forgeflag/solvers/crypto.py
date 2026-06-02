@@ -75,6 +75,20 @@ class CryptoSolver:
                 tuple(str(flag) for flag in python_random_xor["flags"]),
             )
 
+        primitive_pattern = _primitive_misuse_pattern(text)
+        if primitive_pattern:
+            finding = Finding(
+                challenge_id=context.challenge.challenge_id,
+                solver=self.name,
+                finding="Identified crypto primitive misuse pattern",
+                evidence=primitive_pattern,
+                hypothesis=_primitive_hypothesis(primitive_pattern["pattern"]),
+                confidence=0.72,
+                next_action=_primitive_next_action(primitive_pattern["pattern"]),
+            )
+            context.notebook.add_finding(finding)
+            return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
         candidates = transform_candidates(text)
         flags = extract_flags("\n".join(candidate.value for candidate in candidates))
         if candidates:
@@ -141,6 +155,56 @@ def _text_inputs(context: SolverContext) -> list[str]:
             continue
         values.append(raw.decode("utf-8", errors="ignore"))
     return [value for value in values if value.strip()]
+
+
+def _primitive_misuse_pattern(text: str) -> dict[str, object] | None:
+    lowered = text.lower()
+    if ("mode_ctr" in lowered or "mode ctr" in lowered or "ctr" in lowered) and "nonce" in lowered:
+        return {
+            "pattern": "aes_ctr_nonce_reuse",
+            "evidence_terms": _matched_terms(lowered, ("AES", "CTR", "nonce", "keystream", "xor", "crib")),
+            "source_lines": _matching_lines(text, ("ctr", "nonce", "keystream", "xor", "crib")),
+        }
+    if "poly1305" in lowered and ("one-time" in lowered or "otm" in lowered) and (
+        "reuse" in lowered or "reused" in lowered or "algebra" in lowered
+    ):
+        return {
+            "pattern": "poly1305_one_time_key_reuse",
+            "evidence_terms": _matched_terms(lowered, ("Poly1305", "one-time", "reuse", "algebra", "tag")),
+            "source_lines": _matching_lines(text, ("poly1305", "one-time", "reuse", "algebra", "tag")),
+        }
+    return None
+
+
+def _matched_terms(lowered: str, terms: tuple[str, ...]) -> list[str]:
+    return [term for term in terms if term.lower() in lowered]
+
+
+def _matching_lines(text: str, terms: tuple[str, ...], limit: int = 8) -> list[str]:
+    lowered_terms = tuple(term.lower() for term in terms)
+    lines: list[str] = []
+    for line in text.splitlines():
+        if any(term in line.lower() for term in lowered_terms):
+            lines.append(line.strip()[:220])
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _primitive_hypothesis(pattern: object) -> str:
+    if pattern == "aes_ctr_nonce_reuse":
+        return "The text indicates AES CTR was used with a repeated nonce, which can reuse the stream-cipher keystream."
+    if pattern == "poly1305_one_time_key_reuse":
+        return "The text indicates a Poly1305 one-time key was reused, so the solve path is algebraic MAC recovery."
+    return "The challenge text contains a known crypto misuse pattern."
+
+
+def _primitive_next_action(pattern: object) -> str:
+    if pattern == "aes_ctr_nonce_reuse":
+        return "Collect ciphertexts, nonce, and known plaintext cribs; XOR ciphertexts to recover keystream bytes and replay the derivation."
+    if pattern == "poly1305_one_time_key_reuse":
+        return "Extract message/tag pairs, model the reused one-time key equations, then solve with Sage or a bounded Python algebra script."
+    return "Extract parameters and generate a reproducible solve script for the detected primitive."
 
 
 def _transform_hypothesis(flags: tuple[str, ...]) -> str:

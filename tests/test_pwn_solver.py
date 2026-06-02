@@ -100,6 +100,32 @@ class PwnSolverTest(unittest.TestCase):
         self.assertIn("flag{pwn_tcp_service}", finding.evidence["transcript"])
         self.assertTrue(any(observation.kind == "tool_summary" for observation in observations))
 
+    def test_pwn_solver_identifies_format_string_source_sink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "vuln.c"
+            source.write_text(
+                "#include <stdio.h>\n"
+                "int main(void) { char name[128]; fgets(name, sizeof(name), stdin); printf(name); }\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            challenge = Challenge(
+                challenge_id="pwn-format-source",
+                category=ChallengeCategory.PWN,
+                attachment_paths=(str(source),),
+            )
+            notebook.add_challenge(challenge)
+
+            result = PwnSolver().solve(SolverContext(challenge=challenge, notebook=notebook, scope=ScopePolicy()))
+            finding = notebook.findings_for("pwn-format-source")[0]
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(finding.finding, "Identified pwn source vulnerability pattern")
+        self.assertEqual(finding.evidence["pattern"], "format string")
+        self.assertIn("printf", finding.evidence["dangerous_calls"])
+        self.assertIn("pwntools", finding.next_action)
+
 
 if __name__ == "__main__":
     unittest.main()
