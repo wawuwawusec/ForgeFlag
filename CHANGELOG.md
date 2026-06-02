@@ -52,3 +52,4 @@
 - Added OrbStack/Docker tool fallback via `scripts/forgeflag-control docker-build`, `.forgeflag/docker.env`, and Docker-backed wrapper execution for missing host tools.
 - Added Docker smoke verification for container-backed wrappers, including path rewriting for mounted artifacts and `--key=/path` arguments.
 - Improved the Web UI Tools tab with host/Docker/missing wrapper counts and the Docker build/smoke commands needed to install and verify the tool image.
+- Grouped the Web UI challenge list and Tools tab into collapsible category/source sections so long challenge and tool inventories do not render as one flat wall of entries.

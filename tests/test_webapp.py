@@ -94,6 +94,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn('id="categoryFilters"', html)
         self.assertIn("分类工作台", html)
         self.assertIn("categoryCounts", html)
+        self.assertIn("function renderChallengeGroups", html)
+        self.assertIn("category-group", html)
         self.assertIn('data-tab="catalog"', html)
         self.assertIn('data-tab="artifacts"', html)
 
@@ -109,6 +111,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("推荐 CTF 工具目录", html)
         self.assertIn("Docker install", html)
         self.assertIn("host/docker", html)
+        self.assertIn("function renderToolGroups", html)
+        self.assertIn("tool-group", html)
         self.assertIn("查看原始 JSON", html)
 
     def test_project_catalog_endpoint_lists_recommended_projects(self) -> None:

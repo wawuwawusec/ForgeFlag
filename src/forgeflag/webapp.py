@@ -367,6 +367,13 @@ INDEX_HTML = r"""<!doctype html>
     .list { display: grid; gap: 8px; margin-top: 12px; }
     .item { border: 1px solid var(--line); background: white; border-radius: 6px; padding: 10px; cursor: pointer; }
     .item.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+    .category-group, .tool-group { border: 1px solid var(--line); border-radius: 6px; background: white; overflow: hidden; }
+    .category-group summary, .tool-group summary { list-style: none; cursor: pointer; padding: 10px 12px; display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+    .category-group summary::-webkit-details-marker, .tool-group summary::-webkit-details-marker { display: none; }
+    .category-group summary::before, .tool-group summary::before { content: "›"; color: var(--muted); font-size: 16px; transition: transform .15s ease; }
+    .category-group[open] summary::before, .tool-group[open] summary::before { transform: rotate(90deg); }
+    .category-items, .tool-items { display: grid; gap: 8px; padding: 0 10px 10px; }
+    .group-count { color: var(--muted); font-size: 12px; margin-left: auto; }
     .meta { color: var(--muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
     .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
     .tabs button { background: white; color: var(--ink); border-color: var(--line); border-bottom: 0; border-radius: 6px 6px 0 0; }
@@ -601,13 +608,37 @@ INDEX_HTML = r"""<!doctype html>
       const list = $("challengeList");
       list.innerHTML = "";
       const visible = state.challenges.filter(ch => state.activeCategory === "all" || ch.category === state.activeCategory);
-      visible.forEach(ch => {
-        const item = document.createElement("div");
-        item.className = "item" + (state.selected === ch.challenge_id ? " active" : "");
-        item.innerHTML = `<strong>${ch.challenge_id}</strong><div class="meta">${ch.category} ${ch.target || ""}</div><div class="meta">${(ch.attachment_paths||[]).join(", ")}</div>`;
-        item.onclick = () => { state.selected = ch.challenge_id; refresh(); loadTab(document.querySelector(".tabs button.active").dataset.tab); };
-        list.appendChild(item);
+      if (!visible.length) {
+        list.innerHTML = `<div class="empty-state">当前分类暂无题目。</div>`;
+        return;
+      }
+      list.innerHTML = renderChallengeGroups(visible);
+      list.querySelectorAll("[data-challenge-id]").forEach(item => {
+        item.onclick = () => {
+          state.selected = item.dataset.challengeId;
+          renderChallengeList();
+          loadTab(document.querySelector(".tabs button.active").dataset.tab).catch(e => show({error:e.message}));
+        };
       });
+    }
+    function renderChallengeGroups(challenges) {
+      const groups = groupRows(challenges, ch => ch.category || "unknown");
+      return groupOrder(groups, categories).map(category => {
+        const rows = groups[category] || [];
+        const selectedInGroup = rows.some(ch => ch.challenge_id === state.selected);
+        const shouldOpen = state.activeCategory !== "all" || selectedInGroup;
+        return `<details class="category-group" ${shouldOpen ? "open" : ""}>
+          <summary><strong>${escapeHtml(categoryLabels[category] || category)}</strong><span class="group-count">${rows.length}</span></summary>
+          <div class="category-items">
+            ${rows.map(ch => `
+              <div class="item${state.selected === ch.challenge_id ? " active" : ""}" data-challenge-id="${escapeHtml(ch.challenge_id)}">
+                <strong>${escapeHtml(ch.challenge_id)}</strong>
+                <div class="meta">${escapeHtml(ch.target || ch.title || "无目标")}</div>
+                <div class="meta">${escapeHtml((ch.attachment_paths || []).join(", "))}</div>
+              </div>`).join("")}
+          </div>
+        </details>`;
+      }).join("");
     }
     function renderData(tab, data) {
       if (tab === "summary") return renderSummary(data);
@@ -743,6 +774,7 @@ INDEX_HTML = r"""<!doctype html>
               <div class="card-title">
                 <h3>工具总览</h3>
                 <div class="meta">${escapeHtml(counts.available_wrappers ?? 0)} / ${escapeHtml(counts.wrappers ?? wrappers.length)} wrappers available · ${escapeHtml(counts.catalog ?? catalog.length)} catalog entries</div>
+                <div class="meta">推荐 CTF 工具目录已按分类折叠，展开分组查看明细。</div>
               </div>
               <span class="badge muted">host/docker</span>
             </div>
@@ -763,8 +795,7 @@ INDEX_HTML = r"""<!doctype html>
               <div class="meta">Active probes are scoped and opt-in: ${escapeHtml(smoke.active_network_command || "scripts/forgeflag-tool-smoke --include-active-network")}</div>
             </div>
           </div>
-          ${renderToolList("可直接调用的 Wrapper", wrappers, "tool")}
-          ${renderToolList("推荐 CTF 工具目录", catalog, "catalog")}
+          ${renderToolGroups(wrappers, catalog)}
           ${rawJson(data)}`;
       }
       const rows = asList(data);
@@ -795,6 +826,39 @@ INDEX_HTML = r"""<!doctype html>
             </div>`;
           }).join("")}
         </div>`;
+    }
+    function renderToolGroups(wrappers, catalog) {
+      const wrapperGroups = [
+        ["Host wrappers", wrappers.filter(row => row.source === "host"), "本机可直接调用"],
+        ["Docker wrappers", wrappers.filter(row => row.source === "docker"), "通过容器自动 fallback"],
+        ["Missing wrappers", wrappers.filter(row => row.source === "missing"), "当前不可调用"]
+      ];
+      const wrapperHtml = wrapperGroups.map(([title, rows, note]) => renderToolGroup(title, rows, "tool", note, rows.length > 0 && title === "Missing wrappers")).join("");
+      const catalogGroups = groupRows(catalog, row => (row.categories && row.categories[0]) || row.category || "other");
+      const catalogHtml = groupOrder(catalogGroups, categories).map(category => {
+        const rows = catalogGroups[category] || [];
+        return renderToolGroup(`Catalog: ${categoryLabels[category] || category}`, rows, "catalog", "推荐工具目录", false);
+      }).join("");
+      return wrapperHtml + catalogHtml;
+    }
+    function renderToolGroup(title, rows, kind, note, open) {
+      return `<details class="tool-group" ${open ? "open" : ""}>
+        <summary><strong>${escapeHtml(title)}</strong><span class="group-count">${rows.length} entries · ${escapeHtml(note || "")}</span></summary>
+        <div class="tool-items">${rows.length ? renderToolList(title, rows, kind) : `<div class="empty-state">暂无条目。</div>`}</div>
+      </details>`;
+    }
+    function groupRows(rows, keyFn) {
+      return rows.reduce((groups, row) => {
+        const key = keyFn(row);
+        groups[key] = groups[key] || [];
+        groups[key].push(row);
+        return groups;
+      }, {});
+    }
+    function groupOrder(groups, preferred) {
+      const known = preferred.filter(key => groups[key]);
+      const rest = Object.keys(groups).filter(key => !preferred.includes(key)).sort();
+      return [...known, ...rest];
     }
     async function saveChallenge() {
       status("saving...");
