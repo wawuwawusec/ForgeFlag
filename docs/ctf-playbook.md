@@ -9,6 +9,142 @@ This note summarizes public CTF challenge patterns that ForgeFlag should keep te
 - HackTheBox Cyber Apocalypse official repositories provide a modern multi-category taxonomy: crypto weaknesses, forensic log/traffic/malware analysis, misc scripting/sandbox tasks, pwn bug classes, reverse strings/packers/file formats, and web API/injection patterns.
 - CTFtime task pages and writeup indexes are useful for checking whether a pattern is common across events rather than tied to one platform.
 - Root-Me writeups and code-snippet series are useful for web/security bug classes such as SQL-like injection, SSRF/header behavior, integer overflow, stack overflow, and login bypasses.
+- HackTricks provides practical triage workflows for crypto, forensics, stego, and many web exploitation classes.
+- CTF Support groups Web CTF techniques into reconnaissance, injections, logic/access flaws, client-side attacks, and file/inclusion vulnerabilities.
+- CTF Base and Cyber Writeups are useful searchable indexes for seeing how often a technique appears across events and platforms.
+- CryptoHack is useful for mapping crypto challenges from encoding/XOR basics toward AES, RSA, Diffie-Hellman, ECC, hashes, lattices, and crypto-on-the-web.
+- pwn.college and ir0nstone notes are useful for pwn progression: shellcoding, memory corruption, ret2win, padding discovery, endian issues, and pwntools-based exploits.
+
+## Community Knowledge Sources
+
+Use these sources as research input for future solver work. Do not copy full writeups into ForgeFlag; extract stable patterns, commands, decision points, and small synthetic fixtures.
+
+| Source | Best Use | Notes |
+| --- | --- | --- |
+| CTFtime task/writeup pages | Cross-event pattern validation | Good for confirming whether a technique is common across many CTFs. |
+| picoCTF Solutions / picoCTF writeup indexes | Beginner and medium category coverage | Strong source for encoding, metadata, file, pcap, simple web, reverse, and binary warmups. |
+| HackTheBox Cyber Apocalypse official writeups | Modern multi-category challenge taxonomy | Useful for realistic web/API, malware/traffic forensics, heap/pwn, reverse, and misc scripting examples. |
+| Root-Me Blog / Root-Me challenge ecosystem | Web and applied vulnerability classes | Useful for injection, auth, SSRF/header, login bypass, and service-level writeups. |
+| HackTricks | Checklist-style methodology | Useful for building first-pass solver decision trees. |
+| CTF Support | Web technique taxonomy | Good for mapping WebSolver output into bug-class hints. |
+| CryptoHack | Crypto learning path | Useful for deciding when to escalate from transforms to XOR/AES/RSA/DH/ECC/lattice tooling. |
+| pwn.college | Binary exploitation curriculum | Useful for pwn solver milestones such as crash reproduction, shellcoding, and memory corruption. |
+| ir0nstone notes | Practical pwn walkthroughs | Useful for ret2win/ROP/pwntools workflow details. |
+| CTF Base / Cyber Writeups | Searchable writeup libraries | Useful as a corpus source for future MCP/search-backed recommendation features. |
+| Reddit r/securityCTF / r/hackthebox / r/CTFlearn | Community learning patterns | Useful for meta-advice: read writeups after solving, compare approaches, and practice by category. |
+
+## Method Cards
+
+These cards are the distilled "what to try next" logic ForgeFlag should gradually surface in the Web UI and LLM prompts.
+
+### Universal Triage
+
+- Preserve the original files and record hashes before transformation.
+- Identify category, artifact types, network scope, flag format, provided source code, and expected interaction mode.
+- Run cheap evidence collection first: `file`, `strings`, metadata, protocol summary, HTML summary, challenge text transforms.
+- Prefer hypotheses with a reproduction path: exact command, stream ID, route, attachment, decoded source, or solver script.
+- Stop automatic escalation at safety boundaries: network probing, password cracking, archive extraction, and exploit execution require explicit operator intent.
+
+### Web Method Card
+
+- Start with response capture: status, headers, title, visible links, forms, scripts, cookies, and redirects.
+- Check obvious routes: `/robots.txt`, `/sitemap.xml`, `/admin`, `/login`, `/api`, `/flag`, static JS bundles, source maps.
+- Classify bug class before payloads: SQL/NoSQL injection, command/code injection, SSTI, path traversal/LFI/RFI, file upload, IDOR, auth logic, SSRF, XXE, GraphQL, JWT/session, XSS/prototype pollution.
+- If source code is provided, inspect routes, middleware, template rendering, deserialization, upload paths, and environment variable reads.
+- If an API returns option lists or commands, treat hidden command discovery as a high-priority branch.
+
+ForgeFlag next additions:
+
+- Record response headers and cookies in WebSolver evidence.
+- Add robots/source-map/static-JS discovery behind active-probe scope.
+- Add bug-class hint extraction from forms, route names, technologies, and source attachments.
+
+### Crypto Method Card
+
+- Decide whether the input is encoding, encryption, hash, signature/MAC, oracle, or math problem.
+- Peel reversible layers safely: Base encodings, hex, URL/HTML, compression markers, binary/octal/decimal ASCII, ROT/Caesar, Morse, and common separators.
+- For XOR, check known plaintext from flag format, repeated-key clues, equal-length ciphertexts, and nonce/keystream reuse.
+- For AES/stream modes, collect IV/nonce/counter and look for CTR reuse, CBC padding oracles, ECB block repetition, and GCM nonce misuse.
+- For RSA, extract all integers and test prime `n`, known factors, shared factors, small exponent, bad padding, broadcast, partial key leakage, and Coppersmith-style hints.
+- For hashes, fingerprint first, then decide whether lookup or bounded cracking is justified.
+
+ForgeFlag next additions:
+
+- Add Caesar all-rotation, Morse, octal/decimal ASCII, and simple XOR cribbing.
+- Emit crypto primitive hints even when no flag is decoded.
+- Generate a reproducible Python/Sage solve workspace for RSA parameter cases.
+
+### Forensics And Stego Method Card
+
+- Identify the real container first; extensions lie often in CTFs.
+- Run file, strings, metadata, archive listing, and magic-byte checks before extraction.
+- For images, inspect PNG chunks/IHDR/CRC/trailing data, JPEG comments/APP markers, palettes, alpha channel, bit planes, dimensions, and visual anomalies.
+- For archives and documents, inspect comments, embedded files, relationship graphs, encryption state, macros, object streams, and suspicious filenames.
+- For disk/memory/log cases, build a timeline and search for deleted files, credentials, shell history, process/network artifacts, and malware staging.
+- Treat stego as forensics first: metadata, appended data, embedded files, then content-level extraction such as LSB/spectrogram/DTMF/zero-width text.
+
+ForgeFlag next additions:
+
+- Add magic-extension mismatch evidence.
+- Add safe archive listing for nested archives and comments.
+- Add PNG/JPEG preview generation and a stego checklist in Findings.
+
+### Traffic Method Card
+
+- Start with capture type, packet counts, protocol hierarchy, endpoints, conversations, and time range.
+- Search for direct flag markers and then protocol-specific carriers: DNS queries/TXT, HTTP requests/objects, TCP streams, SMTP/FTP payloads, TLS SNI/certs, ICMP payloads, and unusual ports.
+- For DNS exfiltration, group by base domain, preserve label order, try Base32/Base64/hex on labels, and reconstruct split payloads.
+- For HTTP, extract URLs, hosts, cookies, auth headers, uploaded/downloaded objects, forms, and compressed/encoded bodies.
+- For encrypted or custom protocols, look for keys in attachments, reused IV/nonces, predictable headers, and cleartext control channels.
+
+ForgeFlag next additions:
+
+- Reconstruct DNS label payloads across multiple packets.
+- Export HTTP objects into managed artifacts.
+- Add stream-follow summaries with stream IDs and decoded candidates.
+
+### Reverse Method Card
+
+- Start with `file`, `strings`, imports, symbols, section names, packer indicators, architecture, and endianness.
+- If strings expose a candidate, preserve it as the shortest path; otherwise identify validation functions, input reads, compare loops, and decode routines.
+- Use Ghidra/IDA/r2 for decompilation and control-flow pivots; rename variables and functions as constraints become clear.
+- Watch for encoded strings, little-endian constants, table lookups, XOR loops, custom VMs, anti-debug checks, and packers such as UPX.
+- Convert recovered checks into a small solver script rather than hand-solving inside the UI.
+
+ForgeFlag next additions:
+
+- Add packer and architecture hints.
+- Add encoded-string transform passes over `strings` output.
+- Add a reverse solve-script workspace for constraint recovery.
+
+### Pwn Method Card
+
+- Start with `file`, `checksec`, dangerous functions, strings, imports, symbols, and expected I/O.
+- Reproduce locally before exploit generation; capture crash input, offset, registers, and protections.
+- Classify the primitive: ret2win, stack overflow, off-by-one, format string, integer overflow, ret2libc, ret2csu, shellcode, UAF, tcache poisoning, partial overwrite, or sandbox escape.
+- For stack bugs, find offset, target address, endianness, calling convention, stack alignment, and required arguments.
+- For format strings, identify stack offset, leak target, write target, and whether GOT/return address writes are possible.
+- Generate pwntools scripts only after evidence identifies the primitive and target.
+
+ForgeFlag next additions:
+
+- Add crash reproduction harness and cyclic offset helper.
+- Add ret2win sample detection from symbol names.
+- Add pwntools workspace generation with checksec-derived comments.
+
+### Misc / Programming Method Card
+
+- Route misc tasks early: encoding, archive, image/stego, scripting, game/pathfinding, sandbox, OSINT, esolang/polyglot, QR/barcode, audio, or AI/prompt.
+- Preserve examples and derive a deterministic solver for input-output tasks.
+- For pathfinding/game puzzles, parse the map, identify graph state, and choose BFS/Dijkstra/A* or dynamic programming.
+- For sandbox tasks, inspect blacklists, exposed builtins/imports, serialization boundaries, object traversal, and exception leakage.
+- For audio, inspect waveform, spectrogram, DTMF tones, Morse, sample LSB, and metadata.
+
+ForgeFlag next additions:
+
+- Add QR/barcode and audio metadata hooks.
+- Add programming-puzzle scaffold generation.
+- Add sandbox-pattern hints for Python eval/pickle/jail tasks.
 
 ## Category Playbooks
 

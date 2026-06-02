@@ -106,6 +106,7 @@ Implemented so far:
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category
+  - Includes community source notes and method cards for Web, Crypto, Forensics/Stego, Traffic, Reverse, Pwn, and Misc
 - One-command lifecycle script:
   - `scripts/forgeflag-control start/status/smoke/stop`
   - Web UI start uses `.venv/bin/python -m forgeflag.cli` and stores the managed Python process PID in `.forgeflag/web.pid`

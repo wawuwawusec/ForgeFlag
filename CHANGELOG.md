@@ -45,3 +45,4 @@
 - Reworked Web UI result tabs into solver-readable cards with status, flags, findings, observations, artifacts, replay steps, and collapsible raw JSON.
 - Added a Web-run CTF corpus smoke script across web, crypto, misc, forensics, traffic, reverse, and pwn, plus playbook notes distilled from public CTF writeups.
 - Fixed binary ASCII transform seed extraction when misc challenge metadata surrounds encoded attachment content.
+- Expanded the CTF playbook with community source notes and method cards for Web, Crypto, Forensics/Stego, Traffic, Reverse, Pwn, and Misc.

@@ -58,6 +58,8 @@ The current regression tests synthesize tiny fixtures from these patterns so the
 
 `scripts/forgeflag-corpus-smoke` now turns the same policy into a Web-run smoke corpus for web, crypto, misc, forensics, traffic, reverse, and pwn. It generates small local fixtures, submits them through the Web API, runs each challenge, and fails if the expected flag is not accepted.
 
+`docs/ctf-playbook.md` records the broader community-derived method library. It summarizes sources such as CTFtime, picoCTF indexes, HackTheBox official writeups, Root-Me writeups, HackTricks, CTF Support, CryptoHack, pwn.college, ir0nstone, CTF Base, and Cyber Writeups, then distills them into category-specific method cards.
+
 ## Heavyweight Tool Policy
 
 SageMath, Volatility, and Ghidra/headless are intentionally treated as Docker profile tools instead of local venv dependencies:
