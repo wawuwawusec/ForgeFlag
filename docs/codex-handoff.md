@@ -89,6 +89,7 @@ Implemented so far:
   - `/api/project-catalog`
   - Web UI Catalog tab
   - catalog entries are integration candidates, not implicit bulk installs
+  - Web UI Tools tab combines local wrapper availability with the recommended CTF tool catalog
 - Optional MCP server:
   - `forgeflag-mcp`
   - streamable HTTP endpoint can run at `http://127.0.0.1:8000/mcp`
@@ -141,7 +142,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 116 tests OK
+- Tests passed: 118 tests OK
 
 Useful commands:
 

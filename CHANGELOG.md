@@ -46,3 +46,4 @@
 - Added a Web-run CTF corpus smoke script across web, crypto, misc, forensics, traffic, reverse, and pwn, plus playbook notes distilled from public CTF writeups.
 - Fixed binary ASCII transform seed extraction when misc challenge metadata surrounds encoded attachment content.
 - Expanded the CTF playbook with community source notes and method cards for Web, Crypto, Forensics/Stego, Traffic, Reverse, Pwn, and Misc.
+- Expanded the curated CTF tool catalog to 90+ entries and changed the Web UI Tools tab to show both runnable wrappers and recommended install/integration candidates.

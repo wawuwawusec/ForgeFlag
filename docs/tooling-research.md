@@ -9,7 +9,7 @@ forgeflag catalog
 forgeflag catalog --category traffic
 ```
 
-The same data is available from the Web UI Catalog tab and `/api/project-catalog`.
+The same data is available from the Web UI Catalog tab and `/api/project-catalog`. The Web UI Tools tab also combines local executable wrappers with the recommended catalog so operators can see both "what ForgeFlag can run now" and "what should be installed or integrated next".
 
 ## Selection Sources
 
@@ -37,12 +37,13 @@ GitHub API star queries can be rate-limited in unauthenticated local runs, so th
 
 ## Current Catalog Focus
 
-- Pwn/reverse: pwntools, pwndbg, GEF, ROPgadget, Ropper, Ghidra, radare2, Rizin, angr.
-- Crypto/misc: CyberChef, RsaCtfTool, Z3, SageMath, hashcat, John the Ripper. ForgeFlag fingerprints common hashes and exposes bounded dictionary wrappers, but does not automatically start cracking.
-- Forensics/misc: Binwalk, ExifTool, Volatility 3, Didier Stevens Suite. ForgeFlag now does lightweight PNG/JPEG stego hint triage before heavier carving or channel tools.
+- Web: curl, HTTPie, Burp Suite Community, ffuf, feroxbuster, gobuster, dirsearch, httpx, katana, Arjun, jwt_tool, tplmap, commix, sqlmap, nuclei.
+- Pwn/reverse: pwntools, pwndbg, GEF, GDB, ROPgadget, Ropper, one_gadget, libc-database, seccomp-tools, pwninit, patchelf, Ghidra, IDA Free, Binary Ninja, Cutter, radare2, Rizin, angr, FLOSS, capa, JADX, apktool, Capstone, Unicorn, QEMU user.
+- Crypto/misc: CyberChef, Ciphey, python-codext, PyCryptodome, gmpy2, SymPy, RsaCtfTool, Z3, SageMath, fpylll, YAFU, xortool, hashID, hashcat, John the Ripper. ForgeFlag fingerprints common hashes and exposes bounded dictionary wrappers, but does not automatically start cracking.
+- Forensics/misc: Binwalk, ExifTool, Volatility 3, Didier Stevens Suite, Sleuth Kit, Autopsy, TestDisk/PhotoRec, foremost, bulk_extractor, pngcheck, zsteg, steghide, stegseek, oletools, qpdf, pdf-parser.py, zbarimg, ImageMagick, ffmpeg, SoX, Sonic Visualiser, Tesseract OCR.
+- Traffic: Wireshark/tshark, Scapy, Zeek, tcpdump, ngrep, NetworkMiner.
 - Archive/puzzle triage: Python stdlib archive parsers first, then optional 7z/binwalk/carving wrappers when structure evidence justifies extraction.
-- Traffic: Wireshark/tshark, Scapy.
-- Web/infra: sqlmap, ffuf, nuclei, CTFd.
+- Infra/search/catalog: CTFd, nmap, jq, ripgrep, GitTools, CTF Base-style searchable writeup libraries.
 - Reference collection: zardus/ctf-tools.
 
 ## External Corpus-Inspired Regression Policy

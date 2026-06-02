@@ -106,6 +106,7 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("function renderSummary", html)
         self.assertIn("function renderFindings", html)
         self.assertIn("function renderReport", html)
+        self.assertIn("推荐 CTF 工具目录", html)
         self.assertIn("查看原始 JSON", html)
 
     def test_project_catalog_endpoint_lists_recommended_projects(self) -> None:
@@ -115,6 +116,17 @@ class WebAppApiTest(unittest.TestCase):
 
         self.assertIn("pwntools", {row["name"] for row in payload})
         self.assertIn("CyberChef", {row["name"] for row in payload})
+
+    def test_tools_endpoint_groups_wrappers_and_recommended_catalog(self) -> None:
+        handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
+
+        payload = handler_cls.handle_tools()
+
+        self.assertIn("wrappers", payload)
+        self.assertIn("catalog", payload)
+        self.assertIn("counts", payload)
+        self.assertIn("file", {row["name"] for row in payload["wrappers"]})
+        self.assertIn("Burp Suite Community", {row["name"] for row in payload["catalog"]})
 
     def test_run_button_loads_findings_after_summary(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))

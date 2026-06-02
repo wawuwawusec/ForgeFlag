@@ -48,7 +48,7 @@ def create_handler(db_path: str | Path):
                 self._send_json(self.handle_list_challenges())
                 return
             if path == "/api/tools":
-                self._send_json(ToolRunner(ScopePolicy()).inventory())
+                self._send_json(self.handle_tools())
                 return
             if path == "/api/project-catalog":
                 self._send_json(self.handle_project_catalog())
@@ -101,6 +101,20 @@ def create_handler(db_path: str | Path):
                 }
                 for challenge in cls.notebook.list_challenges()
             ]
+
+        @classmethod
+        def handle_tools(cls) -> dict[str, Any]:
+            wrappers = ToolRunner(ScopePolicy()).inventory()
+            catalog = recommended_projects()
+            return {
+                "wrappers": wrappers,
+                "catalog": catalog,
+                "counts": {
+                    "wrappers": len(wrappers),
+                    "available_wrappers": sum(1 for row in wrappers if row.get("available")),
+                    "catalog": len(catalog),
+                },
+            }
 
         @classmethod
         def handle_create_challenge(cls, payload: dict[str, Any]) -> dict[str, Any]:
@@ -705,8 +719,30 @@ INDEX_HTML = r"""<!doctype html>
         </div>`).join("");
     }
     function renderToolRows(data, title, kind) {
+      if (kind === "tool" && data && !Array.isArray(data) && (data.wrappers || data.catalog)) {
+        const wrappers = asList(data.wrappers);
+        const catalog = asList(data.catalog);
+        const counts = data.counts || {};
+        return `
+          <div class="result-card">
+            <div class="card-head">
+              <div class="card-title">
+                <h3>工具总览</h3>
+                <div class="meta">${escapeHtml(counts.available_wrappers ?? 0)} / ${escapeHtml(counts.wrappers ?? wrappers.length)} wrappers available · ${escapeHtml(counts.catalog ?? catalog.length)} catalog entries</div>
+              </div>
+              <span class="badge muted">分层展示</span>
+            </div>
+          </div>
+          ${renderToolList("可直接调用的 Wrapper", wrappers, "tool")}
+          ${renderToolList("推荐 CTF 工具目录", catalog, "catalog")}
+          ${rawJson(data)}`;
+      }
       const rows = asList(data);
       if (!rows.length) return `<div class="empty-state">暂无${escapeHtml(title)}数据。</div>${rawJson(data)}`;
+      return renderToolList(title, rows, kind) + rawJson(data);
+    }
+    function renderToolList(title, rows, kind) {
+      if (!rows.length) return `<div class="empty-state">暂无${escapeHtml(title)}数据。</div>`;
       return `
         <div class="result-card">
           <div class="card-head"><div class="card-title"><h3>${escapeHtml(title)}</h3><div class="meta">${rows.length} entries</div></div></div>
@@ -714,14 +750,18 @@ INDEX_HTML = r"""<!doctype html>
             const name = row.name || row.tool || "entry";
             const badge = kind === "tool" ? (row.available ? "available" : "missing") : (row.integration || row.category || "catalog");
             const badgeClass = badge === "missing" ? "badge warn" : "badge muted";
+            const categories = row.categories ? row.categories.join(", ") : (row.category || "");
+            const description = row.description || row.purpose || row.notes || "";
+            const install = row.install_hint ? `<div class="meta">Install: ${escapeHtml(row.install_hint)}</div>` : "";
             return `<div class="kv">
-              <span>${escapeHtml(row.category || row.integration || "")}</span>
+              <span>${escapeHtml(categories || row.integration || "")}</span>
               <strong>${escapeHtml(name)}</strong>
-              <div class="meta">${escapeHtml(row.description || row.notes || "")}</div>
+              <div class="meta">${escapeHtml(description)}</div>
+              ${row.why ? `<div class="meta">${escapeHtml(row.why)}</div>` : ""}
+              ${install}
               <span class="${badgeClass}">${escapeHtml(badge)}</span>
             </div>`;
           }).join("")}
-          ${rawJson(data)}
         </div>`;
     }
     async function saveChallenge() {
