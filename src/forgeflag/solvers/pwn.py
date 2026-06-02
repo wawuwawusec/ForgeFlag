@@ -106,19 +106,22 @@ class PwnSolver:
 
             flags = _tool_result_flags(labeled_results)
             flag_candidates.extend(flags)
+            workflow_evidence = _binary_workflow_evidence(labeled_results)
+            evidence = {
+                "artifact": resolved,
+                "tool_statuses": {label: result.status for label, result in labeled_results},
+                "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
+                "flag_candidates": list(flags),
+            }
+            evidence.update(workflow_evidence)
             finding = Finding(
                 challenge_id=context.challenge.challenge_id,
                 solver=self.name,
                 finding="Analyzed pwn binary artifact",
-                evidence={
-                    "artifact": resolved,
-                    "tool_statuses": {label: result.status for label, result in labeled_results},
-                    "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
-                    "flag_candidates": list(flags),
-                },
-                hypothesis=_local_hypothesis(flags),
+                evidence=evidence,
+                hypothesis=_local_hypothesis(flags, workflow_evidence),
                 confidence=0.78 if flags else 0.6,
-                next_action=_local_next_action(flags),
+                next_action=_local_next_action(flags, workflow_evidence),
             )
             context.notebook.add_finding(finding)
             findings.append(finding)
@@ -211,6 +214,27 @@ def _tool_sample(result) -> dict[str, str]:
     return {"stdout": stdout[:500], "stderr": stderr[:500]}
 
 
+def _binary_workflow_evidence(labeled_results) -> dict[str, object]:
+    haystack = "\n".join(
+        str(result.raw.get("stdout", "")) + "\n" + str(result.raw.get("stderr", ""))
+        for _, result in labeled_results
+    )
+    symbols = _ret2win_symbol_mentions(haystack)
+    unsafe_calls = _dangerous_symbol_mentions(haystack)
+    if not symbols or not unsafe_calls:
+        return {}
+    primary_symbol = symbols[0]
+    return {
+        "workflow_guess": "ret2win",
+        "workflow_evidence": {
+            "symbols": symbols,
+            "dangerous_calls": unsafe_calls,
+            "reason": "Binary strings/tool output contain a win-like function and unsafe input symbols.",
+        },
+        "exploit_plan": _ret2win_exploit_plan(primary_symbol),
+    }
+
+
 def _source_vulnerability_finding(context: SolverContext, resolved: str) -> Finding | None:
     path = Path(resolved)
     if path.suffix.lower() not in {".c", ".cc", ".cpp", ".h", ".hpp"}:
@@ -219,6 +243,34 @@ def _source_vulnerability_finding(context: SolverContext, resolved: str) -> Find
         source = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return None
+    ret2win_symbols = _ret2win_symbols(source)
+    unsafe_calls = _unsafe_input_calls(source)
+    if ret2win_symbols and unsafe_calls:
+        primary_symbol = ret2win_symbols[0]
+        return Finding(
+            challenge_id=context.challenge.challenge_id,
+            solver=PwnSolver.name,
+            finding="Identified pwn source vulnerability pattern",
+            evidence={
+                "artifact": resolved,
+                "pattern": "ret2win",
+                "dangerous_calls": unsafe_calls,
+                "symbols": ret2win_symbols,
+                "source_sample": "\n".join(
+                    _matching_source_lines(source, tuple(dict.fromkeys((*unsafe_calls, *ret2win_symbols))))
+                ),
+                "exploit_plan": _ret2win_exploit_plan(primary_symbol),
+            },
+            hypothesis=(
+                f"The source exposes a likely ret2win target ({primary_symbol}) and uses unsafe input "
+                "that can overwrite the saved return address."
+            ),
+            confidence=0.78,
+            next_action=(
+                f"Compile or use the provided binary, crash it with a cyclic pattern, compute the cyclic offset, "
+                f"then send padding plus the {primary_symbol} address with pwntools."
+            ),
+        )
     if not _has_format_string_sink(source):
         return None
     return Finding(
@@ -237,6 +289,59 @@ def _source_vulnerability_finding(context: SolverContext, resolved: str) -> Find
     )
 
 
+def _ret2win_symbols(source: str) -> list[str]:
+    symbols: list[str] = []
+    for symbol in _ret2win_symbol_candidates():
+        if re.search(rf"\b(?:void|int|char\s*\*|long|unsigned\s+long)\s+{re.escape(symbol)}\s*\(", source):
+            symbols.append(symbol)
+    return symbols
+
+
+def _ret2win_symbol_mentions(text: str) -> list[str]:
+    symbols: list[str] = []
+    for symbol in _ret2win_symbol_candidates():
+        if re.search(rf"\b{re.escape(symbol)}\b", text):
+            symbols.append(symbol)
+    return symbols
+
+
+def _ret2win_symbol_candidates() -> tuple[str, ...]:
+    return ("win", "ret2win", "print_flag", "get_flag", "give_shell", "shell", "secret")
+
+
+def _unsafe_input_calls(source: str) -> list[str]:
+    checks = (
+        ("gets", r"\bgets\s*\("),
+        ("scanf", r"\bscanf\s*\(\s*\"[^\"]*%s"),
+        ("strcpy", r"\bstrcpy\s*\("),
+        ("strcat", r"\bstrcat\s*\("),
+        ("read", r"\bread\s*\(\s*(?:0|STDIN_FILENO)\s*,"),
+    )
+    calls: list[str] = []
+    for name, pattern in checks:
+        if re.search(pattern, source):
+            calls.append(name)
+    return calls
+
+
+def _dangerous_symbol_mentions(text: str) -> list[str]:
+    names = ("gets", "scanf", "strcpy", "strcat", "read")
+    return [name for name in names if re.search(rf"\b{re.escape(name)}\b", text)]
+
+
+def _ret2win_exploit_plan(symbol: str) -> dict[str, object]:
+    return {
+        "workflow": "ret2win",
+        "crash_harness": (
+            "Run the binary locally or against the remote service with a pwntools script, send cyclic(512), "
+            "then inspect the crashing instruction pointer/corefile."
+        ),
+        "cyclic_offset": "Use cyclic_find(core.rip) or gdb/pwndbg pattern search to compute the exact offset.",
+        "payload_template": f"payload = b'A' * offset + p64(elf.symbols['{symbol}'])",
+        "tool_hints": ["pwntools", "cyclic", "gdb", "checksec", "ROPgadget"],
+    }
+
+
 def _has_format_string_sink(source: str) -> bool:
     return bool(re.search(r"\bprintf\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)", source))
 
@@ -252,15 +357,19 @@ def _matching_source_lines(source: str, terms: tuple[str, ...], limit: int = 8) 
     return lines
 
 
-def _local_hypothesis(flags: tuple[str, ...]) -> str:
+def _local_hypothesis(flags: tuple[str, ...], workflow_evidence: dict[str, object] | None = None) -> str:
     if flags:
         return "Local binary triage surfaced a flag-like token that should be verified."
+    if workflow_evidence and workflow_evidence.get("workflow_guess") == "ret2win":
+        return "Local binary triage found ret2win-like evidence: a win-style target and unsafe input symbols."
     return "Local pwn triage collected file type, strings, hardening, and gadget-tool availability."
 
 
-def _local_next_action(flags: tuple[str, ...]) -> str:
+def _local_next_action(flags: tuple[str, ...], workflow_evidence: dict[str, object] | None = None) -> str:
     if flags:
         return "Send candidates to Verifier and preserve local tool outputs as replay evidence."
+    if workflow_evidence and workflow_evidence.get("workflow_guess") == "ret2win":
+        return "Crash with a cyclic pattern, compute the offset, then send padding plus the win-style symbol address with pwntools."
     return "Use checksec results to choose exploit strategy, then generate a pwntools workspace."
 
 

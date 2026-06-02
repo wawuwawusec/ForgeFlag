@@ -24,6 +24,9 @@ class HardCorpusScriptTest(unittest.TestCase):
         self.assertIn("hard-traffic-http-stream-follow", {case["challenge_id"] for case in cases})
         self.assertIn("hard-traffic-http-object-export", {case["challenge_id"] for case in cases})
         self.assertIn("hard-traffic-smtp-stream-summary", {case["challenge_id"] for case in cases})
+        ret2win_cases = [case for case in cases if case["challenge_id"] == "hard-pwn-ret2win-source"]
+        self.assertEqual(len(ret2win_cases), 1)
+        self.assertIn("cyclic", ret2win_cases[0]["required_evidence"])
         self.assertTrue(all(case["required_evidence"] for case in cases))
         self.assertTrue(any(case["expected_flag"] is None for case in cases))
 

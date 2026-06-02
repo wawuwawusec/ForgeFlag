@@ -128,8 +128,6 @@ ForgeFlag next additions:
 
 ForgeFlag next additions:
 
-- Add crash reproduction harness and cyclic offset helper.
-- Add ret2win sample detection from symbol names.
 - Add pwntools workspace generation with checksec-derived comments.
 
 ### Misc / Programming Method Card
@@ -247,6 +245,8 @@ Common first moves:
 ForgeFlag coverage today:
 
 - Local pwn triage uses file/strings/checksec/ROPgadget/ropper and optional IDA MCP.
+- Source-level ret2win patterns now produce a crash harness, cyclic offset instruction, and pwntools payload template.
+- Binary triage can infer ret2win workflow hints when tool output exposes win-like symbols and unsafe input symbols.
 - The corpus smoke compiles a small pwn-style binary and verifies strings/checksec baseline behavior.
 
 ## Web Corpus Smoke

@@ -65,6 +65,7 @@ Required evidence is intentionally broader than a flag: cases can score classifi
 | `hard-forensics-mail-powershell` | forensics | suspicious mail with encoded PowerShell | mail and encoded command triage |
 | `hard-reverse-packed-away` | reverse | packer marker before decompilation | UPX/packed binary recognition |
 | `hard-pwn-format-string` | pwn | source-level `printf(user_input)` bug | format string and pwntools workflow |
+| `hard-pwn-ret2win-source` | pwn | win-like target plus unsafe stack input | ret2win, cyclic offset, and pwntools replay workflow |
 | `hard-misc-pickle-sandbox` | misc | `pickle.loads` blacklist sandbox | pickle sink and sandbox workflow |
 | `expert-web-java-reverse-chain` | web | LFI to WAR then Java static analysis | multi-stage WebSolver -> ReverseSolver plan |
 
@@ -77,7 +78,7 @@ scripts/forgeflag-control restart
 scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict
 ```
 
-Result: 12/12 cases reached full score through the Web API.
+Result: 13/13 cases reached full score through the Web API.
 
 | Area | Improvement Verified |
 | --- | --- |
@@ -90,6 +91,7 @@ Result: 12/12 cases reached full score through the Web API.
 | Crypto | Recognizes AES-CTR nonce/keystream reuse and Poly1305 one-time-key algebra workflows. |
 | Forensics | Re-runs transforms on decoded mail/PowerShell content and recovers nested base64 flags. |
 | Pwn | Recognizes source-level `printf(user_input)` format string sinks and suggests a pwntools path. |
+| Pwn | Recognizes ret2win source patterns and records crash harness, cyclic offset, and pwntools payload template guidance. |
 | Misc | Recognizes `pickle.loads` blacklist sandbox patterns and records a reproduction-oriented next step. |
 
 ## LLM Opportunities

@@ -43,6 +43,8 @@ Implemented so far:
 - Local pwn/reverse binary triage:
   - PwnSolver runs `file`, `strings`, `checksec`, `ROPgadget`, and `ropper` against registered attachments when IDA MCP is disabled
   - PwnSolver runs a bounded `tcp_interact` transcript against scoped service targets when no binary attachment is registered and active probing is enabled
+  - PwnSolver recognizes source-level ret2win patterns from win-like functions plus unsafe input calls and emits a crash harness, cyclic offset, and pwntools payload template
+  - PwnSolver infers ret2win workflow hints from binary tool output when win-like symbols and dangerous input symbols appear in `strings`/tool evidence
   - ReverseSolver runs `file`, `strings`, `ROPgadget`, and `ropper` against registered attachments when IDA MCP is disabled
   - missing gadget tools are recorded as structured `missing` tool results, not fatal errors
 - Harness loop controls.
@@ -127,8 +129,8 @@ Implemented so far:
 - Web-run hard/expert CTF corpus benchmark:
   - `scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeup patterns
-  - Covers hidden Web APIs, crypto primitive misuse, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, pickle sandbox, and Web-to-Java chains
-  - Current strict result: 12/12 full score through the Web API
+  - Covers hidden Web APIs, crypto primitive misuse, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, ret2win pwn, pickle sandbox, and Web-to-Java chains
+  - Current strict result: 13/13 full score through the Web API
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category

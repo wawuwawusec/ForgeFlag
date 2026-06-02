@@ -140,6 +140,14 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    ret2win_source = WORKDIR / "ret2win.c"
+    ret2win_source.write_text(
+        "#include <stdio.h>\n"
+        "void win(void) { puts(\"open the reward shell\"); }\n"
+        "int main(void) { char buf[64]; gets(buf); return 0; }\n",
+        encoding="utf-8",
+    )
+
     pickle = WORKDIR / "pickle-sandbox.py"
     pickle.write_text(
         "import pickle\nBLACKLIST = ['os', 'system', 'eval']\nblob = input('pickle> ')\npickle.loads(bytes.fromhex(blob))\n",
@@ -163,6 +171,7 @@ def build_fixtures() -> dict[str, Path]:
         "eml": eml,
         "reverse": reverse_bin,
         "pwn_source": pwn_source,
+        "ret2win_source": ret2win_source,
         "pickle": pickle,
         "java_reverse": java_reverse,
     }
@@ -300,6 +309,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["printf", "format string", "pwntools"],
             "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
             "improvement_hint": "PwnSolver should inspect source text and generate a format-string exploit workspace outline.",
+        },
+        {
+            "challenge_id": "hard-pwn-ret2win-source",
+            "category": "pwn",
+            "difficulty": "hard",
+            "title": "Ret2win crash workflow",
+            "description": "Pwn.college/ir0nstone ret2win style: unsafe stack input reaches a win-like function target, so the solver should produce a cyclic offset and pwntools replay route.",
+            "attachments": [fixtures["ret2win_source"]],
+            "active_probe": False,
+            "expected_flag": None,
+            "required_evidence": ["ret2win", "cyclic", "win", "pwntools"],
+            "source_url": "https://ir0nstone.gitbook.io/notes/types/stack/ret2win",
+            "improvement_hint": "PwnSolver should classify ret2win evidence and emit crash harness, cyclic offset, and payload template guidance.",
         },
         {
             "challenge_id": "hard-misc-pickle-sandbox",
