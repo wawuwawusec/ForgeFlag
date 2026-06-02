@@ -30,6 +30,7 @@ Implemented so far:
   - `ZhipuChatCompletionsProvider` uses `/chat/completions` at `https://open.bigmodel.cn/api/paas/v4`
   - `LLMSolver` writes scoped strategy guidance; it does not submit unverified flag candidates
   - `forgeflag.llm_prompts.category_playbook` injects category-specific CTF method cards into LLM prompts
+  - `forgeflag.knowledge` retrieves matching `docs/ctf-playbook.md` method cards and prior notebook write-up Markdown for LLM prompt grounding
   - structured Planner v2 JSON plans become `llm_solver_plan` observations and can insert suggested solvers into the remaining queue
   - Planner v2 accepts plain or markdown-fenced JSON and records `summary`, `hypotheses`, `suggested_solvers`, `next_actions`, `tool_hints`, `expected_evidence`, and `fallback_plan`
   - LLM provider/config failures are recorded as `LLMSolver` `config_error` findings and do not block deterministic solvers

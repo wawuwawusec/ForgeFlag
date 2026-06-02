@@ -454,6 +454,60 @@ class LLMSolverTest(unittest.TestCase):
         self.assertIn("tshark_flag_scan", provider.prompt)
         self.assertIn("suggested_solvers: TrafficSolver", provider.prompt)
 
+    def test_llm_solver_prompt_includes_retrieved_knowledge_from_prior_writeup(self) -> None:
+        class RecordingProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def __init__(self) -> None:
+                self.prompt = ""
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.prompt = prompt
+                return LLMResponse(content="Traffic planning text.", raw={"id": "fake-response"})
+
+        provider = RecordingProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="old-dns",
+                    category=ChallengeCategory.TRAFFIC,
+                    title="Old DNS exfil",
+                )
+            )
+            notebook.record_run(
+                "old-dns",
+                "flag_found",
+                {
+                    "replay_report": {
+                        "writeup": {
+                            "title": "Old DNS exfil",
+                            "category": "traffic",
+                            "markdown": "# Old DNS exfil\n\nReconstruct Base32 DNS labels from query order.",
+                        }
+                    }
+                },
+            )
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="new-dns",
+                    category=ChallengeCategory.TRAFFIC,
+                    description="PCAP with DNS query labels.",
+                )
+            )
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(provider)],
+            ).run_challenge("new-dns")
+
+        self.assertIn("retrieved_knowledge:", provider.prompt)
+        self.assertIn("Old DNS exfil", provider.prompt)
+        self.assertIn("Base32 DNS labels", provider.prompt)
+
     def test_llm_solver_prompt_uses_unknown_category_routing_playbook(self) -> None:
         class RecordingProvider:
             name = "fake"

@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
+from forgeflag.knowledge import format_knowledge_blocks, retrieved_knowledge_for
 from forgeflag.llm import LLMProvider
 from forgeflag.llm_prompts import category_playbook
 from forgeflag.solvers.base import SolverContext
@@ -103,6 +104,23 @@ def _instructions() -> str:
 def _prompt(context: SolverContext) -> str:
     challenge = context.challenge
     observations = "\n".join(f"- {observation.kind}: {observation.summary}" for observation in context.observations)
+    query = " ".join(
+        [
+            challenge.title or "",
+            challenge.description or "",
+            " ".join(challenge.tags),
+            " ".join(challenge.attachment_paths),
+            observations,
+        ]
+    )
+    knowledge = format_knowledge_blocks(
+        retrieved_knowledge_for(
+            challenge.category,
+            query,
+            notebook=context.notebook,
+            current_challenge_id=challenge.challenge_id,
+        )
+    )
     return "\n".join(
         [
             f"challenge_id: {challenge.challenge_id}",
@@ -113,6 +131,7 @@ def _prompt(context: SolverContext) -> str:
             f"tags: {', '.join(challenge.tags)}",
             f"attachments: {', '.join(challenge.attachment_paths)}",
             category_playbook(challenge.category),
+            knowledge,
             "shared_observations:",
             observations or "- none",
         ]
