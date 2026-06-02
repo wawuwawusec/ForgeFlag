@@ -92,7 +92,8 @@ class TrafficSolver:
             http_requests_output=str(dict(labeled_results)["tshark_http_requests"].raw.get("stdout", "")),
             decoded_payloads=decoded_http_artifacts,
         )
-        flags = extract_flags("\n".join([combined_output, *decoded_http_artifacts]))
+        decoded_dns_hints = [str(value) for value in dns_summary.get("decoded_query_hints", [])]
+        flags = extract_flags("\n".join([combined_output, *decoded_http_artifacts, *decoded_dns_hints]))
         flag_candidates.extend(flags)
 
         finding = Finding(

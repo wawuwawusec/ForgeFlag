@@ -11,6 +11,7 @@ def dns_summary_from_tshark(output: str, limit: int = 20) -> dict[str, object]:
     query_counts: Counter[str] = Counter()
     txt_answers: list[str] = []
     long_query_names: list[str] = []
+    decoded_query_hints: list[str] = []
     rcode_counts: Counter[str] = Counter()
 
     for line in output.splitlines():
@@ -23,6 +24,9 @@ def dns_summary_from_tshark(output: str, limit: int = 20) -> dict[str, object]:
             query_counts[query] += 1
             if _has_long_label(query) and query not in long_query_names:
                 long_query_names.append(query)
+            for hint in _decoded_query_hints(query):
+                if hint not in decoded_query_hints:
+                    decoded_query_hints.append(hint)
         if txt and txt not in txt_answers:
             txt_answers.append(txt)
         if rcode:
@@ -34,6 +38,7 @@ def dns_summary_from_tshark(output: str, limit: int = 20) -> dict[str, object]:
         ],
         "txt_answers": txt_answers[:limit],
         "long_query_names": long_query_names[:limit],
+        "decoded_query_hints": decoded_query_hints[:limit],
         "rcode_counts": dict(rcode_counts),
     }
 
@@ -111,6 +116,28 @@ def _split_fields(line: str, count: int) -> list[str]:
 
 def _has_long_label(query: str, threshold: int = 24) -> bool:
     return any(len(label) >= threshold for label in query.split("."))
+
+
+def _decoded_query_hints(query: str) -> list[str]:
+    hints: list[str] = []
+    for value in _query_payload_candidates(query):
+        for candidate in transform_candidates(value, max_depth=2, max_candidates=20):
+            for flag in extract_flags(candidate.value):
+                if flag not in hints:
+                    hints.append(flag)
+    return hints
+
+
+def _query_payload_candidates(query: str) -> list[str]:
+    labels = [label for label in query.rstrip(".").split(".") if label]
+    candidates: list[str] = []
+    for label in labels:
+        if len(label) >= 8 and label not in candidates:
+            candidates.append(label)
+    joined = "".join(label for label in labels if len(label) >= 4)
+    if len(joined) >= 8 and joined not in candidates:
+        candidates.append(joined)
+    return candidates
 
 
 def _streams_from_http_requests(output: str) -> set[str]:

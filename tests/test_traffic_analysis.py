@@ -24,6 +24,13 @@ class TrafficAnalysisTest(unittest.TestCase):
         self.assertEqual(summary["rcode_counts"]["3"], 1)
         self.assertEqual(summary["long_query_names"], ["averyverylonglabelusedforcovertchannel.example.com"])
 
+    def test_dns_summary_decodes_encoded_query_labels(self) -> None:
+        output = "42|MZWGCZ33MRXHGX3TOVRGI33NMFUW47I.exfil.example|||0"
+
+        summary = dns_summary_from_tshark(output)
+
+        self.assertIn("flag{dns_subdomain}", summary["decoded_query_hints"])
+
     def test_tcp_stream_shortlist_ranks_http_and_flag_streams(self) -> None:
         tcp_output = "\n".join(
             [

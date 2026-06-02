@@ -3,7 +3,10 @@ from __future__ import annotations
 import re
 
 
-FLAG_PATTERN = re.compile(r"(?i)(?:flag|ctf|f1ag)\{[^{}\s]{3,128}\}")
+FLAG_PATTERN = re.compile(
+    r"(?i)(?:^|(?<![A-Za-z0-9_])|(?<=\\n)|(?<=\\r))"
+    r"(?:[A-Za-z0-9_]{0,20}ctf|flag|f1ag|htb|ductf)\{[^{}\s]{3,128}\}"
+)
 
 
 def extract_flags(text: str) -> tuple[str, ...]:

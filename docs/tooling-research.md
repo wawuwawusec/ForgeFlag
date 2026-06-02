@@ -45,6 +45,17 @@ GitHub API star queries can be rate-limited in unauthenticated local runs, so th
 - Web/infra: sqlmap, ffuf, nuclei, CTFd.
 - Reference collection: zardus/ctf-tools.
 
+## External Corpus-Inspired Regression Policy
+
+Public CTF archives are useful as a coverage guide, but ForgeFlag should not vendor large challenge archives or copyrighted writeups into the repository. Instead, use them to extract small deterministic patterns that reproduce common solver failures:
+
+- Platform flag prefixes: preserve full prefixes such as `picoCTF{...}` and `HTB{...}` instead of matching a shorter inner `CTF{...}` token.
+- Encoding warmups: keep dependency-light transforms for Base32, Base64, hex, URL encoding, HTML entities, binary ASCII, and ROT13 before reaching for heavier tooling.
+- Traffic puzzles: treat DNS query labels as possible encoded payload carriers, not only as suspicious long domain names.
+- PCAP triage: prioritize DNS/TXT answers, HTTP artifacts, and TCP streams that contain or decode into flag-like evidence.
+
+The current regression tests synthesize tiny fixtures from these patterns so they remain fast, deterministic, and safe to run offline.
+
 ## Heavyweight Tool Policy
 
 SageMath, Volatility, and Ghidra/headless are intentionally treated as Docker profile tools instead of local venv dependencies:
@@ -70,6 +81,11 @@ Build commands and invocation boundaries are documented in `docs/tool-containers
 
 - https://github.com/apsdehal/awesome-ctf
 - https://github.com/zardus/ctf-tools
+- https://pwn.college/ctf-archive/
+- https://github.com/cryptohack/ctf_archive
+- https://archive.ooo/
+- https://ctftime.org/writeup/31040
+- https://7rocky.github.io/en/ctf/picoctf/forensics/
 - https://github.com/Gallopsled/pwntools
 - https://github.com/gchq/CyberChef
 - https://github.com/NationalSecurityAgency/ghidra

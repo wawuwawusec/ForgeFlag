@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import codecs
 from dataclasses import dataclass
 import html
 import re
@@ -68,7 +69,10 @@ def _seed_values(text: str) -> list[str]:
 def _apply_transforms(value: str) -> list[tuple[str, str]]:
     transformed: list[tuple[str, str]] = []
     transformed.extend(_hex_decode(value))
+    transformed.extend(_binary_ascii_decode(value))
+    transformed.extend(_base32_decode(value))
     transformed.extend(_base64_decode(value))
+    transformed.extend(_rot13_decode(value))
     url_decoded = unquote_plus(value)
     if url_decoded != value:
         transformed.append(("url_decode", url_decoded))
@@ -106,6 +110,51 @@ def _base64_decode(value: str) -> list[tuple[str, str]]:
     if not _mostly_printable(decoded):
         return []
     return [("base64_decode", decoded)]
+
+
+def _base32_decode(value: str) -> list[tuple[str, str]]:
+    cleaned = value.strip().replace(" ", "")
+    if len(cleaned) < 8 or not re.fullmatch(r"[A-Z2-7=]+", cleaned, flags=re.IGNORECASE):
+        return []
+    padded = cleaned + "=" * (-len(cleaned) % 8)
+    try:
+        decoded_bytes = base64.b32decode(padded, casefold=True)
+    except Exception:
+        return []
+    if not decoded_bytes:
+        return []
+    decoded = decoded_bytes.decode("utf-8", errors="replace")
+    if not _mostly_printable(decoded):
+        return []
+    return [("base32_decode", decoded)]
+
+
+def _binary_ascii_decode(value: str) -> list[tuple[str, str]]:
+    cleaned = " ".join(value.strip().split())
+    if len(cleaned) < 8 or not re.fullmatch(r"[01\s]+", cleaned):
+        return []
+    bits = cleaned.replace(" ", "")
+    if len(bits) < 32 or len(bits) % 8:
+        return []
+    try:
+        decoded = bytes(int(bits[index : index + 8], 2) for index in range(0, len(bits), 8)).decode(
+            "utf-8",
+            errors="replace",
+        )
+    except ValueError:
+        return []
+    if not _mostly_printable(decoded):
+        return []
+    return [("binary_ascii_decode", decoded)]
+
+
+def _rot13_decode(value: str) -> list[tuple[str, str]]:
+    if len(value) < 4 or "{" not in value or "}" not in value or not re.search(r"[A-Za-z]", value):
+        return []
+    decoded = codecs.decode(value, "rot_13")
+    if decoded == value or not _mostly_printable(decoded):
+        return []
+    return [("rot13_decode", decoded)]
 
 
 def _emit_flag_candidates(
@@ -147,6 +196,8 @@ def _compact_printable(value: str, limit: int = 500) -> str:
 
 def _mostly_printable(value: str) -> bool:
     if not value:
+        return False
+    if "\ufffd" in value:
         return False
     printable = sum(1 for char in value if char.isprintable() or char.isspace())
     return printable / len(value) >= 0.85

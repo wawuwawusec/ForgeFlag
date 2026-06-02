@@ -23,6 +23,27 @@ class TransformTest(unittest.TestCase):
         flag_candidate = next(candidate for candidate in candidates if candidate.value == "flag{url}")
         self.assertEqual(flag_candidate.recipe, ("url_decode", "html_unescape"))
 
+    def test_transform_candidates_decodes_base32_flag(self) -> None:
+        candidates = transform_candidates("MZWGCZ33MJQXGZJTGJPWM3DBM56Q")
+
+        self.assertIn("flag{base32_flag}", {candidate.value for candidate in candidates})
+
+    def test_transform_candidates_decodes_binary_ascii_flag(self) -> None:
+        encoded = (
+            "01100110 01101100 01100001 01100111 01111011 01100010 01101001 "
+            "01101110 01100001 01110010 01111001 01011111 01100001 01110011 "
+            "01100011 01101001 01101001 01111101"
+        )
+
+        candidates = transform_candidates(encoded)
+
+        self.assertIn("flag{binary_ascii}", {candidate.value for candidate in candidates})
+
+    def test_transform_candidates_decodes_rot13_flag(self) -> None:
+        candidates = transform_candidates("synt{ebg13}")
+
+        self.assertIn("flag{rot13}", {candidate.value for candidate in candidates})
+
 
 if __name__ == "__main__":
     unittest.main()

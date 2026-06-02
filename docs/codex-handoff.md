@@ -40,8 +40,9 @@ Implemented so far:
 - Solver interface and starter solvers for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra.
 - CyberChef-style transform pipeline:
   - `forgeflag.transforms.transform_candidates`
-  - bounded transform chaining for hex, Base64, URL decoding, and HTML entity decoding
+  - bounded transform chaining for hex, Base32, Base64, binary ASCII, ROT13, URL decoding, and HTML entity decoding
   - shared by CryptoSolver, MiscSolver, and TrafficSolver
+- Flag extraction preserves common platform prefixes such as `picoCTF{...}`, `HTB{...}`, `DUCTF{...}`, `f1ag{...}`, `flag{...}`, and `ctf{...}`
 - Crypto/RSA triage:
   - `forgeflag.crypto_analysis.rsa_summary_from_text`
   - extracts common RSA parameters (`n`, `e`, `c`, `p`, `q`, `d`, `phi`) and PEM key markers
@@ -75,7 +76,7 @@ Implemented so far:
 - Scoped TrafficSolver workflow:
   - PCAP/PCAPNG follow-up with `tshark_pcap_summary`, `tshark_traffic_analysis`, `tshark_flag_scan`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, and `tshark_http_artifact_scan`
   - HTTP artifact payload decoding via shared transform candidates before flag extraction
-  - DNS query/TXT/rcode summary and TCP stream shortlist evidence
+  - DNS query/TXT/rcode summary, encoded DNS query-label hints, and TCP stream shortlist evidence
   - support for common CTF typo markers such as `f1ag{...}`
   - structured tool evidence in notebook
   - flag candidate extraction from packet capture output
@@ -131,7 +132,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 108 tests OK
+- Tests passed: 114 tests OK
 
 Useful commands:
 
@@ -206,9 +207,9 @@ Recent commits:
 Recommended next milestone:
 
 1. Add richer traffic analyzers:
-   - DNS query/TXT summary
    - TCP stream extraction by stream id
    - HTTP object export when a capture contains downloaded files
+   - Scapy helpers for DNS exfil reconstruction across split labels/packets
 2. Promote selected project catalog items into wrappers:
    - `ffuf` and `sqlmap` only behind active-probe scope controls
    - `ROPgadget`/`ropper` for pwn and reverse

@@ -235,3 +235,27 @@ Validate PID files before using them. Remove invalid or stale PID files from sta
 - [x] **Step 2: Stabilize Web UI startup**
 
 Start the Web UI with `.venv/bin/python -m forgeflag.cli`, store the managed Python process PID, and use a detached screen session when available so the service survives the launching shell.
+
+### Phase 12: External Corpus-Inspired Regression Coverage
+
+**Files:**
+- Modify: `src/forgeflag/flags.py`
+- Modify: `src/forgeflag/transforms.py`
+- Modify: `src/forgeflag/traffic_analysis.py`
+- Modify: `src/forgeflag/solvers/traffic.py`
+- Test: `tests/test_flags.py`
+- Test: `tests/test_transforms.py`
+- Test: `tests/test_traffic_analysis.py`
+- Test: `tests/test_traffic_solver.py`
+
+- [x] **Step 1: Research public CTF archives for coverage gaps**
+
+Use public archives and writeup indexes as pattern sources, including pwn.college CTF Archive, CryptoHack CTF Archive, OOO DEF CON archive, picoCTF writeup indexes, and PCAP-focused CTFtime writeups. Do not vendor full challenge archives.
+
+- [x] **Step 2: Add failing regression tests for common misses**
+
+Cover full platform flag prefixes, Base32, binary ASCII, ROT13, and DNS query-label encoded flags.
+
+- [x] **Step 3: Implement deterministic decoding improvements**
+
+Extend the transform pipeline with Base32, binary ASCII, and ROT13. Preserve platform flag prefixes and surface DNS query decoded hints through `TrafficSolver`.
