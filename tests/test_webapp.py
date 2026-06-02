@@ -124,6 +124,30 @@ class WebAppApiTest(unittest.TestCase):
         self.assertEqual(payload["status"], "not_run")
         self.assertEqual(payload["accepted_flags"], [])
 
+    def test_challenge_list_includes_latest_run_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            handler_cls = create_handler(db)
+            handler_cls.handle_create_challenge({"challenge_id": "webui-list-status", "category": "misc"})
+            handler_cls.notebook.record_run(
+                "webui-list-status",
+                "flag_found",
+                {
+                    "challenge_id": "webui-list-status",
+                    "status": "flag_found",
+                    "accepted_flags": ["flag{list_status}"],
+                    "rejected_flags": [],
+                },
+            )
+
+            rows = handler_cls.handle_list_challenges()
+
+        row = next(item for item in rows if item["challenge_id"] == "webui-list-status")
+        self.assertEqual(row["latest_status"], "flag_found")
+        self.assertEqual(row["accepted_flags"], ["flag{list_status}"])
+        self.assertEqual(row["accepted_flag_count"], 1)
+
     def test_index_contains_category_workspace_controls(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
 
@@ -133,6 +157,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("分类工作台", html)
         self.assertIn("categoryCounts", html)
         self.assertIn("function renderChallengeGroups", html)
+        self.assertIn("function statusLabel", html)
+        self.assertIn("accepted_flag_count", html)
         self.assertIn("category-group", html)
         self.assertIn('data-tab="catalog"', html)
         self.assertIn('data-tab="artifacts"', html)

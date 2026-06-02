@@ -92,18 +92,25 @@ def create_handler(db_path: str | Path):
 
         @classmethod
         def handle_list_challenges(cls) -> list[dict[str, Any]]:
-            return [
-                {
-                    "challenge_id": challenge.challenge_id,
-                    "category": challenge.category.value,
-                    "title": challenge.title,
-                    "target": challenge.target,
-                    "description": challenge.description,
-                    "tags": list(challenge.tags),
-                    "attachment_paths": list(challenge.attachment_paths),
-                }
-                for challenge in cls.notebook.list_challenges()
-            ]
+            rows = []
+            for challenge in cls.notebook.list_challenges():
+                summary = cls.notebook.latest_run_summary(challenge.challenge_id) or {}
+                accepted_flags = _string_list(summary.get("accepted_flags"))
+                rows.append(
+                    {
+                        "challenge_id": challenge.challenge_id,
+                        "category": challenge.category.value,
+                        "title": challenge.title,
+                        "target": challenge.target,
+                        "description": challenge.description,
+                        "tags": list(challenge.tags),
+                        "attachment_paths": list(challenge.attachment_paths),
+                        "latest_status": str(summary.get("status") or "not_run"),
+                        "accepted_flags": accepted_flags,
+                        "accepted_flag_count": len(accepted_flags),
+                    }
+                )
+            return rows
 
         @classmethod
         def handle_tools(cls) -> dict[str, Any]:
@@ -392,6 +399,7 @@ INDEX_HTML = r"""<!doctype html>
     .list { display: grid; gap: 8px; margin-top: 12px; }
     .item { border: 1px solid var(--line); background: white; border-radius: 6px; padding: 10px; cursor: pointer; }
     .item.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+    .item-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
     .category-group, .tool-group { border: 1px solid var(--line); border-radius: 6px; background: white; overflow: hidden; }
     .category-group summary, .tool-group summary { list-style: none; cursor: pointer; padding: 10px 12px; display: flex; justify-content: space-between; gap: 10px; align-items: center; }
     .category-group summary::-webkit-details-marker, .tool-group summary::-webkit-details-marker { display: none; }
@@ -661,13 +669,20 @@ INDEX_HTML = r"""<!doctype html>
           <div class="category-items">
             ${rows.map(ch => `
               <div class="item${state.selected === ch.challenge_id ? " active" : ""}" data-challenge-id="${escapeHtml(ch.challenge_id)}">
-                <strong>${escapeHtml(ch.challenge_id)}</strong>
+                <div class="item-head"><strong>${escapeHtml(ch.challenge_id)}</strong>${statusLabel(ch)}</div>
                 <div class="meta">${escapeHtml(ch.target || ch.title || "无目标")}</div>
                 <div class="meta">${escapeHtml((ch.attachment_paths || []).join(", "))}</div>
               </div>`).join("")}
           </div>
         </details>`;
       }).join("");
+    }
+    function statusLabel(challenge) {
+      const status = challenge.latest_status || "not_run";
+      const count = challenge.accepted_flag_count || 0;
+      const badgeClass = status === "flag_found" ? "badge" : (status === "not_run" ? "badge muted" : "badge warn");
+      const suffix = count ? ` · ${count} flag` : "";
+      return `<span class="${badgeClass}">${escapeHtml(status)}${escapeHtml(suffix)}</span>`;
     }
     function renderData(tab, data) {
       if (tab === "summary") return renderSummary(data);
