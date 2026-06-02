@@ -86,6 +86,7 @@ Implemented so far:
   - DNS query/TXT/rcode summary, encoded DNS query-label hints, and TCP stream shortlist evidence
   - HTTP object export summaries with file name, path, size, SHA256, text preview, and recovered flags
   - shortlisted TCP stream follow-up with stream id, hints, payload sample, and recovered flag evidence
+  - cleartext SMTP/FTP/IRC-style protocol stream summaries with commands, sample, and recovered flag evidence
   - support for common CTF typo markers such as `f1ag{...}`
   - structured tool evidence in notebook
   - flag candidate extraction from packet capture output
@@ -123,8 +124,8 @@ Implemented so far:
 - Web-run hard/expert CTF corpus benchmark:
   - `scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeup patterns
-  - Covers hidden Web APIs, crypto primitive misuse, DNS exfil, TCP stream follow-up, HTTP object export, mail/PowerShell forensics, packed reverse, format-string pwn, pickle sandbox, and Web-to-Java chains
-  - Current strict result: 11/11 full score through the Web API
+  - Covers hidden Web APIs, crypto primitive misuse, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, pickle sandbox, and Web-to-Java chains
+  - Current strict result: 12/12 full score through the Web API
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category
@@ -171,7 +172,7 @@ Current local setup after migration:
   - host wrappers: `file`, `strings`, `binwalk`, `exiftool`, `tshark`, `nmap_tcp_basic`
   - Docker wrappers: `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`
   - hashcat is installed, but current OrbStack runtime does not expose an OpenCL/CUDA device, so cracking smoke skips hashcat device execution
-- Tests passed: 177 tests OK
+- Tests passed: 181 tests OK
 
 Useful commands:
 

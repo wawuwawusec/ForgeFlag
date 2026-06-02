@@ -23,6 +23,7 @@ class HardCorpusScriptTest(unittest.TestCase):
         self.assertIn("pwn", {case["category"] for case in cases})
         self.assertIn("hard-traffic-http-stream-follow", {case["challenge_id"] for case in cases})
         self.assertIn("hard-traffic-http-object-export", {case["challenge_id"] for case in cases})
+        self.assertIn("hard-traffic-smtp-stream-summary", {case["challenge_id"] for case in cases})
         self.assertTrue(all(case["required_evidence"] for case in cases))
         self.assertTrue(any(case["expected_flag"] is None for case in cases))
 

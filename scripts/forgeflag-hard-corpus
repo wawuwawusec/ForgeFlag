@@ -102,6 +102,20 @@ def build_fixtures() -> dict[str, Path]:
         b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 30\r\n\r\nflag{hard_http_object_export}\n",
     )
 
+    smtp_stream = WORKDIR / "smtp-stream-summary.pcap"
+    write_smtp_pcap(
+        smtp_stream,
+        b"220 mail.ctf.local ESMTP\r\n"
+        b"EHLO analyst\r\n"
+        b"MAIL FROM:<admin@ctf.local>\r\n"
+        b"RCPT TO:<player@ctf.local>\r\n"
+        b"DATA\r\n"
+        b"Subject: clue\r\n"
+        b"flag{hard_smtp_stream_summary}\r\n"
+        b".\r\n"
+        b"QUIT\r\n",
+    )
+
     eml = WORKDIR / "powershell-email.eml"
     encoded = base64.b64encode(b"powershell -enc ZmxhZ3toYXJkX21haWxfdHJpYWdlfQ==").decode("ascii")
     eml.write_text(
@@ -145,6 +159,7 @@ def build_fixtures() -> dict[str, Path]:
         "traffic": traffic,
         "http_stream": http_stream,
         "http_object": http_object,
+        "smtp_stream": smtp_stream,
         "eml": eml,
         "reverse": reverse_bin,
         "pwn_source": pwn_source,
@@ -233,6 +248,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["http_object_exports", "sha256", "flag{hard_http_object_export}"],
             "source_url": "https://github.com/hackthebox/cyber-apocalypse-2024",
             "improvement_hint": "TrafficSolver should export HTTP objects and preserve file hashes plus previews for replay.",
+        },
+        {
+            "challenge_id": "hard-traffic-smtp-stream-summary",
+            "category": "traffic",
+            "difficulty": "hard",
+            "title": "SMTP stream summary",
+            "description": "Mail traffic task: follow the SMTP stream, identify protocol commands, and inspect DATA content.",
+            "attachments": [fixtures["smtp_stream"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_smtp_stream_summary}",
+            "required_evidence": ["protocol_streams", "SMTP", "flag{hard_smtp_stream_summary}"],
+            "source_url": "https://siunam321.github.io/ctf/CrewCTF-2023/",
+            "improvement_hint": "TrafficSolver should summarize cleartext SMTP/FTP/IRC stream protocols and preserve replayable commands.",
         },
         {
             "challenge_id": "hard-forensics-mail-powershell",
@@ -466,6 +494,14 @@ def write_http_response_pcap(path: Path, payload: bytes) -> None:
         handle.write(packet)
 
 
+def write_smtp_pcap(path: Path, payload: bytes) -> None:
+    packet = ethernet_frame(ipv4_packet(tcp_custom_segment(payload, src_port=53333, dst_port=25), protocol=6))
+    with path.open("wb") as handle:
+        handle.write(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
+        handle.write(struct.pack("<IIII", int(time.time()), 0, len(packet), len(packet)))
+        handle.write(packet)
+
+
 def dns_query(name: str) -> bytes:
     labels = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.split(".") if part)
     return struct.pack("!HHHHHH", 0x4242, 0x0100, 1, 0, 0, 0) + labels + b"\x00" + struct.pack("!HH", 1, 1)
@@ -493,6 +529,11 @@ def tcp_segment(payload: bytes) -> bytes:
 def tcp_response_segment(payload: bytes) -> bytes:
     data_offset_and_flags = (5 << 12) | 0x18
     return struct.pack("!HHIIHHHH", 80, 4444, 1, 1, data_offset_and_flags, 8192, 0, 0) + payload
+
+
+def tcp_custom_segment(payload: bytes, src_port: int, dst_port: int) -> bytes:
+    data_offset_and_flags = (5 << 12) | 0x18
+    return struct.pack("!HHIIHHHH", src_port, dst_port, 1, 1, data_offset_and_flags, 8192, 0, 0) + payload
 
 
 def ethernet_frame(payload: bytes) -> bytes:

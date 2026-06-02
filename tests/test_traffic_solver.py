@@ -327,6 +327,76 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["tcp_stream_payloads"][0]["stream_id"], "3")
         self.assertIn("flag{follow_stream_payload}", finding.evidence["tcp_stream_payloads"][0]["flags"])
 
+    def test_traffic_solver_summarizes_smtp_stream_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "mail.pcap"
+            attachment.write_bytes(b"pcap fixture placeholder")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-smtp-stream",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+            tcp_stdout = "9|7|10.0.0.2|53333|10.0.0.25|25|SMTP|C: DATA"
+            smtp_stream = (
+                "220 mail.ctf.local ESMTP\r\n"
+                "EHLO analyst\r\n"
+                "MAIL FROM:<admin@ctf.local>\r\n"
+                "RCPT TO:<player@ctf.local>\r\n"
+                "DATA\r\n"
+                "Subject: clue\r\n"
+                "flag{smtp_stream_summary}\r\n"
+                ".\r\n"
+                "QUIT\r\n"
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "SMTP"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "smtp frames"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": tcp_stdout}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": smtp_stream}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-smtp-stream")
+                finding = next(f for f in notebook.findings_for("traffic-smtp-stream") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{smtp_stream_summary}"])
+        self.assertEqual(finding.evidence["protocol_streams"][0]["protocol"], "SMTP")
+        self.assertEqual(finding.evidence["protocol_streams"][0]["stream_id"], "7")
+        self.assertIn("EHLO", finding.evidence["protocol_streams"][0]["commands"])
+        self.assertIn("flag{smtp_stream_summary}", finding.evidence["protocol_streams"][0]["flags"])
+
     def test_traffic_solver_exports_http_objects_and_records_file_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

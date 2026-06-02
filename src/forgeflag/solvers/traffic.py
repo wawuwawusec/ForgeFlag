@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import re
 import shutil
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
@@ -108,6 +109,7 @@ class TrafficSolver:
             decoded_payloads=decoded_http_artifacts,
         )
         tcp_stream_payloads = _follow_tcp_stream_payloads(context, pcap_path, tcp_streams)
+        protocol_streams = _protocol_stream_summaries(tcp_stream_payloads)
         decoded_dns_hints = [str(value) for value in dns_summary.get("decoded_query_hints", [])]
         stream_payload_text = "\n".join(str(item.get("sample", "")) for item in tcp_stream_payloads)
         exported_object_text = "\n".join(
@@ -133,6 +135,7 @@ class TrafficSolver:
                 "dns_summary": dns_summary,
                 "tcp_streams": tcp_streams,
                 "tcp_stream_payloads": tcp_stream_payloads,
+                "protocol_streams": protocol_streams,
                 "flag_candidates": list(flags),
             },
             hypothesis=_traffic_hypothesis(flags),
@@ -211,6 +214,53 @@ def _export_http_objects(
         if len(summaries) >= limit:
             break
     return summaries
+
+
+def _protocol_stream_summaries(tcp_stream_payloads: list[dict[str, object]]) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for payload in tcp_stream_payloads:
+        sample = str(payload.get("sample", ""))
+        protocol = _classify_cleartext_protocol(sample)
+        if not protocol:
+            continue
+        commands = _protocol_commands(protocol, sample)
+        flags = extract_flags(sample)
+        summaries.append(
+            {
+                "stream_id": str(payload.get("stream_id", "")),
+                "protocol": protocol,
+                "commands": commands[:12],
+                "flags": list(flags),
+                "sample": _compact_text(sample, limit=700),
+            }
+        )
+    return summaries
+
+
+def _classify_cleartext_protocol(sample: str) -> str | None:
+    upper = sample.upper()
+    if any(marker in upper for marker in ("EHLO ", "HELO ", "MAIL FROM:", "RCPT TO:", "\nDATA", "\r\nDATA")):
+        return "SMTP"
+    if any(marker in upper for marker in ("USER ", "PASS ", "RETR ", "STOR ", "220 FTP", "230 ")):
+        return "FTP"
+    if any(marker in upper for marker in ("NICK ", "USER ", "JOIN #", "PRIVMSG ", "NOTICE ")):
+        return "IRC"
+    return None
+
+
+def _protocol_commands(protocol: str, sample: str) -> list[str]:
+    command_sets = {
+        "SMTP": {"HELO", "EHLO", "MAIL", "RCPT", "DATA", "RSET", "VRFY", "EXPN", "NOOP", "QUIT", "AUTH", "STARTTLS"},
+        "FTP": {"USER", "PASS", "SYST", "PWD", "CWD", "TYPE", "PASV", "PORT", "LIST", "RETR", "STOR", "QUIT"},
+        "IRC": {"NICK", "USER", "JOIN", "PART", "PRIVMSG", "NOTICE", "PING", "PONG", "QUIT", "MODE", "TOPIC"},
+    }
+    allowed = command_sets.get(protocol, set())
+    commands: list[str] = []
+    upper = sample.upper()
+    for command in allowed:
+        if re.search(rf"(?<![A-Z0-9]){re.escape(command)}(?:\s|:|$)", upper) and command not in commands:
+            commands.append(command)
+    return commands
 
 
 def _http_object_export_dir(context: SolverContext, pcap_path: str) -> Path:
