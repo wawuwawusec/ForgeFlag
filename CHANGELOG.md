@@ -42,3 +42,4 @@
 - Added registered artifact summaries in the CLI and Web UI, including existence, size, and SHA256.
 - Hardened `scripts/forgeflag-control` PID handling and Web UI startup so one-command start/stop is more reliable.
 - Added external CTF corpus-inspired regression tests for platform flag prefixes, Base32, binary ASCII, ROT13, and DNS query-label encoded traffic flags.
+- Reworked Web UI result tabs into solver-readable cards with status, flags, findings, observations, artifacts, replay steps, and collapsible raw JSON.

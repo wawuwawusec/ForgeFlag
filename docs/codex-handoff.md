@@ -98,6 +98,7 @@ Implemented so far:
   - per-run LLM provider/model/API key controls, browser-local non-secret config saving, optional local key remembering, and `/api/llm/test`
   - entered LLM keys are used for run/test requests and are never stored in SQLite
   - run, auto-loaded findings, observations, artifact summaries, replay report, tools, and catalog views
+  - Summary, Findings, Observations, Artifacts, Report, Tools, and Catalog render as readable cards with collapsible raw JSON for debugging
 - One-command lifecycle script:
   - `scripts/forgeflag-control start/status/smoke/stop`
   - Web UI start uses `.venv/bin/python -m forgeflag.cli` and stores the managed Python process PID in `.forgeflag/web.pid`
@@ -132,7 +133,7 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 114 tests OK
+- Tests passed: 115 tests OK
 
 Useful commands:
 

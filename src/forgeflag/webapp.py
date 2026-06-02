@@ -344,9 +344,28 @@ INDEX_HTML = r"""<!doctype html>
     .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
     .tabs button { background: white; color: var(--ink); border-color: var(--line); border-bottom: 0; border-radius: 6px 6px 0 0; }
     .tabs button.active { background: var(--accent); color: white; }
-    pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #111820; color: #e7eef4; border-radius: 6px; padding: 14px; min-height: 420px; }
+    .result-view { display: grid; gap: 12px; min-height: 420px; }
+    .empty-state { border: 1px dashed var(--line); border-radius: 6px; padding: 18px; color: var(--muted); background: #fbfcfd; }
+    .result-card { border: 1px solid var(--line); border-radius: 6px; background: white; padding: 14px; display: grid; gap: 10px; }
+    .result-card h3 { margin: 0; font-size: 15px; }
+    .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; flex-wrap: wrap; }
+    .card-title { display: grid; gap: 4px; min-width: 0; }
+    .badge { display: inline-flex; width: fit-content; align-items: center; border-radius: 999px; padding: 3px 8px; font-size: 12px; background: #eaf4f0; color: #0f5d4c; border: 1px solid #cfe4dc; }
+    .badge.warn { background: #fff5eb; color: #8b4210; border-color: #f1d5b7; }
+    .badge.muted { background: #eef2f5; color: var(--muted); border-color: var(--line); }
+    .flag-list { display: flex; gap: 8px; flex-wrap: wrap; }
+    .flag-chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #111820; color: #e7eef4; border-radius: 6px; padding: 5px 8px; overflow-wrap: anywhere; }
+    .kv-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .kv { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; background: #fbfcfd; min-width: 0; }
+    .kv span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    .kv strong { overflow-wrap: anywhere; }
+    .steps { margin: 0; padding-left: 20px; }
+    .steps li { margin: 5px 0; }
+    details.raw { border-top: 1px solid var(--line); padding-top: 8px; }
+    details.raw summary { color: var(--muted); cursor: pointer; font-size: 13px; }
+    pre.raw-json { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #111820; color: #e7eef4; border-radius: 6px; padding: 12px; max-height: 360px; overflow: auto; }
     .status { font-size: 13px; color: var(--muted); }
-    @media (max-width: 860px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } .runtime-grid, .llm-settings { grid-template-columns: 1fr; } }
+    @media (max-width: 860px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } .runtime-grid, .llm-settings, .kv-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -436,7 +455,7 @@ INDEX_HTML = r"""<!doctype html>
         <button data-tab="tools">Tools</button>
         <button data-tab="catalog">Catalog</button>
       </div>
-      <pre id="output">{}</pre>
+      <div id="output" class="result-view"><div class="empty-state">选择题目并运行后，这里会显示可读的解题结果。</div></div>
     </section>
   </main>
   <script>
@@ -445,7 +464,10 @@ INDEX_HTML = r"""<!doctype html>
     const state = { selected: null, activeCategory: "all", challenges: [], lastSummary: {} };
     const $ = (id) => document.getElementById(id);
     const status = (text) => $("status").textContent = text;
-    const show = (data) => $("output").textContent = JSON.stringify(data, null, 2);
+    const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
+    const rawJson = (data) => `<details class="raw"><summary>查看原始 JSON</summary><pre class="raw-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre></details>`;
+    const asList = (value) => Array.isArray(value) ? value : [];
+    const show = (data, tab="raw") => $("output").innerHTML = renderData(tab, data);
     const LLM_CONFIG_KEY = "forgeflag.llm.config.v1";
     categories.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; $("category").appendChild(o); });
     function syncLLMSettings() {
@@ -546,7 +568,7 @@ INDEX_HTML = r"""<!doctype html>
       state.challenges = challenges;
       renderCategoryFilters(challenges);
       renderChallengeList();
-      show(challenges);
+      show(challenges, "raw");
     }
     function renderChallengeList() {
       const list = $("challengeList");
@@ -559,6 +581,148 @@ INDEX_HTML = r"""<!doctype html>
         item.onclick = () => { state.selected = ch.challenge_id; refresh(); loadTab(document.querySelector(".tabs button.active").dataset.tab); };
         list.appendChild(item);
       });
+    }
+    function renderData(tab, data) {
+      if (tab === "summary") return renderSummary(data);
+      if (tab === "findings") return renderFindings(data);
+      if (tab === "observations") return renderObservations(data);
+      if (tab === "artifacts") return renderArtifacts(data);
+      if (tab === "report") return renderReport(data);
+      if (tab === "tools") return renderToolRows(data, "工具可用性", "tool");
+      if (tab === "catalog") return renderToolRows(data, "项目目录", "catalog");
+      return renderRaw(data);
+    }
+    function renderRaw(data) {
+      if (Array.isArray(data) && data.length === 0) return `<div class="empty-state">暂无数据。</div>${rawJson(data)}`;
+      return `<div class="result-card"><div class="card-head"><div class="card-title"><h3>原始结果</h3><div class="meta">该视图暂未做专门排版。</div></div></div>${rawJson(data)}</div>`;
+    }
+    function flagChips(flags) {
+      const values = asList(flags);
+      if (!values.length) return `<div class="meta">暂未确认 flag。</div>`;
+      return `<div class="flag-list">${values.map(flag => `<span class="flag-chip">${escapeHtml(flag)}</span>`).join("")}</div>`;
+    }
+    function renderSummary(data) {
+      if (!data || !data.challenge_id) {
+        return `<div class="empty-state">还没有本轮运行摘要。点击“运行选中题目”后会在这里显示状态、flag 和执行路径。</div>`;
+      }
+      const statusClass = data.status === "flag_found" ? "badge" : "badge muted";
+      const rejected = asList(data.rejected_flags);
+      return `
+        <div class="result-card">
+          <div class="card-head">
+            <div class="card-title">
+              <h3>${escapeHtml(data.challenge_id)}</h3>
+              <div class="meta">运行摘要</div>
+            </div>
+            <span class="${statusClass}">${escapeHtml(data.status || "unknown")}</span>
+          </div>
+          ${flagChips(data.accepted_flags)}
+          <div class="kv-grid">
+            <div class="kv"><span>Solvers</span><strong>${asList(data.solvers).length}</strong></div>
+            <div class="kv"><span>Observations</span><strong>${escapeHtml(data.observations ?? 0)}</strong></div>
+            <div class="kv"><span>Rejected</span><strong>${rejected.length}</strong></div>
+          </div>
+          ${rejected.length ? `<div class="meta">被拒候选：${rejected.map(escapeHtml).join(", ")}</div>` : ""}
+          ${rawJson(data)}
+        </div>`;
+    }
+    function renderFindings(data) {
+      const findings = asList(data);
+      if (!findings.length) return `<div class="empty-state">暂无 Findings。运行题目后，这里会按 solver 展示发现、证据和下一步。</div>${rawJson(data)}`;
+      return findings.map(finding => {
+        const confidence = typeof finding.confidence === "number" ? Math.round(finding.confidence * 100) + "%" : "n/a";
+        const evidence = finding.evidence || {};
+        const candidates = evidence.transform_candidates || evidence.flag_candidates || evidence.decoded_http_artifacts || [];
+        return `
+          <div class="result-card">
+            <div class="card-head">
+              <div class="card-title">
+                <h3>${escapeHtml(finding.finding || "Finding")}</h3>
+                <div class="meta">${escapeHtml(finding.solver || "unknown solver")}</div>
+              </div>
+              <span class="badge">${confidence}</span>
+            </div>
+            ${finding.hypothesis ? `<div><strong>判断：</strong>${escapeHtml(finding.hypothesis)}</div>` : ""}
+            ${finding.next_action ? `<div><strong>下一步：</strong>${escapeHtml(finding.next_action)}</div>` : ""}
+            ${Array.isArray(candidates) && candidates.length ? `<div><strong>关键候选：</strong><div class="flag-list">${candidates.slice(0, 6).map(item => `<span class="flag-chip">${escapeHtml(item.value || item)}</span>`).join("")}</div></div>` : ""}
+            ${rawJson(finding)}
+          </div>`;
+      }).join("");
+    }
+    function renderObservations(data) {
+      const observations = asList(data);
+      if (!observations.length) return `<div class="empty-state">暂无 Observations。这里会显示跨 solver 共享的线索，例如 LLM 建议或 flag 候选。</div>${rawJson(data)}`;
+      return observations.map(obs => `
+        <div class="result-card">
+          <div class="card-head">
+            <div class="card-title">
+              <h3>${escapeHtml(obs.summary || obs.kind || "Observation")}</h3>
+              <div class="meta">${escapeHtml(obs.source || "")} ${escapeHtml(obs.kind || "")}</div>
+            </div>
+          </div>
+          ${rawJson(obs)}
+        </div>`).join("");
+    }
+    function renderArtifacts(data) {
+      const artifacts = asList(data && data.artifacts);
+      if (!artifacts.length) return `<div class="empty-state">暂无注册附件。上传题目文件后，这里会显示文件大小、SHA256 和路径。</div>${rawJson(data)}`;
+      return `
+        <div class="result-card">
+          <div class="card-head">
+            <div class="card-title"><h3>${escapeHtml(data.challenge_id || "Artifacts")}</h3><div class="meta">注册附件</div></div>
+            <span class="badge muted">${artifacts.length} files</span>
+          </div>
+          ${artifacts.map(artifact => `
+            <div class="kv">
+              <span>${escapeHtml(artifact.exists ? "已存在" : "缺失")}</span>
+              <strong>${escapeHtml(artifact.name)}</strong>
+              <div class="meta">${escapeHtml(artifact.size_bytes ?? "-")} bytes · ${escapeHtml(artifact.sha256 || "no sha256")}</div>
+              <div class="meta">${escapeHtml(artifact.path)}</div>
+            </div>`).join("")}
+          ${rawJson(data)}
+        </div>`;
+    }
+    function renderReport(data) {
+      const flags = asList(data && data.flags);
+      if (!flags.length) return `<div class="empty-state">还没有复盘报告。只有 verifier 接受 flag 后才会生成最短发现路径。</div>${rawJson(data)}`;
+      return flags.map(entry => `
+        <div class="result-card">
+          <div class="card-head">
+            <div class="card-title">
+              <h3>${escapeHtml(entry.flag)}</h3>
+              <div class="meta">最短发现路径</div>
+            </div>
+            <span class="badge">accepted</span>
+          </div>
+          ${asList(entry.replay_steps).length ? `<ol class="steps">${entry.replay_steps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : `<div class="meta">暂无复盘步骤。</div>`}
+          ${asList(entry.path).map(step => `
+            <div class="kv">
+              <span>${escapeHtml(step.solver || "solver")}</span>
+              <strong>${escapeHtml(step.finding || "finding")}</strong>
+              <div class="meta">${escapeHtml(step.hypothesis || "")}</div>
+            </div>`).join("")}
+          ${rawJson(entry)}
+        </div>`).join("");
+    }
+    function renderToolRows(data, title, kind) {
+      const rows = asList(data);
+      if (!rows.length) return `<div class="empty-state">暂无${escapeHtml(title)}数据。</div>${rawJson(data)}`;
+      return `
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>${escapeHtml(title)}</h3><div class="meta">${rows.length} entries</div></div></div>
+          ${rows.map(row => {
+            const name = row.name || row.tool || "entry";
+            const badge = kind === "tool" ? (row.available ? "available" : "missing") : (row.integration || row.category || "catalog");
+            const badgeClass = badge === "missing" ? "badge warn" : "badge muted";
+            return `<div class="kv">
+              <span>${escapeHtml(row.category || row.integration || "")}</span>
+              <strong>${escapeHtml(name)}</strong>
+              <div class="meta">${escapeHtml(row.description || row.notes || "")}</div>
+              <span class="${badgeClass}">${escapeHtml(badge)}</span>
+            </div>`;
+          }).join("")}
+          ${rawJson(data)}
+        </div>`;
     }
     async function saveChallenge() {
       status("saving...");
@@ -575,7 +739,7 @@ INDEX_HTML = r"""<!doctype html>
       state.selected = payload.challenge_id;
       state.activeCategory = payload.category || state.activeCategory;
       status("saved");
-      show(res);
+      show(res, "raw");
       await refresh();
     }
     async function runSelected() {
@@ -589,7 +753,7 @@ INDEX_HTML = r"""<!doctype html>
       const res = await api(`/api/challenges/${encodeURIComponent(state.selected)}/run`, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(payload) });
       state.lastSummary = res;
       status(res.status || "done");
-      show(res);
+      show(res, "summary");
       await loadTab("findings");
     }
     async function testLLM() {
@@ -598,15 +762,15 @@ INDEX_HTML = r"""<!doctype html>
       $("llmConfigStatus").textContent = "正在测试...";
       const res = await api("/api/llm/test", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(llmPayload()) });
       $("llmConfigStatus").textContent = `测试成功：${res.provider} ${res.model || ""}`;
-      show(res);
+      show(res, "raw");
     }
     async function loadTab(tab) {
       document.querySelectorAll(".tabs button").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tab));
-      if (tab === "summary") return show(state.lastSummary);
-      if (tab === "tools") return show(await api("/api/tools"));
-      if (tab === "catalog") return show(await api("/api/project-catalog"));
+      if (tab === "summary") return show(state.lastSummary, "summary");
+      if (tab === "tools") return show(await api("/api/tools"), "tools");
+      if (tab === "catalog") return show(await api("/api/project-catalog"), "catalog");
       if (!state.selected) return status("select a challenge first");
-      show(await api(`/api/challenges/${encodeURIComponent(state.selected)}/${tab}`));
+      show(await api(`/api/challenges/${encodeURIComponent(state.selected)}/${tab}`), tab);
     }
     $("saveBtn").onclick = () => saveChallenge().catch(e => { status("error"); show({error:e.message}); });
     $("refreshBtn").onclick = () => refresh().catch(e => show({error:e.message}));

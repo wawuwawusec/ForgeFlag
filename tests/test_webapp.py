@@ -97,6 +97,17 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn('data-tab="catalog"', html)
         self.assertIn('data-tab="artifacts"', html)
 
+    def test_index_renders_human_readable_result_tabs(self) -> None:
+        handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
+
+        html = handler_cls.render_index()
+
+        self.assertIn('class="result-view"', html)
+        self.assertIn("function renderSummary", html)
+        self.assertIn("function renderFindings", html)
+        self.assertIn("function renderReport", html)
+        self.assertIn("查看原始 JSON", html)
+
     def test_project_catalog_endpoint_lists_recommended_projects(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
 
