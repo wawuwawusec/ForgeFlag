@@ -204,6 +204,7 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("function statusMatches", html)
         self.assertIn("function renderChallengeGroups", html)
         self.assertIn("function statusLabel", html)
+        self.assertIn("function tagChips", html)
         self.assertIn("accepted_flag_count", html)
         self.assertIn("category-group", html)
         self.assertIn('data-tab="catalog"', html)

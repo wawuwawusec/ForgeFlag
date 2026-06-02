@@ -7,7 +7,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from forgeflag.archive_analysis import analyze_archive
+from forgeflag.archive_analysis import analyze_archive, preview_archive_text
 
 
 class ArchiveAnalysisTest(unittest.TestCase):
@@ -50,6 +50,18 @@ class ArchiveAnalysisTest(unittest.TestCase):
 
         self.assertEqual(summary["kind"], "gzip")
         self.assertEqual(summary["entries"][0]["name"], "payload")
+
+    def test_preview_archive_text_reads_interesting_small_zip_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "challenge.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("docs/noise.txt", "nothing useful")
+                zf.writestr("secrets/flag.txt", "flag{archive_preview}")
+
+            previews = preview_archive_text(archive)
+
+        self.assertEqual(previews[0]["name"], "secrets/flag.txt")
+        self.assertEqual(previews[0]["text_preview"], "flag{archive_preview}")
 
 
 if __name__ == "__main__":

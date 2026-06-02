@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgeflag.archive_analysis import analyze_archive
+from forgeflag.archive_analysis import analyze_archive, preview_archive_text
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.hash_analysis import hash_summary_from_text
@@ -28,9 +28,15 @@ class MiscSolver:
                 tuple(dict.fromkeys(flag_candidates)),
             )
 
-        archive_findings = self._analyze_archive_attachments(context)
+        archive_findings = self._analyze_archive_attachments(context, flag_candidates)
         if archive_findings:
-            return SolverResult(self.name, context.challenge.challenge_id, "ok", tuple(archive_findings))
+            return SolverResult(
+                self.name,
+                context.challenge.challenge_id,
+                "flag_candidate" if flag_candidates else "ok",
+                tuple(archive_findings),
+                tuple(dict.fromkeys(flag_candidates)),
+            )
 
         text = "\n".join(_text_inputs(context))
         hash_summary = hash_summary_from_text(text)
@@ -111,7 +117,7 @@ class MiscSolver:
             findings.append(finding)
         return findings
 
-    def _analyze_archive_attachments(self, context: SolverContext) -> list[Finding]:
+    def _analyze_archive_attachments(self, context: SolverContext, flag_candidates: list[str]) -> list[Finding]:
         findings: list[Finding] = []
         for attachment_path in context.challenge.attachment_paths:
             try:
@@ -121,6 +127,9 @@ class MiscSolver:
             archive = analyze_archive(resolved)
             if not archive:
                 continue
+            previews = preview_archive_text(resolved)
+            flags = extract_flags("\n".join(str(item.get("text_preview", "")) for item in previews))
+            flag_candidates.extend(flags)
             finding = Finding(
                 challenge_id=context.challenge.challenge_id,
                 solver=self.name,
@@ -128,10 +137,12 @@ class MiscSolver:
                 evidence={
                     "artifact": {"name": resolved.name, "path": str(resolved)},
                     "archive": archive,
+                    "archive_text_previews": previews,
+                    "flag_candidates": list(flags),
                 },
-                hypothesis="Misc archive puzzle has structured entries that should be inspected before broader puzzle triage.",
-                confidence=0.66,
-                next_action=_archive_next_action(archive),
+                hypothesis=_archive_hypothesis(flags),
+                confidence=0.8 if flags else 0.66,
+                next_action=_archive_next_action(archive, flags),
             )
             context.notebook.add_finding(finding)
             findings.append(finding)
@@ -170,7 +181,15 @@ def _transform_next_action(flags: tuple[str, ...]) -> str:
     return "Inspect transform candidates, then route to crypto, archive, or stego follow-up."
 
 
-def _archive_next_action(archive: dict[str, object]) -> str:
+def _archive_hypothesis(flags: tuple[str, ...]) -> str:
+    if flags:
+        return "Archive preview content contains a flag-like token."
+    return "Misc archive puzzle has structured entries that should be inspected before broader puzzle triage."
+
+
+def _archive_next_action(archive: dict[str, object], flags: tuple[str, ...] = ()) -> str:
+    if flags:
+        return "Send archive-derived candidates to Verifier and preserve the archive preview evidence."
     if archive.get("encrypted"):
         return "Collect password hints before attempting archive extraction."
     return "Inspect interesting archive entries and extract only into a managed artifact workspace."

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgeflag.crypto_analysis import rsa_summary_from_text
+from forgeflag.crypto_analysis import recover_rsa_flags_from_text, rsa_summary_from_text
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.hash_analysis import hash_summary_from_text
@@ -30,6 +30,26 @@ class CryptoSolver:
             )
             context.notebook.add_finding(finding)
             return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
+        rsa_recovery = recover_rsa_flags_from_text(text)
+        if rsa_recovery["flags"]:
+            finding = Finding(
+                challenge_id=context.challenge.challenge_id,
+                solver=self.name,
+                finding="Recovered RSA flag candidates",
+                evidence={"rsa_recovery": rsa_recovery},
+                hypothesis="RSA parameters are directly decryptable and produced a flag-like plaintext.",
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the RSA parameters as replay evidence.",
+            )
+            context.notebook.add_finding(finding)
+            return SolverResult(
+                self.name,
+                context.challenge.challenge_id,
+                "flag_candidate",
+                (finding,),
+                tuple(str(flag) for flag in rsa_recovery["flags"]),
+            )
 
         candidates = transform_candidates(text)
         flags = extract_flags("\n".join(candidate.value for candidate in candidates))

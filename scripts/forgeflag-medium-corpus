@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+from pathlib import Path
+import socket
+import struct
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKDIR = ROOT / ".forgeflag" / "medium-corpus"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run medium-difficulty public-CTF-pattern cases through ForgeFlag Web.")
+    parser.add_argument("--url", default="http://127.0.0.1:8080", help="ForgeFlag Web UI base URL")
+    parser.add_argument("--list", action="store_true", help="List corpus cases without running them")
+    parser.add_argument("--keep", action="store_true", help="Keep generated challenges in the Web notebook after running")
+    args = parser.parse_args()
+
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    fixtures = build_fixtures()
+    cases = corpus_cases(fixtures)
+    if args.list:
+        print(json.dumps({"cases": [_case_listing(case) for case in cases]}, indent=2, ensure_ascii=False))
+        return 0
+
+    web_server = start_web_server()
+    tcp_server = start_tcp_server(b"Welcome to the service\nflag{medium_pwn_banner}\n")
+    rows: list[dict[str, object]] = []
+    try:
+        for case in cases:
+            delete_challenge(args.url, str(case["challenge_id"]))
+            create_challenge(args.url, case)
+            summary = run_challenge(args.url, case)
+            findings = get_json(args.url, f"/api/challenges/{case['challenge_id']}/findings")
+            accepted = summary.get("accepted_flags", [])
+            ok = case["expected_flag"] in accepted
+            rows.append(
+                {
+                    "challenge_id": case["challenge_id"],
+                    "category": case["category"],
+                    "difficulty": case["difficulty"],
+                    "status": summary.get("status"),
+                    "expected": case["expected_flag"],
+                    "accepted_flags": accepted,
+                    "ok": ok,
+                    "source_url": case["source_url"],
+                    "findings": [item.get("finding") for item in findings],
+                }
+            )
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        failed = [row for row in rows if not row["ok"]]
+        return 1 if failed else 0
+    finally:
+        web_server.shutdown()
+        web_server.server_close()
+        tcp_server.close()
+        if not args.keep:
+            for case in cases:
+                delete_challenge(args.url, str(case["challenge_id"]))
+
+
+def build_fixtures() -> dict[str, Path]:
+    crypto = WORKDIR / "rsa-known-factors.txt"
+    p = 2**521 - 1
+    q = 2**127 - 1
+    n = p * q
+    e = 65537
+    message = int.from_bytes(b"flag{medium_rsa_known_factors}", "big")
+    c = pow(message, e, n)
+    crypto.write_text(f"n = {n}\ne = {e}\nc = {c}\np = {p}\nq = {q}\n", encoding="utf-8")
+
+    misc_zip = WORKDIR / "misc-nested.zip"
+    write_zip(misc_zip, {"docs/readme.txt": "try the secret entry", "secret/flag.txt": "flag{medium_archive_misc}"})
+
+    forensics_zip = WORKDIR / "forensics-bundle.zip"
+    write_zip(forensics_zip, {"evidence/log.txt": "routine log", "flag.txt": "flag{medium_forensics_archive}"})
+
+    traffic = WORKDIR / "dns-exfil.pcap"
+    write_dns_pcap(traffic, "flag{medium_dns_exfil}")
+
+    reverse_source = WORKDIR / "reverse-medium.c"
+    reverse_source.write_text(
+        '#include <stdio.h>\n'
+        'const char *hint = "static triage still matters";\n'
+        'const char *flag = "flag{medium_reverse_static}";\n'
+        'int main(void) { puts(hint); return flag[0] == 0; }\n',
+        encoding="utf-8",
+    )
+    reverse_bin = WORKDIR / "reverse-medium"
+    compile_c(reverse_source, reverse_bin)
+
+    return {
+        "crypto": crypto,
+        "misc_zip": misc_zip,
+        "forensics_zip": forensics_zip,
+        "traffic": traffic,
+        "reverse": reverse_bin,
+    }
+
+
+def corpus_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
+    return [
+        {
+            "challenge_id": "medium-web-linked-route",
+            "category": "web",
+            "difficulty": "medium",
+            "title": "Linked route web triage",
+            "description": "Homepage exposes a same-origin link; the flag is on the linked route.",
+            "target": "http://127.0.0.1:18091/",
+            "attachments": [],
+            "active_probe": True,
+            "expected_flag": "flag{medium_web_link}",
+            "source_url": "https://github.com/warlocksmurf/bluelobster-grimoire",
+        },
+        {
+            "challenge_id": "medium-crypto-rsa-known-factors",
+            "category": "crypto",
+            "difficulty": "medium",
+            "title": "RSA known factors",
+            "description": "RSA parameter recovery pattern from public crypto CTF archives.",
+            "attachments": [fixtures["crypto"]],
+            "active_probe": False,
+            "expected_flag": "flag{medium_rsa_known_factors}",
+            "source_url": "https://github.com/cryptohack/ctf_archive",
+        },
+        {
+            "challenge_id": "medium-misc-archive-preview",
+            "category": "misc",
+            "difficulty": "medium",
+            "title": "Nested archive text preview",
+            "description": "Archive triage pattern with decoys and a small secret text entry.",
+            "attachments": [fixtures["misc_zip"]],
+            "active_probe": False,
+            "expected_flag": "flag{medium_archive_misc}",
+            "source_url": "https://github.com/trailofbits/ctf/blob/master/forensics/README.md",
+        },
+        {
+            "challenge_id": "medium-forensics-archive-preview",
+            "category": "forensics",
+            "difficulty": "medium",
+            "title": "Forensic archive bundle",
+            "description": "Forensics archive triage with evidence entries and a flag-bearing text file.",
+            "attachments": [fixtures["forensics_zip"]],
+            "active_probe": False,
+            "expected_flag": "flag{medium_forensics_archive}",
+            "source_url": "https://github.com/trailofbits/ctf/blob/master/forensics/README.md",
+        },
+        {
+            "challenge_id": "medium-traffic-dns-exfil",
+            "category": "traffic",
+            "difficulty": "medium",
+            "title": "DNS exfiltration label",
+            "description": "Packet-capture triage with a hex-encoded flag in a DNS query label.",
+            "attachments": [fixtures["traffic"]],
+            "active_probe": False,
+            "expected_flag": "flag{medium_dns_exfil}",
+            "source_url": "https://github.com/trailofbits/ctf/blob/master/forensics/README.md",
+        },
+        {
+            "challenge_id": "medium-reverse-static-triage",
+            "category": "reverse",
+            "difficulty": "medium",
+            "title": "Static reverse triage",
+            "description": "Binary triage baseline inspired by public reverse/pwn archives.",
+            "attachments": [fixtures["reverse"]],
+            "active_probe": False,
+            "expected_flag": "flag{medium_reverse_static}",
+            "source_url": "https://github.com/google/google-ctf",
+        },
+        {
+            "challenge_id": "medium-pwn-service-banner",
+            "category": "pwn",
+            "difficulty": "medium",
+            "title": "Scoped TCP service transcript",
+            "description": "Pwn service triage baseline where the first transcript carries proof material.",
+            "target": "tcp://127.0.0.1:18092",
+            "attachments": [],
+            "active_probe": True,
+            "expected_flag": "flag{medium_pwn_banner}",
+            "source_url": "https://github.com/google/google-ctf",
+        },
+    ]
+
+
+def _case_listing(case: dict[str, object]) -> dict[str, object]:
+    return {
+        key: case[key]
+        for key in ("challenge_id", "category", "difficulty", "title", "expected_flag", "source_url")
+    }
+
+
+class MediumWebHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path == "/flag":
+            body = b"flag{medium_web_link}"
+        else:
+            body = b'<!doctype html><title>Medium Web</title><a href="/flag">system status</a>'
+        self.send_response(200)
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+def start_web_server() -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer(("127.0.0.1", 18091), MediumWebHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def start_tcp_server(payload: bytes) -> socket.socket:
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 18092))
+    server.listen(5)
+
+    def serve() -> None:
+        while True:
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                break
+            with conn:
+                conn.sendall(payload)
+
+    threading.Thread(target=serve, daemon=True).start()
+    return server
+
+
+def write_zip(path: Path, entries: dict[str, str]) -> None:
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, value in entries.items():
+            zf.writestr(name, value)
+
+
+def compile_c(source: Path, output: Path) -> None:
+    subprocess.run(["clang", str(source), "-o", str(output)], check=True)
+
+
+def create_challenge(base_url: str, case: dict[str, object]) -> None:
+    payload = {
+        "challenge_id": case["challenge_id"],
+        "category": case["category"],
+        "title": case["title"],
+        "target": case.get("target", ""),
+        "description": case["description"],
+        "tags": f"medium-corpus,{case['difficulty']},{case['category']}",
+        "attachments": [
+            {
+                "name": path.name,
+                "content_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+            }
+            for path in case["attachments"]
+        ],
+    }
+    post_json(base_url, "/api/challenges", payload)
+
+
+def run_challenge(base_url: str, case: dict[str, object]) -> dict[str, object]:
+    return post_json(
+        base_url,
+        f"/api/challenges/{case['challenge_id']}/run",
+        {
+            "active_probe": case["active_probe"],
+            "allowed_hosts": "127.0.0.1,localhost",
+            "llm_enabled": False,
+            "llm_provider": "disabled",
+        },
+    )
+
+
+def delete_challenge(base_url: str, challenge_id: str) -> None:
+    request = urllib.request.Request(base_url.rstrip("/") + f"/api/challenges/{challenge_id}", method="DELETE")
+    try:
+        with urllib.request.urlopen(request, timeout=20):
+            return
+    except urllib.error.HTTPError:
+        return
+    except urllib.error.URLError:
+        return
+
+
+def post_json(base_url: str, path: str, payload: dict[str, object]) -> dict[str, object]:
+    request = urllib.request.Request(
+        base_url.rstrip("/") + path,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=45) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def get_json(base_url: str, path: str) -> dict[str, object] | list[dict[str, object]]:
+    with urllib.request.urlopen(base_url.rstrip("/") + path, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def write_dns_pcap(path: Path, flag: str) -> None:
+    query = flag.encode("utf-8").hex() + ".exfil.test"
+    payload = dns_query(query)
+    packet = ethernet_frame(ipv4_packet(udp_datagram(payload)))
+    with path.open("wb") as handle:
+        handle.write(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
+        ts = int(time.time())
+        handle.write(struct.pack("<IIII", ts, 0, len(packet), len(packet)))
+        handle.write(packet)
+
+
+def dns_query(name: str) -> bytes:
+    labels = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.split("."))
+    return struct.pack("!HHHHHH", 0x1337, 0x0100, 1, 0, 0, 0) + labels + b"\x00" + struct.pack("!HH", 1, 1)
+
+
+def udp_datagram(payload: bytes) -> bytes:
+    length = 8 + len(payload)
+    return struct.pack("!HHHH", 53000, 53, length, 0) + payload
+
+
+def ipv4_packet(payload: bytes) -> bytes:
+    src = socket.inet_aton("10.10.10.2")
+    dst = socket.inet_aton("8.8.8.8")
+    total_length = 20 + len(payload)
+    header = struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 17, 0, src, dst)
+    checksum = internet_checksum(header)
+    return struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 17, checksum, src, dst) + payload
+
+
+def ethernet_frame(payload: bytes) -> bytes:
+    return b"\xaa\xaa\xaa\xaa\xaa\xaa" + b"\xbb\xbb\xbb\xbb\xbb\xbb" + b"\x08\x00" + payload
+
+
+def internet_checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\x00"
+    total = sum(struct.unpack("!%dH" % (len(data) // 2), data))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

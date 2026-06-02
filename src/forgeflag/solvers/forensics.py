@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from forgeflag.archive_analysis import analyze_archive
+from forgeflag.archive_analysis import analyze_archive, preview_archive_text
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.image import analyze_image_stego_hints, analyze_png_ihdr
@@ -82,8 +82,11 @@ class ForensicsSolver:
         png_ihdr = analyze_png_ihdr(Path(resolved))
         image_stego = analyze_image_stego_hints(Path(resolved))
         flags = tuple(dict.fromkeys((*extract_flags(combined_output), *extract_flags(_image_text(image_stego)))))
-        flag_candidates.extend(flags)
         archive = analyze_archive(resolved)
+        archive_text_previews = preview_archive_text(resolved) if archive else []
+        archive_flags = extract_flags("\n".join(str(item.get("text_preview", "")) for item in archive_text_previews))
+        flags = tuple(dict.fromkeys((*flags, *archive_flags)))
+        flag_candidates.extend(flags)
 
         finding = Finding(
             challenge_id=challenge_id,
@@ -100,6 +103,7 @@ class ForensicsSolver:
                 **({"png_ihdr": png_ihdr} if png_ihdr else {}),
                 **({"image_stego": image_stego} if image_stego else {}),
                 **({"archive": archive} if archive else {}),
+                **({"archive_text_previews": archive_text_previews} if archive_text_previews else {}),
             },
             hypothesis=_forensics_hypothesis(
                 flags,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urldefrag, urljoin, urlparse
+
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.solvers.base import SolverContext
@@ -86,6 +88,12 @@ class WebSolver:
         context.notebook.add_finding(analysis)
         findings.append(analysis)
 
+        link_finding, link_flags = _follow_visible_links(context, challenge.target, html)
+        if link_finding:
+            context.notebook.add_finding(link_finding)
+            findings.append(link_finding)
+            flag_candidates.extend(link_flags)
+
         ffuf_result = ctf.ffuf_route_discovery(
             challenge.target,
             route_words=_route_words_from_html(html),
@@ -114,7 +122,7 @@ class WebSolver:
             challenge_id=challenge.challenge_id,
             status="flag_candidate" if flags else "ok",
             findings=tuple(findings),
-            flag_candidates=tuple(flag_candidates),
+            flag_candidates=tuple(dict.fromkeys(flag_candidates)),
         )
 
 
@@ -149,6 +157,78 @@ def _route_words_from_html(html: HtmlSummary) -> tuple[str, ...]:
         if action:
             words.append(action.split("/", 1)[0])
     return tuple(dict.fromkeys(words))
+
+
+def _follow_visible_links(
+    context: SolverContext,
+    target: str,
+    html: HtmlSummary,
+    limit: int = 5,
+) -> tuple[Finding | None, tuple[str, ...]]:
+    targets = _scoped_link_targets(target, html, limit)
+    if not targets:
+        return None, ()
+
+    probe = HttpProbeTool(context.scope)
+    statuses: dict[str, str] = {}
+    samples: dict[str, str] = {}
+    flag_candidates: list[str] = []
+    for url in targets:
+        result = probe.run(url)
+        context.notebook.add_tool_result(context.challenge.challenge_id, result)
+        statuses[url] = result.status
+        sample = str(result.raw.get("sample", ""))
+        samples[url] = sample[:500]
+        flag_candidates.extend(extract_flags(sample))
+
+    flags = tuple(dict.fromkeys(flag_candidates))
+    finding = Finding(
+        challenge_id=context.challenge.challenge_id,
+        solver=WebSolver.name,
+        finding="Followed scoped visible web links",
+        evidence={
+            "followed_urls": targets,
+            "tool_statuses": statuses,
+            "samples": samples,
+            "flag_candidates": list(flags),
+        },
+        hypothesis=_linked_hypothesis(flags),
+        confidence=0.84 if flags else 0.58,
+        next_action=_linked_next_action(flags),
+    )
+    return finding, flags
+
+
+def _scoped_link_targets(target: str, html: HtmlSummary, limit: int) -> list[str]:
+    parsed_target = urlparse(target)
+    urls: list[str] = []
+    for link in html.links:
+        href = str(link).strip()
+        if not href or href.startswith(("#", "mailto:", "javascript:")):
+            continue
+        joined = urldefrag(urljoin(target, href)).url
+        parsed_joined = urlparse(joined)
+        if parsed_joined.scheme not in {"http", "https"}:
+            continue
+        if (parsed_joined.scheme, parsed_joined.netloc) != (parsed_target.scheme, parsed_target.netloc):
+            continue
+        if joined != target and joined not in urls:
+            urls.append(joined)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def _linked_hypothesis(flags: tuple[str, ...]) -> str:
+    if flags:
+        return "A same-origin visible link returned a flag-like token."
+    return "Visible same-origin links were reachable and can guide manual route follow-up."
+
+
+def _linked_next_action(flags: tuple[str, ...]) -> str:
+    if flags:
+        return "Send linked-route candidates to Verifier and preserve the followed URL path."
+    return "Inspect linked pages, then expand to forms or route discovery if needed."
 
 
 def _ffuf_hypothesis(status: str) -> str:

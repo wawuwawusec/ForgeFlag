@@ -487,6 +487,8 @@ INDEX_HTML = r"""<!doctype html>
     .badge.muted { background: #eef2f5; color: var(--muted); border-color: var(--line); }
     .flag-list { display: flex; gap: 8px; flex-wrap: wrap; }
     .flag-chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #111820; color: #e7eef4; border-radius: 6px; padding: 5px 8px; overflow-wrap: anywhere; }
+    .tag-row { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+    .tag-chip { border: 1px solid var(--line); border-radius: 999px; background: #fbfcfd; color: var(--muted); padding: 2px 7px; font-size: 11px; }
     .kv-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .kv { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; background: #fbfcfd; min-width: 0; }
     .kv span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
@@ -772,6 +774,7 @@ INDEX_HTML = r"""<!doctype html>
               <div class="item${state.selected === ch.challenge_id ? " active" : ""}" data-challenge-id="${escapeHtml(ch.challenge_id)}">
                 <div class="item-head"><strong>${escapeHtml(ch.challenge_id)}</strong>${statusLabel(ch)}</div>
                 <div class="meta">${escapeHtml(ch.target || ch.title || "无目标")}</div>
+                ${tagChips(ch.tags || [])}
                 <div class="meta">${escapeHtml((ch.attachment_paths || []).join(", "))}</div>
               </div>`).join("")}
           </div>
@@ -784,6 +787,11 @@ INDEX_HTML = r"""<!doctype html>
       const badgeClass = status === "flag_found" ? "badge" : (status === "not_run" ? "badge muted" : "badge warn");
       const suffix = count ? ` · ${count} flag` : "";
       return `<span class="${badgeClass}">${escapeHtml(status)}${escapeHtml(suffix)}</span>`;
+    }
+    function tagChips(tags) {
+      const values = asList(tags).filter(Boolean).slice(0, 5);
+      if (!values.length) return "";
+      return `<div class="tag-row">${values.map(tag => `<span class="tag-chip">${escapeHtml(tag)}</span>`).join("")}</div>`;
     }
     function statusBucket(challenge) {
       if ((challenge.accepted_flag_count || 0) > 0 || challenge.latest_status === "flag_found") return "solved";

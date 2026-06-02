@@ -134,6 +134,29 @@ class MiscSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["archive"]["kind"], "zip")
         self.assertIn("secret.txt", finding.evidence["archive"]["interesting_entries"])
 
+    def test_misc_solver_extracts_flag_from_interesting_archive_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "nested.zip"
+            with zipfile.ZipFile(attachment, "w") as zf:
+                zf.writestr("docs/readme.txt", "look in the secret note")
+                zf.writestr("secret/flag.txt", "flag{archive_text_preview}")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-archive-flag",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-archive-flag")
+            finding = next(f for f in notebook.findings_for("misc-archive-flag") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{archive_text_preview}"])
+        self.assertEqual(finding.evidence["archive_text_previews"][0]["name"], "secret/flag.txt")
+
     def test_misc_solver_records_hash_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

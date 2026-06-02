@@ -48,6 +48,31 @@ class CryptoSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["rsa"]["parameters"]["e"], "3")
         self.assertIn("RsaCtfTool", finding.evidence["rsa"]["recommended_tools"])
 
+    def test_crypto_solver_recovers_rsa_flag_from_known_factors(self) -> None:
+        p = 2**127 - 1
+        q = 2**89 - 1
+        n = p * q
+        e = 65537
+        message = int.from_bytes(b"flag{rsa_known_factors}", "big")
+        c = pow(message, e, n)
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-rsa-known-factors",
+                    category=ChallengeCategory.CRYPTO,
+                    description=f"n = {n}\ne = {e}\nc = {c}\np = {p}\nq = {q}\n",
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-rsa-known-factors")
+            finding = next(f for f in notebook.findings_for("crypto-rsa-known-factors") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{rsa_known_factors}"])
+        self.assertEqual(finding.finding, "Recovered RSA flag candidates")
+        self.assertEqual(finding.evidence["rsa_recovery"]["method"], "known_factors")
+
     def test_crypto_solver_records_hash_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from forgeflag.crypto_analysis import rsa_summary_from_text
+from forgeflag.crypto_analysis import recover_rsa_flags_from_text, rsa_summary_from_text
 
 
 class CryptoAnalysisTest(unittest.TestCase):
@@ -20,6 +20,19 @@ class CryptoAnalysisTest(unittest.TestCase):
 
         self.assertTrue(summary["has_public_key"])
         self.assertIn("RsaCtfTool", summary["recommended_tools"])
+
+    def test_recover_rsa_flags_from_known_factors(self) -> None:
+        message = int.from_bytes(b"flag{rsa_known_factors}", "big")
+        p = 2**127 - 1
+        q = 2**89 - 1
+        n = p * q
+        e = 65537
+        c = pow(message, e, n)
+
+        result = recover_rsa_flags_from_text(f"n = {n}\ne = {e}\nc = {c}\np = {p}\nq = {q}\n")
+
+        self.assertEqual(result["flags"], ["flag{rsa_known_factors}"])
+        self.assertEqual(result["method"], "known_factors")
 
 
 if __name__ == "__main__":

@@ -39,6 +39,22 @@ class FlagHandler(BaseHTTPRequestHandler):
         return
 
 
+class LinkedFlagHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path == "/flag":
+            body = b"flag{linked_web_route}"
+        else:
+            body = b'<!doctype html><title>Linked</title><a href="/flag">status</a>'
+        self.send_response(200)
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
 class WorkflowTest(unittest.TestCase):
     def test_manager_records_recon_and_web_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,6 +142,36 @@ class WorkflowTest(unittest.TestCase):
         web_finding = next(f for f in findings if f.finding == "Analyzed scoped HTTP response structure")
         self.assertEqual(web_finding.evidence["html"]["title"], "ForgeFlag Test")
         self.assertEqual(web_finding.evidence["html"]["forms"][0]["method"], "post")
+
+    def test_web_solver_follows_scoped_visible_links_for_flags(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), LinkedFlagHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            target = f"http://127.0.0.1:{server.server_port}/"
+            with tempfile.TemporaryDirectory() as tmp:
+                notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+                notebook.add_challenge(
+                    Challenge(
+                        challenge_id="web-linked-flag",
+                        category=ChallengeCategory.WEB,
+                        target=target,
+                    )
+                )
+
+                summary = Manager(
+                    notebook,
+                    RunConfig(active_probe=True, allowed_hosts=("127.0.0.1",)),
+                ).run_challenge("web-linked-flag")
+                findings = notebook.findings_for("web-linked-flag")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{linked_web_route}"])
+        linked_finding = next(f for f in findings if f.finding == "Followed scoped visible web links")
+        self.assertIn("/flag", linked_finding.evidence["followed_urls"][0])
 
     def test_web_solver_records_scoped_ffuf_route_discovery(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), FlagHandler)
