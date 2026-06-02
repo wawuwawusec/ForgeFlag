@@ -478,6 +478,8 @@ INDEX_HTML = r"""<!doctype html>
     .empty-state { border: 1px dashed var(--line); border-radius: 6px; padding: 18px; color: var(--muted); background: #fbfcfd; }
     .result-card { border: 1px solid var(--line); border-radius: 6px; background: white; padding: 14px; display: grid; gap: 10px; }
     .result-card h3 { margin: 0; font-size: 15px; }
+    .tab-intro { border: 1px solid #cfe4dc; border-radius: 6px; background: #f2faf7; color: #24463d; padding: 10px 12px; font-size: 13px; }
+    .tab-intro strong { display: block; margin-bottom: 3px; color: var(--ink); }
     .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; flex-wrap: wrap; }
     .card-title { display: grid; gap: 4px; min-width: 0; }
     .badge { display: inline-flex; width: fit-content; align-items: center; border-radius: 999px; padding: 3px 8px; font-size: 12px; background: #eaf4f0; color: #0f5d4c; border: 1px solid #cfe4dc; }
@@ -750,15 +752,30 @@ INDEX_HTML = r"""<!doctype html>
       return `<span class="${badgeClass}">${escapeHtml(status)}${escapeHtml(suffix)}</span>`;
     }
     function renderData(tab, data) {
-      if (tab === "summary") return renderSummary(data);
-      if (tab === "agent") return renderAgentView(data);
-      if (tab === "findings") return renderFindings(data);
-      if (tab === "observations") return renderObservations(data);
-      if (tab === "artifacts") return renderArtifacts(data);
-      if (tab === "report") return renderReport(data);
-      if (tab === "tools") return renderToolRows(data, "工具可用性", "tool");
-      if (tab === "catalog") return renderToolRows(data, "项目目录", "catalog");
-      return renderRaw(data);
+      const intro = tabIntro(tab);
+      if (tab === "summary") return intro + renderSummary(data);
+      if (tab === "agent") return intro + renderAgentView(data);
+      if (tab === "findings") return intro + renderFindings(data);
+      if (tab === "observations") return intro + renderObservations(data);
+      if (tab === "artifacts") return intro + renderArtifacts(data);
+      if (tab === "report") return intro + renderReport(data);
+      if (tab === "tools") return intro + renderToolRows(data, "工具可用性", "tool");
+      if (tab === "catalog") return intro + renderToolRows(data, "项目目录", "catalog");
+      return intro + renderRaw(data);
+    }
+    function tabIntro(tab) {
+      const intros = {
+        summary: ["Summary", "总览本题最近一次运行状态、已确认 flag、执行过的 solver 和被拒候选。"],
+        agent: ["Agent", "按答题者视角串起 LLM 规划、知识检索、行动队列、工具摘要和最短发现路径。"],
+        findings: ["Findings", "每个 solver 产出的发现、判断依据、置信度和建议下一步。"],
+        observations: ["Observations", "跨 solver 共享的线索池，包括 LLM 建议、flag 候选和工具压缩摘要。"],
+        artifacts: ["Artifacts", "确认上传附件是否已进入工作区，并查看文件大小、SHA256 和实际路径。"],
+        report: ["Report", "Write-up 风格复盘，找到 flag 后会整理结论、证据、复现步骤和最短路径。"],
+        tools: ["Tools", "本机和 Docker 中可用的工具清单，以及缺失工具和验证命令。"],
+        catalog: ["Catalog", "推荐集成的 CTF 项目目录，用来规划后续工具能力，不会自动安装。"],
+      };
+      const info = intros[tab] || ["Raw", "原始接口数据，用于调试。"];
+      return `<div class="tab-intro"><strong>${escapeHtml(info[0])}</strong>${escapeHtml(info[1])}</div>`;
     }
     function renderRaw(data) {
       if (Array.isArray(data) && data.length === 0) return `<div class="empty-state">暂无数据。</div>${rawJson(data)}`;
