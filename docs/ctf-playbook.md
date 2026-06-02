@@ -174,6 +174,7 @@ Common first moves:
 ForgeFlag coverage today:
 
 - Transform chaining handles common reversible encodings.
+- Transform chaining now includes Caesar all-rotation search, Morse, and decimal/octal ASCII in addition to hex, Base32/Base64, binary ASCII, ROT13, URL, and HTML entity decoding.
 - RSA and hash triage are structured.
 - The corpus smoke includes Base32 decoding and verifies the generated CTF write-up.
 - PNG misc/stego triage should inspect abnormal extra IDAT chunks as possible independent zlib payloads; truncated length fields can still carry recoverable flag text.
@@ -273,10 +274,21 @@ Current smoke cases:
 
 The smoke should exit non-zero if any expected flag is not accepted by the Web run path.
 
+## Expanded Web Benchmark
+
+Run while the Web UI is active:
+
+```bash
+scripts/forgeflag-control start
+scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --keep --strict
+```
+
+The expanded benchmark generates safe local fixtures from public CTF writeup patterns instead of vendoring original challenge archives. It currently covers 70 cases: Web, Crypto, Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases. The current strict result is 70/70 through the Web API.
+
 ## Gaps To Add Next
 
 - Web: API option leakage, robots.txt discovery, simple form capture, and SSRF/path traversal evidence.
-- Crypto: Caesar all-rotation search, Morse, Vigenere/substitution hints, XOR cribbing, and RSA solve-script generation.
+- Crypto: Vigenere/substitution hints, XOR cribbing, and RSA solve-script generation.
 - Misc: small scripting puzzle harnesses and sandbox/pickle blackbox notes.
 - Forensics: zip-with-comment/password hint, PNG/JPEG visual preview, and disk image timeline fixtures.
 - Traffic: DNS label reconstruction across multiple packets, TXT extraction, HTTP object export, SMTP/FTP exfil, and stream reassembly.

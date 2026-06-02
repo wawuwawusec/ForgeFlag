@@ -51,7 +51,7 @@ Implemented so far:
 - Solver interface and starter solvers for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra.
 - CyberChef-style transform pipeline:
   - `forgeflag.transforms.transform_candidates`
-  - bounded transform chaining for hex, Base32, Base64, binary ASCII, ROT13, URL decoding, and HTML entity decoding
+  - bounded transform chaining for hex, Base32, Base64, binary ASCII, ROT13, Caesar shifts, Morse, decimal/octal ASCII, URL decoding, and HTML entity decoding
   - shared by CryptoSolver, MiscSolver, and TrafficSolver
 - Flag extraction preserves common platform prefixes such as `picoCTF{...}`, `HTB{...}`, `DUCTF{...}`, `f1ag{...}`, `flag{...}`, and `ctf{...}`
 - Crypto/RSA triage:
@@ -133,6 +133,11 @@ Implemented so far:
   - Generates safe local fixtures distilled from public CTF writeup patterns
   - Covers hidden Web APIs, source route/sink triage, crypto primitive misuse, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, ret2win pwn, pickle sandbox, and Web-to-Java chains
   - Current strict result: 14/14 full score through the Web API
+- Web-run expanded CTF corpus benchmark:
+  - `scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --keep --strict`
+  - Generates safe local fixtures distilled from public CTF writeups, forums, challenge indexes, and benchmark papers
+  - Covers 70 cases total: Web, Crypto, Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases
+  - Current strict result: 70/70 full score through the Web API
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category

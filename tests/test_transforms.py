@@ -44,6 +44,28 @@ class TransformTest(unittest.TestCase):
 
         self.assertIn("flag{rot13}", {candidate.value for candidate in candidates})
 
+    def test_transform_candidates_decodes_caesar_shift_flag(self) -> None:
+        candidates = transform_candidates("mshn{jhlzhy}")
+
+        self.assertIn("flag{caesar}", {candidate.value for candidate in candidates})
+        flag_candidate = next(candidate for candidate in candidates if candidate.value == "flag{caesar}")
+        self.assertIn("caesar_shift_", flag_candidate.recipe[0])
+
+    def test_transform_candidates_decodes_morse_flag(self) -> None:
+        candidates = transform_candidates("..-. .-.. .- --. / -... .-. .- -.-. . ...")
+
+        self.assertIn("flag{braces}", {candidate.value for candidate in candidates})
+
+    def test_transform_candidates_decodes_decimal_ascii_flag(self) -> None:
+        candidates = transform_candidates("102 108 97 103 123 100 101 99 105 109 97 108 125")
+
+        self.assertIn("flag{decimal}", {candidate.value for candidate in candidates})
+
+    def test_transform_candidates_decodes_octal_ascii_flag(self) -> None:
+        candidates = transform_candidates("146 154 141 147 173 157 143 164 141 154 175")
+
+        self.assertIn("flag{octal}", {candidate.value for candidate in candidates})
+
 
 if __name__ == "__main__":
     unittest.main()
