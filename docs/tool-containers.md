@@ -42,6 +42,25 @@ docker run --rm \
 
 Solvers should consume the resulting output files as structured evidence instead of trusting raw tool output as a final answer.
 
+## Runtime Smoke Checks
+
+Verify host wrapper readiness with:
+
+```bash
+scripts/forgeflag-tool-smoke
+```
+
+The default smoke only runs local/offline wrapper checks. It reports missing tools separately from failing tools, and it treats the curated project catalog as recommended integration candidates rather than tools that must all be installed on the host.
+
+Optional bounded checks:
+
+```bash
+scripts/forgeflag-tool-smoke --include-active-network
+scripts/forgeflag-tool-smoke --include-cracking
+```
+
+The active-network mode only targets a local temporary service or `127.0.0.1` through ForgeFlag scope controls. Cracking mode uses a tiny dictionary fixture and should stay opt-in because hashcat/John environments vary by host.
+
 ## Read-Only Adapter Pattern
 
 External binary-analysis tools should follow the existing IDA MCP adapter pattern:

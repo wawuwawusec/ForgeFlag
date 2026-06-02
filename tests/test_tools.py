@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,25 @@ class ToolRunnerTest(unittest.TestCase):
         nmap = next(row for row in inventory if row["name"] == "nmap_tcp_basic")
         self.assertEqual(nmap["category"], "recon")
         self.assertTrue(nmap["active_network"])
+
+    def test_inventory_does_not_treat_missing_pyenv_shim_as_available(self) -> None:
+        def fake_which(command: str) -> str | None:
+            if command == "checksec":
+                return "/Users/example/.pyenv/shims/checksec"
+            return None
+
+        completed = subprocess.CompletedProcess(
+            args=["checksec"],
+            returncode=127,
+            stdout=b"",
+            stderr=b"pyenv: checksec: command not found\n",
+        )
+        with patch("forgeflag.tools.runner.shutil.which", side_effect=fake_which):
+            with patch("forgeflag.tools.runner.subprocess.run", return_value=completed):
+                inventory = ToolRunner(ScopePolicy()).inventory()
+
+        checksec = next(row for row in inventory if row["name"] == "checksec")
+        self.assertFalse(checksec["available"])
 
     def test_network_tool_refuses_without_active_scope(self) -> None:
         runner = ToolRunner(ScopePolicy(allowed_hosts=("127.0.0.1",), active_probe=False))

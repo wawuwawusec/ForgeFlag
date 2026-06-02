@@ -84,6 +84,8 @@ Implemented so far:
   - allowlisted `ToolRunner`
   - wrappers for `file`, `strings`, `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `binwalk`, `exiftool`, `tshark`, `tshark_traffic_analysis`, `tshark_dns_summary`, `tshark_tcp_streams`, `tshark_http_requests`, `tshark_http_artifact_scan`, `tshark_flag_scan`, `ffuf`, `nmap_tcp_basic`
   - `forgeflag tools` CLI inventory
+  - `ToolRunner` avoids counting unavailable pyenv shims as runnable tools
+  - `scripts/forgeflag-tool-smoke` performs fixture-backed runtime smoke checks for wrapper execution
 - Curated CTF project catalog:
   - `forgeflag catalog` and `forgeflag catalog --category <category>`
   - `/api/project-catalog`
@@ -142,13 +144,15 @@ Current local setup after migration:
   - `binwalk`
   - `exiftool`
   - `tshark`
-- Tests passed: 118 tests OK
+- Tests passed: 120 tests OK
 
 Useful commands:
 
 ```bash
 cd /Users/5haw0/Documents/ForgeFlag
 .venv/bin/forgeflag tools
+scripts/forgeflag-tool-smoke
+scripts/forgeflag-tool-smoke --include-active-network
 .venv/bin/forgeflag --db .forgeflag/notebook.sqlite tools
 .venv/bin/forgeflag catalog
 .venv/bin/forgeflag catalog --category traffic

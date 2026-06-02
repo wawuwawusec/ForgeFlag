@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import socket
+import struct
+import sys
+import tempfile
+import time
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Thread
+from typing import Any, Callable
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from forgeflag.project_catalog import PROJECT_CATALOG
+from forgeflag.safety import ScopePolicy
+from forgeflag.tools import ctf
+from forgeflag.tools.runner import ToolRunner
+
+
+FLAG = "flag{forgeflag_tool_smoke}"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run safe ForgeFlag tool wrapper smoke checks.")
+    parser.add_argument("--list", action="store_true", help="Only print wrapper and catalog inventory.")
+    parser.add_argument("--include-active-network", action="store_true", help="Run local-only active probes such as nmap/ffuf.")
+    parser.add_argument("--include-cracking", action="store_true", help="Run tiny bounded hashcat/John dictionary checks if installed.")
+    args = parser.parse_args()
+
+    runner = ToolRunner(ScopePolicy())
+    inventory = runner.inventory()
+    if args.list:
+        print(json.dumps({"wrappers": inventory, "catalog": _catalog_summary()}, ensure_ascii=False, indent=2))
+        return 0
+
+    with tempfile.TemporaryDirectory(prefix="forgeflag-tool-smoke-") as tmp:
+        fixtures = _make_fixtures(Path(tmp))
+        checks = _run_checks(fixtures, args.include_active_network, args.include_cracking)
+
+    summary = {
+        "passed": sum(1 for row in checks if row["status"] == "passed"),
+        "missing": sum(1 for row in checks if row["status"] == "missing"),
+        "skipped": sum(1 for row in checks if row["status"] == "skipped"),
+        "failed": sum(1 for row in checks if row["status"] == "failed"),
+    }
+    payload = {
+        "summary": summary,
+        "checks": checks,
+        "catalog": _catalog_summary(),
+        "notes": [
+            "Only ForgeFlag wrappers are runtime-smoked here.",
+            "Recommended catalog entries are integration candidates and are not all expected to be installed locally.",
+        ],
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 1 if summary["failed"] else 0
+
+
+def _run_checks(fixtures: dict[str, Path | str], include_active_network: bool, include_cracking: bool) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+
+    checks.append(_tool_check("file", lambda: ctf.file_identify(str(fixtures["text"])), expected_text="ASCII text"))
+    checks.append(_tool_check("strings", lambda: ctf.strings_extract(str(fixtures["blob"]), min_length=6), expected_text=FLAG))
+    checks.append(_tool_check("binwalk", lambda: ctf.binwalk_scan(str(fixtures["blob"]))))
+    checks.append(_tool_check("exiftool", lambda: ctf.exiftool_read(str(fixtures["text"])), expected_text="File Type"))
+    checks.append(_tool_check("tshark", lambda: ctf.tshark_pcap_summary(str(fixtures["pcap"]), packet_limit=5), expected_text="HTTP"))
+    checks.append(_tool_check("checksec", lambda: ctf.checksec_binary(str(fixtures["binary"]))))
+    checks.append(_tool_check("ROPgadget", lambda: ctf.ropgadget_scan(str(fixtures["binary"]), depth=3)))
+    checks.append(_tool_check("ropper", lambda: ctf.ropper_scan(str(fixtures["binary"]), search="ret")))
+    checks.append(_tool_check("RsaCtfTool", lambda: ctf.rsactftool_attack(str(fixtures["rsa_public_key"]))))
+
+    if include_cracking:
+        checks.append(_tool_check("hashcat", lambda: ctf.hashcat_dictionary_attack(str(fixtures["hash"]), str(fixtures["wordlist"]), 0)))
+        checks.append(_tool_check("john", lambda: ctf.john_dictionary_attack(str(fixtures["hash"]), str(fixtures["wordlist"]), "raw-md5")))
+    else:
+        checks.append(_skip("hashcat", "pass --include-cracking to run the tiny bounded dictionary check"))
+        checks.append(_skip("john", "pass --include-cracking to run the tiny bounded dictionary check"))
+
+    if include_active_network:
+        checks.extend(_active_network_checks(fixtures))
+    else:
+        checks.append(_skip("nmap_tcp_basic", "pass --include-active-network to run a local 127.0.0.1 scan"))
+        checks.append(_skip("ffuf", "pass --include-active-network to run against a local temporary HTTP server"))
+
+    return checks
+
+
+def _tool_check(name: str, fn: Callable[[], Any], expected_text: str | None = None) -> dict[str, Any]:
+    result = fn()
+    stdout = str(result.raw.get("stdout", "")) if result.raw else ""
+    stderr = str(result.raw.get("stderr", "")) if result.raw else ""
+    text = stdout + "\n" + stderr
+    evidence = list(result.evidence)
+    if result.status == "success" and expected_text and expected_text not in text:
+        evidence.append(f"expected text not found: {expected_text}")
+        status = "failed"
+    else:
+        status = _status_from_tool_result(result.status)
+    return {
+        "tool": name,
+        "status": status,
+        "tool_status": result.status,
+        "evidence": evidence[:4],
+        "stdout_preview": stdout[:500],
+        "stderr_preview": stderr[:500],
+    }
+
+
+def _status_from_tool_result(status: str) -> str:
+    if status == "success":
+        return "passed"
+    if status == "missing":
+        return "missing"
+    return "failed"
+
+
+def _skip(tool: str, reason: str) -> dict[str, Any]:
+    return {"tool": tool, "status": "skipped", "tool_status": "skipped", "evidence": [reason]}
+
+
+def _active_network_checks(fixtures: dict[str, Path | str]) -> list[dict[str, Any]]:
+    checks = []
+    scope = ScopePolicy(allowed_hosts=("127.0.0.1", "localhost"), active_probe=True)
+    checks.append(_tool_check("nmap_tcp_basic", lambda: ctf.nmap_tcp_basic("127.0.0.1", ports="1", scope=scope)))
+
+    with _local_http_server(Path(fixtures["webroot"])) as url:
+        checks.append(
+            _tool_check(
+                "ffuf",
+                lambda: ctf.ffuf_route_discovery(url, route_words=("flag.txt", "missing"), rate=5, timeout_seconds=5, scope=scope),
+                expected_text="flag.txt",
+            )
+        )
+    return checks
+
+
+def _make_fixtures(tmp: Path) -> dict[str, Path | str]:
+    text = tmp / "note.txt"
+    text.write_text(f"ForgeFlag tool smoke\n{FLAG}\n", encoding="utf-8")
+
+    blob = tmp / "blob.bin"
+    blob.write_bytes(b"\x00\x01" + FLAG.encode("ascii") + b"\x00embedded data\n")
+
+    pcap = tmp / "sample.pcap"
+    _write_tcp_pcap(pcap, f"GET / HTTP/1.1\r\nHost: smoke.local\r\nX-Flag: {FLAG}\r\n\r\n".encode("ascii"))
+
+    hash_file = tmp / "hashes.txt"
+    hash_file.write_text("5d41402abc4b2a76b9719d911017c592\n", encoding="utf-8")
+    wordlist = tmp / "words.txt"
+    wordlist.write_text("test\nhello\nforgeflag\n", encoding="utf-8")
+
+    rsa_public_key = tmp / "rsa-public.pem"
+    rsa_public_key.write_text(
+        "-----BEGIN PUBLIC KEY-----\n"
+        "MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBALdTC7XcYxKQy5P0qToGfQ1w8YUTxY5X\n"
+        "q52S9rCGxZFEaS0RjzTtTsr8XYvgs4DR0Q9aLclIbKZ3n5cKsjUvmQkCAwEAAQ==\n"
+        "-----END PUBLIC KEY-----\n",
+        encoding="utf-8",
+    )
+
+    webroot = tmp / "web"
+    webroot.mkdir()
+    (webroot / "flag.txt").write_text(FLAG + "\n", encoding="utf-8")
+
+    return {
+        "text": text,
+        "blob": blob,
+        "pcap": pcap,
+        "binary": Path("/bin/ls"),
+        "hash": hash_file,
+        "wordlist": wordlist,
+        "rsa_public_key": rsa_public_key,
+        "webroot": webroot,
+    }
+
+
+def _write_tcp_pcap(path: Path, payload: bytes) -> None:
+    src_ip = b"\x0a\x00\x00\x01"
+    dst_ip = b"\x0a\x00\x00\x02"
+    tcp_header = struct.pack("!HHIIHHHH", 12345, 80, 1, 1, 0x5018, 8192, 0, 0)
+    pseudo = src_ip + dst_ip + struct.pack("!BBH", 0, socket.IPPROTO_TCP, len(tcp_header) + len(payload))
+    tcp_checksum = _checksum(pseudo + tcp_header + payload)
+    tcp_header = struct.pack("!HHIIHHHH", 12345, 80, 1, 1, 0x5018, 8192, tcp_checksum, 0)
+    ip_total_len = 20 + len(tcp_header) + len(payload)
+    ip_header = struct.pack("!BBHHHBBH4s4s", 0x45, 0, ip_total_len, 1, 0, 64, socket.IPPROTO_TCP, 0, src_ip, dst_ip)
+    ip_checksum = _checksum(ip_header)
+    ip_header = struct.pack("!BBHHHBBH4s4s", 0x45, 0, ip_total_len, 1, 0, 64, socket.IPPROTO_TCP, ip_checksum, src_ip, dst_ip)
+    ethernet = b"\x02\x00\x00\x00\x00\x02" + b"\x02\x00\x00\x00\x00\x01" + b"\x08\x00"
+    packet = ethernet + ip_header + tcp_header + payload
+    now = int(time.time())
+    with path.open("wb") as fh:
+        fh.write(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
+        fh.write(struct.pack("<IIII", now, 0, len(packet), len(packet)))
+        fh.write(packet)
+
+
+def _checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\x00"
+    total = 0
+    for index in range(0, len(data), 2):
+        total += (data[index] << 8) + data[index + 1]
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+class _QuietHandler(SimpleHTTPRequestHandler):
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+class _local_http_server:
+    def __init__(self, webroot: Path) -> None:
+        self.webroot = webroot
+        self.server: ThreadingHTTPServer | None = None
+        self.thread: Thread | None = None
+
+    def __enter__(self) -> str:
+        handler = lambda *args, **kwargs: _QuietHandler(*args, directory=str(self.webroot), **kwargs)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        return f"http://127.0.0.1:{self.server.server_port}/"
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+        if self.thread:
+            self.thread.join(timeout=2)
+
+
+def _catalog_summary() -> dict[str, Any]:
+    categories: dict[str, int] = {}
+    integrations: dict[str, int] = {}
+    for row in PROJECT_CATALOG:
+        for category in row["categories"]:
+            categories[category] = categories.get(category, 0) + 1
+        integration = row["integration"]
+        integrations[integration] = integrations.get(integration, 0) + 1
+    return {"total": len(PROJECT_CATALOG), "categories": categories, "integrations": integrations}
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

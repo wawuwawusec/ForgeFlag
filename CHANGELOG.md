@@ -47,3 +47,5 @@
 - Fixed binary ASCII transform seed extraction when misc challenge metadata surrounds encoded attachment content.
 - Expanded the CTF playbook with community source notes and method cards for Web, Crypto, Forensics/Stego, Traffic, Reverse, Pwn, and Misc.
 - Expanded the curated CTF tool catalog to 90+ entries and changed the Web UI Tools tab to show both runnable wrappers and recommended install/integration candidates.
+- Added `scripts/forgeflag-tool-smoke` for fixture-backed wrapper runtime verification and surfaced the smoke command in the Web UI Tools tab.
+- Fixed tool availability checks so missing pyenv shims are not reported as runnable wrappers.

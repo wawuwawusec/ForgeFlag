@@ -114,6 +114,11 @@ def create_handler(db_path: str | Path):
                     "available_wrappers": sum(1 for row in wrappers if row.get("available")),
                     "catalog": len(catalog),
                 },
+                "runtime_smoke": {
+                    "command": "scripts/forgeflag-tool-smoke",
+                    "active_network_command": "scripts/forgeflag-tool-smoke --include-active-network",
+                    "cracking_command": "scripts/forgeflag-tool-smoke --include-cracking",
+                },
             }
 
         @classmethod
@@ -723,12 +728,15 @@ INDEX_HTML = r"""<!doctype html>
         const wrappers = asList(data.wrappers);
         const catalog = asList(data.catalog);
         const counts = data.counts || {};
+        const smoke = data.runtime_smoke || {};
         return `
           <div class="result-card">
             <div class="card-head">
               <div class="card-title">
                 <h3>工具总览</h3>
                 <div class="meta">${escapeHtml(counts.available_wrappers ?? 0)} / ${escapeHtml(counts.wrappers ?? wrappers.length)} wrappers available · ${escapeHtml(counts.catalog ?? catalog.length)} catalog entries</div>
+                <div class="meta">Runtime smoke: ${escapeHtml(smoke.command || "scripts/forgeflag-tool-smoke")}</div>
+                <div class="meta">Active probes are scoped and opt-in: ${escapeHtml(smoke.active_network_command || "scripts/forgeflag-tool-smoke --include-active-network")}</div>
               </div>
               <span class="badge muted">分层展示</span>
             </div>

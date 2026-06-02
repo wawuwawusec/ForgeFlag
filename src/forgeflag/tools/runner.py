@@ -70,7 +70,7 @@ class ToolRunner:
                     "category": spec.category,
                     "description": spec.description,
                     "active_network": spec.active_network,
-                    "available": shutil.which(executable) is not None,
+                    "available": _command_available(executable),
                     "command": list(spec.command),
                 }
             )
@@ -94,7 +94,7 @@ class ToolRunner:
                 return ToolResult(tool=name, target=target, status="refused", evidence=[str(exc)])
 
         executable = spec.command[0]
-        if shutil.which(executable) is None:
+        if not _command_available(executable):
             return ToolResult(
                 tool=name,
                 target=target,
@@ -142,3 +142,32 @@ def _decode_limited(data: bytes, max_bytes: int) -> tuple[str, bool]:
     truncated = len(data) > max_bytes
     clipped = data[:max_bytes]
     return clipped.decode("utf-8", errors="replace"), truncated
+
+
+def _command_available(executable: str) -> bool:
+    command_path = shutil.which(executable)
+    if command_path is None:
+        return False
+
+    if not _looks_like_pyenv_shim(command_path):
+        return True
+
+    try:
+        completed = subprocess.run(
+            [executable],
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+
+    output = _decode_limited(completed.stdout + completed.stderr, 4096)[0]
+    if completed.returncode == 127 and "pyenv:" in output and "command not found" in output:
+        return False
+    return True
+
+
+def _looks_like_pyenv_shim(path: str) -> bool:
+    parts = Path(path).parts
+    return ".pyenv" in parts and "shims" in parts
