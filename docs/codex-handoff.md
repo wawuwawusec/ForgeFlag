@@ -20,10 +20,10 @@ Implemented so far:
 - Manager dispatch loop.
 - SQLite shared notebook.
 - Observer-distilled shared observations.
-- Automatic replay reports for accepted flags.
-  - Reports now include a write-up style structure and Markdown in addition to the legacy flag/path replay data
+- Automatic CTF write-ups for accepted flags.
+  - Write-ups now use conclusion, solving idea, reproduction steps, and key evidence as the primary structure, with Markdown output in addition to legacy flag/path replay data
   - Manager records `solve_trace_step` observations after each solver run
-  - Reports expose `solve_trace`, per-flag `trace_path`, and write-up `shortest_discovery_path`
+  - Write-ups expose `solve_trace`, per-flag `trace_path`, and write-up `shortest_discovery_path`
 - Optional LLM planning layer:
   - `LLMConfig` reads `FORGEFLAG_LLM_PROVIDER`, `FORGEFLAG_LLM_MODEL`, `FORGEFLAG_LLM_API_KEY`, `OPENAI_API_KEY`, `ZAI_API_KEY`, and `FORGEFLAG_LLM_BASE_URL`
   - `OpenAIResponsesProvider` uses the Responses API via standard-library HTTP
@@ -113,8 +113,8 @@ Implemented so far:
   - category workspace filters for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra queues
   - per-run LLM provider/model/API key controls, browser-local non-secret config saving, optional local key remembering, and `/api/llm/test`
   - entered LLM keys are used for run/test requests and are never stored in SQLite
-  - run, auto-loaded findings, observations, artifact summaries, replay report, tools, and catalog views
-  - Summary, Findings, Observations, Artifacts, Report, Tools, and Catalog render as readable cards with collapsible raw JSON for debugging
+  - run, auto-loaded findings, observations, artifact summaries, Write-up, tools, and catalog views
+  - Summary, Findings, Observations, Artifacts, Write-up, Tools, and Catalog render as readable cards with collapsible debug JSON
   - Tools tab shows host/Docker/missing wrapper counts, per-wrapper source, and Docker build/smoke commands
   - Challenge list and Tools tab use collapsible groups to avoid flat long lists
 - Web-run CTF corpus smoke:

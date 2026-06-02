@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     observations = subparsers.add_parser("observations", help="Show distilled shared observations for one challenge")
     observations.add_argument("challenge_id")
 
-    report = subparsers.add_parser("report", help="Show the latest replay report for one challenge")
+    report = subparsers.add_parser("report", help="Show the latest CTF write-up and replay data for one challenge")
     report.add_argument("challenge_id")
 
     artifacts = subparsers.add_parser("artifacts", help="List registered artifacts for one challenge")

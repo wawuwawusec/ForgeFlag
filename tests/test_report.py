@@ -78,15 +78,29 @@ class ReportBuilderTest(unittest.TestCase):
         report = ReportBuilder().build("writeup-01", ("flag{writeup_style}",), findings, observations, challenge=challenge)
 
         writeup = report["writeup"]
+        self.assertEqual(writeup["kind"], "ctf_writeup")
         self.assertEqual(writeup["title"], "Base32 warmup")
         self.assertEqual(writeup["final_flags"], ["flag{writeup_style}"])
-        self.assertIn("题目概览", [section["title"] for section in writeup["sections"]])
+        self.assertEqual([section["title"] for section in writeup["sections"]], ["结论", "解题思路", "复现步骤", "关键证据"])
+        self.assertNotIn("题目概览", [section["title"] for section in writeup["sections"]])
         self.assertIn("解题思路", [section["title"] for section in writeup["sections"]])
         self.assertIn("关键证据", [section["title"] for section in writeup["sections"]])
         self.assertIn("复现步骤", [section["title"] for section in writeup["sections"]])
         self.assertNotIn("工具与观察", [section["title"] for section in writeup["sections"]])
         self.assertIn("# Base32 warmup", writeup["markdown"])
+        self.assertIn("## 结论", writeup["markdown"])
+        self.assertIn("## 复现步骤", writeup["markdown"])
         self.assertIn("flag{writeup_style}", writeup["markdown"])
+        sections = {section["title"]: section for section in writeup["sections"]}
+        self.assertEqual(
+            sections["复现步骤"]["steps"],
+            [
+                "打开附件 base32.txt，读取题面文本和文件内容。",
+                "对可疑文本执行 base32 转换，并按 flag 格式筛选候选结果。",
+                "得到候选 flag{writeup_style}，交给 verifier 验证通过。",
+            ],
+        )
+        self.assertNotIn("Raw JSON", writeup["markdown"])
 
     def test_report_includes_solve_trace_and_shortest_discovery_path(self) -> None:
         findings = [
@@ -246,7 +260,8 @@ class ReportBuilderTest(unittest.TestCase):
         report = ReportBuilder().build("crypto-repro", ("flag{just_a_seed}",), findings, observations, challenge=challenge)
 
         sections = {section["title"]: section for section in report["writeup"]["sections"]}
-        self.assertEqual(list(sections), ["题目概览", "解题思路", "复现步骤", "关键证据"])
+        self.assertEqual(list(sections), ["结论", "解题思路", "复现步骤", "关键证据"])
+        self.assertIn("flag{just_a_seed}", sections["结论"]["body"])
         self.assertIn("弱随机种子", sections["解题思路"]["body"])
         self.assertEqual(
             sections["复现步骤"]["steps"],
@@ -260,6 +275,33 @@ class ReportBuilderTest(unittest.TestCase):
         evidence_labels = [item["label"] for item in sections["关键证据"]["items"]]
         self.assertEqual(evidence_labels, ["密文整数", "key 位数", "命中 seed", "还原明文"])
         self.assertIn("seed=3277", report["writeup"]["markdown"])
+
+    def test_writeup_describes_plain_transform_candidates_without_awkward_method_text(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="plain-transform",
+                solver="MiscSolver",
+                finding="Decoded misc transform candidates",
+                evidence={"transform_candidates": [{"recipe": [], "value": "flag{plain_text}"}]},
+                confidence=0.8,
+                hypothesis="Plain text contains a flag-like token.",
+                next_action="Submit verified flag candidate.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="plain-transform",
+            category=ChallengeCategory.MISC,
+            attachment_paths=("/tmp/plain.txt",),
+        )
+
+        report = ReportBuilder().build("plain-transform", ("flag{plain_text}",), findings, [], challenge=challenge)
+
+        sections = {section["title"]: section for section in report["writeup"]["sections"]}
+        self.assertEqual(
+            sections["复现步骤"]["steps"][1],
+            "直接从题面文本或附件明文中按 flag 格式筛选候选结果。",
+        )
+        self.assertNotIn("可逆编码/转换 转换", report["writeup"]["markdown"])
 
 
 if __name__ == "__main__":

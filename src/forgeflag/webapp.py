@@ -595,7 +595,7 @@ INDEX_HTML = r"""<!doctype html>
         <button data-tab="findings">Findings</button>
         <button data-tab="observations">Observations</button>
         <button data-tab="artifacts">Artifacts</button>
-        <button data-tab="report">Report</button>
+        <button data-tab="report">Write-up</button>
         <button data-tab="tools">Tools</button>
         <button data-tab="catalog">Catalog</button>
       </div>
@@ -608,11 +608,11 @@ INDEX_HTML = r"""<!doctype html>
     const statusFilters = ["all","solved","ran","not_run"];
     const statusLabels = { all:"全部", solved:"已出 flag", ran:"已运行未出", not_run:"未运行" };
     const state = { selected: null, activeCategory: "all", activeStatus: "all", challenges: [], lastSummary: {}, summaries: {} };
-    const writeupSectionOrder = ["题目概览", "解题思路", "复现步骤", "关键证据"];
+    const writeupSectionOrder = ["结论", "解题思路", "复现步骤", "关键证据"];
     const $ = (id) => document.getElementById(id);
     const status = (text) => $("status").textContent = text;
     const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
-    const rawJson = (data) => `<details class="raw"><summary>查看原始 JSON</summary><pre class="raw-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre></details>`;
+    const rawJson = (data) => `<details class="raw"><summary>查看调试 JSON</summary><pre class="raw-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre></details>`;
     const asList = (value) => Array.isArray(value) ? value : [];
     const show = (data, tab="raw") => $("output").innerHTML = renderData(tab, data);
     const LLM_CONFIG_KEY = "forgeflag.llm.config.v1";
@@ -824,7 +824,7 @@ INDEX_HTML = r"""<!doctype html>
         findings: ["Findings", "每个 solver 产出的发现、判断依据、置信度和建议下一步。"],
         observations: ["Observations", "跨 solver 共享的线索池，包括 LLM 建议、flag 候选和工具压缩摘要。"],
         artifacts: ["Artifacts", "确认上传附件是否已进入工作区，并查看文件大小、SHA256 和实际路径。"],
-        report: ["Report", "Write-up 风格复盘，找到 flag 后会整理结论、证据、复现步骤和最短路径。"],
+        report: ["Write-up", "Write-up 复现稿，找到 flag 后会整理结论、解题思路、复现步骤和关键证据。"],
         tools: ["Tools", "本机和 Docker 中可用的工具清单，以及缺失工具和验证命令。"],
         catalog: ["Catalog", "推荐集成的 CTF 项目目录，用来规划后续工具能力，不会自动安装。"],
       };
@@ -1068,7 +1068,7 @@ INDEX_HTML = r"""<!doctype html>
     function renderReport(data) {
       const flags = asList(data && data.flags);
       if (data && data.writeup) return renderWriteupReport(data);
-      if (!flags.length) return `<div class="empty-state">还没有复盘报告。只有 verifier 接受 flag 后才会生成最短发现路径。</div>${rawJson(data)}`;
+      if (!flags.length) return `<div class="empty-state">还没有 Write-up。只有 verifier 接受 flag 后才会生成可复现的拿 flag 过程。</div>${rawJson(data)}`;
       return flags.map(entry => `
         <div class="result-card">
           <div class="card-head">
@@ -1096,7 +1096,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="card-head">
             <div class="card-title">
               <h3>${escapeHtml(writeup.title || data.challenge_id || "Write-up")}</h3>
-              <div class="meta">精简复盘 · ${escapeHtml(writeup.category || "unknown")} · 重点是如何复现拿到 flag</div>
+              <div class="meta">Write-up 复现稿 · ${escapeHtml(writeup.category || "unknown")} · 重点是如何复现拿到 flag</div>
             </div>
             <span class="badge">accepted</span>
           </div>
@@ -1121,8 +1121,8 @@ INDEX_HTML = r"""<!doctype html>
         <div class="result-card">
           <div class="card-head">
             <div class="card-title">
-              <h3>Markdown Write-up</h3>
-              <div class="meta">同样的精简内容，方便复制到博客、论坛或赛后复盘。</div>
+              <h3>Write-up Markdown</h3>
+              <div class="meta">可直接复制到博客、论坛或赛后复盘；调试 JSON 已折叠在下方。</div>
             </div>
           </div>
           <pre class="raw-json">${escapeHtml(writeup.markdown || "")}</pre>

@@ -176,7 +176,7 @@ ForgeFlag coverage today:
 
 - Transform chaining handles common reversible encodings.
 - RSA and hash triage are structured.
-- The corpus smoke includes Base32 decoding and verifies the replay report.
+- The corpus smoke includes Base32 decoding and verifies the generated CTF write-up.
 
 ### Misc
 

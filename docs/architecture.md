@@ -38,7 +38,7 @@ ForgeFlag starts with a bounded `tcp_interact` primitive for CTF service targets
 
 ### SolveTrace
 
-After each solver run, the manager records a `solve_trace_step` observation with the step index, solver status, finding summaries, flag candidates, progress signal, and any matching LLM plan rationale. Reports use these trace observations to expose the full solver timeline and a per-flag shortest discovery path.
+After each solver run, the manager records a `solve_trace_step` observation with the step index, solver status, finding summaries, flag candidates, progress signal, and any matching LLM plan rationale. Write-ups use these trace observations to expose the full solver timeline and a per-flag shortest discovery path.
 
 ### LLM Planning
 
@@ -52,9 +52,9 @@ ForgeFlag has a lightweight local retriever for LLM planning. It indexes method-
 
 IDA MCP support is optional and disabled by default. When `FORGEFLAG_IDA_MCP_ENABLED=true`, the manager injects a read-only IDA adapter into `ReverseSolver` and `PwnSolver`. Those solvers use registered binary attachments only, call the configured MCP command, and write structured function names, strings, tool-call evidence, and flag candidates to the notebook.
 
-### Replay Report
+### Write-up
 
-When the verifier accepts a flag, the report builder traces the shortest evidence path from accepted flag back to matching findings and observations. The latest report is stored in the run summary and can be retrieved with `forgeflag report <challenge_id>`.
+When the verifier accepts a flag, the report builder traces the shortest evidence path from accepted flag back to matching findings and observations. The primary output is a CTF write-up with conclusion, solving idea, reproduction steps, and key evidence. Legacy replay data remains available for compatibility and debugging, and the latest write-up can be retrieved with `forgeflag report <challenge_id>`.
 
 ### Artifact Workspace
 

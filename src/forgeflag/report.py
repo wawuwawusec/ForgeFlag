@@ -113,14 +113,16 @@ class ReportBuilder:
 
         sections = [
             {
-                "title": "题目概览",
-                "body": challenge.description if challenge and challenge.description else "基于附件和运行证据整理的精简复盘。",
+                "title": "结论",
+                "body": _conclusion_body(list(accepted_flags), challenge),
+                "flags": list(accepted_flags),
                 "items": _non_empty_items(
                     [
+                        ("题目", title),
                         ("分类", category),
                         ("目标", challenge.target if challenge else None),
                         ("标签", ", ".join(tags) if tags else None),
-                        ("附件", ", ".join(attachments) if attachments else None),
+                        ("附件", ", ".join(_basename(path) for path in attachments) if attachments else None),
                     ]
                 ),
             },
@@ -136,12 +138,13 @@ class ReportBuilder:
             },
             {
                 "title": "关键证据",
-                "body": "只保留支撑结论的关键参数和结果，完整内部日志可在 Raw JSON 中查看。",
+                "body": "只保留支撑结论的关键参数和结果，完整内部日志可在调试 JSON 中查看。",
                 "items": _evidence_items(path_steps, observation_steps),
             },
         ]
         markdown = _markdown_writeup(title, challenge_id, category, list(accepted_flags), sections)
         return {
+            "kind": "ctf_writeup",
             "title": title,
             "challenge_id": challenge_id,
             "category": category,
@@ -199,6 +202,17 @@ def _approach_summary(path_steps: list[dict[str, Any]], findings: list[Finding])
         solvers = " -> ".join(dict.fromkeys(finding.solver for finding in findings))
         return f"本次运行记录了 {solvers} 的分析结果，但没有找到直接关联 flag 的最短证据路径。"
     return "暂无 solver 证据。"
+
+
+def _conclusion_body(flags: list[str], challenge: Challenge | None) -> str:
+    if flags:
+        flag_text = ", ".join(flags)
+        if challenge and challenge.description:
+            return f"本题已确认 flag：{flag_text}。题面线索：{challenge.description}"
+        return f"本题已确认 flag：{flag_text}。下面按可复现步骤整理从附件/线索到 flag 的过程。"
+    if challenge and challenge.description:
+        return f"本题尚未确认 flag。题面线索：{challenge.description}"
+    return "本题尚未确认 flag。"
 
 
 def _approach_items(path_steps: list[dict[str, Any]], trace_path: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -299,6 +313,16 @@ def _reproduction_steps(
             "把明文整数转回 bytes，并按 flag 格式提取结果。",
             f"得到 {result}。",
         ]
+    transform_candidate = _first_transform_candidate(path_steps)
+    if transform_candidate:
+        filename = _basename(attachments[0]) if attachments else "题目附件"
+        method = transform_candidate.get("method") or _recipe_text(transform_candidate.get("recipe"))
+        value = str(transform_candidate.get("value") or "flag 候选")
+        return [
+            f"打开附件 {filename}，读取题面文本和文件内容。",
+            _transform_reproduction_step(method),
+            f"得到候选 {value}，交给 verifier 验证通过。",
+        ]
     if replay_steps:
         return replay_steps[:5]
     trace_steps = _trace_replay_steps(trace_path)
@@ -351,6 +375,34 @@ def _first_nested(steps: list[dict[str, Any]], key: str) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
     return {}
+
+
+def _first_transform_candidate(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    for step in steps:
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        candidates = evidence.get("transform_candidates")
+        if not isinstance(candidates, list):
+            continue
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                return candidate
+            if isinstance(candidate, str):
+                return {"value": candidate}
+    return {}
+
+
+def _recipe_text(value: object) -> str | None:
+    if not isinstance(value, list) or not value:
+        return None
+    return " -> ".join(str(item) for item in value)
+
+
+def _transform_reproduction_step(method: object) -> str:
+    if not method:
+        return "直接从题面文本或附件明文中按 flag 格式筛选候选结果。"
+    return f"对可疑文本执行 {method} 转换，并按 flag 格式筛选候选结果。"
 
 
 def _first_string(value: object) -> str | None:
