@@ -44,6 +44,10 @@ Category results:
 - crypto: 1/1
 - forensics: 1/1
 ...
+Agent results:
+- BinaryAgent: 2/2
+- ChallengeTriageAgent: 7/7
+...
 Case results:
 - PASS [web/deterministic] player-web-visible agents=ChallengeTriageAgent,WebExploitAgent,EvidenceJudgeAgent
 ...

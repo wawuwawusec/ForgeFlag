@@ -297,6 +297,7 @@ def summarize_playwright_report(
     cases = []
     categories: dict[str, dict[str, int]] = {}
     profiles: dict[str, dict[str, int]] = {}
+    agents: dict[str, dict[str, int]] = {}
     for spec in specs:
         title = str(spec.get("title") or "unnamed")
         passed = bool(spec.get("ok"))
@@ -308,6 +309,12 @@ def summarize_playwright_report(
         category_row["total"] += 1
         profile_row = profiles.setdefault(run_profile, {"passed": 0, "total": 0})
         profile_row["total"] += 1
+        for agent in expected_agents:
+            agent_name = str(agent)
+            agent_row = agents.setdefault(agent_name, {"passed": 0, "total": 0})
+            agent_row["total"] += 1
+            if passed:
+                agent_row["passed"] += 1
         if passed:
             category_row["passed"] += 1
             profile_row["passed"] += 1
@@ -327,6 +334,7 @@ def summarize_playwright_report(
         "duration_ms": int((report.get("stats") or {}).get("duration") or 0) if isinstance(report.get("stats"), dict) else 0,
         "profiles": profiles,
         "categories": categories,
+        "agents": agents,
         "cases": cases,
     }
 
@@ -354,6 +362,14 @@ def format_playwright_summary(summary: dict[str, object]) -> str:
             if not isinstance(row, dict):
                 continue
             lines.append(f"- {category}: {row.get('passed', 0)}/{row.get('total', 0)}")
+    agents = summary.get("agents")
+    if isinstance(agents, dict) and agents:
+        lines.append("Agent results:")
+        for agent in sorted(agents):
+            row = agents.get(agent)
+            if not isinstance(row, dict):
+                continue
+            lines.append(f"- {agent}: {row.get('passed', 0)}/{row.get('total', 0)}")
     lines.append("Case results:")
     for case in summary.get("cases", []):
         if not isinstance(case, dict):
