@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import importlib.machinery
+import importlib.util
 import json
 import os
 import socket
@@ -31,6 +33,7 @@ SCORES = {
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run ForgeFlag as a browser-based CTF player against small fixtures.")
     parser.add_argument("--url", default="http://127.0.0.1:8080", help="ForgeFlag Web UI base URL")
+    parser.add_argument("--suite", choices=["smoke", "expanded"], default="smoke", help="Browser-player suite to run")
     parser.add_argument("--list", action="store_true", help="List browser-player benchmark cases without running them")
     parser.add_argument("--run", action="store_true", help="Run the benchmark through Playwright browser automation")
     parser.add_argument("--headed", action="store_true", help="Show the browser while running Playwright")
@@ -39,16 +42,28 @@ def main() -> int:
     parser.add_argument("--llm", action="store_true", help="Run LLM-assisted variants of the benchmark cases")
     parser.add_argument("--both", action="store_true", help="Run deterministic and LLM-assisted variants for comparison")
     parser.add_argument("--case", action="append", default=[], help="Run only the named case id; may be repeated")
+    parser.add_argument("--category", action="append", default=[], help="Run/list only one category; may be repeated")
     args = parser.parse_args()
 
     WORKDIR.mkdir(parents=True, exist_ok=True)
-    fixtures = build_fixtures()
+    suite_context = build_suite_context(args.suite, start_servers=args.run)
     llm_settings = llm_settings_from_env(os.environ)
-    cases = apply_run_mode(browser_player_cases(fixtures), llm=args.llm, both=args.both, llm_settings=llm_settings)
-    selected = [case for case in cases if not args.case or _case_selected(case, set(args.case))]
+    cases = apply_run_mode(suite_context["cases"], llm=args.llm, both=args.both, llm_settings=llm_settings)
+    selected = [
+        case
+        for case in cases
+        if (not args.case or _case_selected(case, set(args.case)))
+        and (not args.category or str(case.get("category")) in set(args.category))
+    ]
 
     if args.list or not args.run:
-        print(json.dumps({"agent": "browser_player", "scores": SCORES, "cases": [_case_listing(case) for case in cases]}, indent=2, ensure_ascii=False))
+        print(
+            json.dumps(
+                {"agent": "browser_player", "suite": args.suite, "scores": SCORES, "cases": [_case_listing(case) for case in selected]},
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
         return 0
 
     if not selected:
@@ -63,7 +78,12 @@ def main() -> int:
         )
         return 2
 
-    return run_playwright(args.url, selected, playwright_bin=playwright_bin, headed=args.headed, keep=args.keep, raw_json=args.json)
+    try:
+        return run_playwright(args.url, selected, playwright_bin=playwright_bin, headed=args.headed, keep=args.keep, raw_json=args.json)
+    finally:
+        for server in suite_context["servers"]:
+            server.shutdown()
+            server.server_close()
 
 
 def build_fixtures() -> dict[str, Path]:
@@ -94,6 +114,76 @@ def build_fixtures() -> dict[str, Path]:
     fixtures["pwn"] = pwn
 
     return fixtures
+
+
+def build_suite_context(suite: str, start_servers: bool = False) -> dict[str, object]:
+    if suite == "expanded":
+        expanded = _load_expanded_corpus_module()
+        expanded.WORKDIR.mkdir(parents=True, exist_ok=True)
+        fixtures = expanded.build_fixtures()
+        servers = []
+        service_port = 0
+        if start_servers:
+            web_server = expanded.start_web_server()
+            service_server = expanded.start_tcp_server(b"ready\nflag{expanded_pwn_service_banner}\n")
+            servers = [web_server, service_server]
+            service_port = service_server.server_address[1]
+        return {
+            "cases": expanded_browser_player_cases(expanded.expanded_cases(fixtures), service_port),
+            "servers": servers,
+        }
+
+    fixtures = build_fixtures()
+    return {"cases": browser_player_cases(fixtures), "servers": []}
+
+
+def _load_expanded_corpus_module():
+    script = ROOT / "scripts" / "forgeflag-expanded-corpus"
+    loader = importlib.machinery.SourceFileLoader("forgeflag_expanded_corpus_for_browser_player", str(script))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load forgeflag-expanded-corpus")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def expanded_browser_player_cases(expanded_cases: list[dict[str, object]], service_port: int) -> list[dict[str, object]]:
+    return [_expanded_case_to_browser_player(case, service_port) for case in expanded_cases]
+
+
+def _expanded_case_to_browser_player(case: dict[str, object], service_port: int) -> dict[str, object]:
+    target = str(case.get("target") or "")
+    if target == "{service_target}":
+        target = f"127.0.0.1:{service_port}"
+    return {
+        "challenge_id": case["challenge_id"],
+        "category": case["category"],
+        "title": case["title"],
+        "description": case.get("description", ""),
+        "target": target,
+        "allowed_hosts": "127.0.0.1,localhost" if bool(case.get("active_probe")) else "",
+        "attachments": list(case.get("attachments", [])),
+        "expected_flag": case.get("expected_flag"),
+        "required_evidence": list(case.get("required_evidence", [])),
+        "active_probe": bool(case.get("active_probe")),
+        "llm_enabled": False,
+        "expected_agents": expected_agents_for_category(str(case["category"])),
+        "via": "web_ui",
+    }
+
+
+def expected_agents_for_category(category: str) -> list[str]:
+    mapping = {
+        "web": ["ChallengeTriageAgent", "WebExploitAgent", "EvidenceJudgeAgent"],
+        "crypto": ["ChallengeTriageAgent", "CryptoMathAgent", "EvidenceJudgeAgent"],
+        "misc": ["ChallengeTriageAgent", "CryptoMathAgent", "ForensicsAgent", "EvidenceJudgeAgent"],
+        "forensics": ["ChallengeTriageAgent", "ForensicsAgent", "EvidenceJudgeAgent"],
+        "traffic": ["ChallengeTriageAgent", "TrafficAgent", "ForensicsAgent", "EvidenceJudgeAgent"],
+        "reverse": ["ChallengeTriageAgent", "BinaryAgent", "EvidenceJudgeAgent"],
+        "pwn": ["ChallengeTriageAgent", "BinaryAgent", "EvidenceJudgeAgent"],
+    }
+    return mapping.get(category, ["ChallengeTriageAgent", "EvidenceJudgeAgent"])
 
 
 def browser_player_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
@@ -266,6 +356,7 @@ def _case_listing(case: dict[str, object]) -> dict[str, object]:
         "category": case["category"],
         "title": case["title"],
         "expected_flag": case["expected_flag"],
+        "required_evidence": list(case.get("required_evidence", [])),
         "llm_enabled": case["llm_enabled"],
         "llm_configured": bool(case.get("llm_configured")),
         "via": case["via"],
@@ -296,14 +387,15 @@ def run_playwright(
     spec_path = run_dir / "forgeflag-web-player.spec.js"
     config_path = run_dir / "playwright.config.js"
     spec_path.write_text(spec, encoding="utf-8")
+    timeout_seconds = playwright_timeout_seconds(len(cases))
     config_path.write_text(
-        "module.exports = { testDir: __dirname, testMatch: 'forgeflag-web-player.spec.js', workers: 1, timeout: 90000 };\n",
+        f"module.exports = {{ testDir: __dirname, testMatch: 'forgeflag-web-player.spec.js', workers: 1, timeout: {timeout_seconds * 1000} }};\n",
         encoding="utf-8",
     )
     command = [str(playwright_bin), "test", "--config", str(config_path), "--reporter=json"]
     if headed:
         command.append("--headed")
-    completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=180)
+    completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=timeout_seconds)
     if raw_json:
         if completed.stdout:
             print(completed.stdout)
@@ -320,6 +412,10 @@ def run_playwright(
     if completed.stderr:
         print(completed.stderr, file=sys.stderr)
     return completed.returncode
+
+
+def playwright_timeout_seconds(case_count: int) -> int:
+    return max(180, case_count * 120)
 
 
 def summarize_playwright_report(
@@ -454,6 +550,20 @@ def _playwright_spec(base_url: str, cases: list[dict[str, object]], keep: bool) 
         const keep = {json.dumps(keep)};
         const cases = {json.dumps(serializable_cases, ensure_ascii=False)};
 
+        async function openPanel(page, label) {{
+          await page.getByRole('button', {{ name: label }}).click();
+          await expect(page.locator('.tab-intro')).toContainText(label, {{ timeout: 10000 }});
+        }}
+
+        async function collectPanels(page, labels) {{
+          let combined = '';
+          for (const label of labels) {{
+            await openPanel(page, label);
+            combined += '\\n' + await page.locator('#output').innerText();
+          }}
+          return combined;
+        }}
+
         test.describe('ForgeFlag browser player benchmark', () => {{
           for (const ctfCase of cases) {{
             test(ctfCase.challenge_id, async ({{ page }}) => {{
@@ -463,6 +573,7 @@ def _playwright_spec(base_url: str, cases: list[dict[str, object]], keep: bool) 
               await page.locator('#title').fill(ctfCase.title);
               await page.locator('#target').fill(ctfCase.target || '');
               await page.locator('#description').fill(ctfCase.description || '');
+              await page.locator('#allowedHosts').fill(ctfCase.allowed_hosts || '');
               if (ctfCase.attachments.length) {{
                 await page.locator('#attachments').setInputFiles(ctfCase.attachments);
               }}
@@ -499,13 +610,22 @@ def _playwright_spec(base_url: str, cases: list[dict[str, object]], keep: bool) 
 
               await page.getByRole('button', {{ name: '运行选中题目' }}).click();
               await expect(page.locator('#status')).toContainText('运行完成', {{ timeout: 60000 }});
-              await page.getByRole('button', {{ name: 'Summary' }}).click();
-              await expect(page.locator('#output')).toContainText(ctfCase.expected_flag, {{ timeout: 10000 }});
-              await page.getByRole('button', {{ name: 'Write-up' }}).click();
-              await expect(page.locator('#output')).toContainText('解题思路');
-              await expect(page.locator('#output')).toContainText('复现步骤');
-              await expect(page.locator('#output')).toContainText(ctfCase.expected_flag);
-              await page.getByRole('button', {{ name: 'Agent' }}).click();
+              await openPanel(page, 'Summary');
+              if (ctfCase.expected_flag) {{
+                await expect(page.locator('#output')).toContainText(ctfCase.expected_flag, {{ timeout: 10000 }});
+                await openPanel(page, 'Write-up');
+                await expect(page.locator('#output')).toContainText('解题思路');
+                await expect(page.locator('#output')).toContainText('复现步骤');
+                await expect(page.locator('#output')).toContainText(ctfCase.expected_flag);
+              }}
+              const requiredEvidence = ctfCase.required_evidence || [];
+              if (requiredEvidence.length) {{
+                const evidenceText = (await collectPanels(page, ['Summary', 'Findings', 'Observations', 'Agent'])).toLowerCase();
+                for (const evidence of requiredEvidence) {{
+                  expect(evidenceText, `missing required evidence "${{evidence}}" for ${{ctfCase.challenge_id}}`).toContain(String(evidence).toLowerCase());
+                }}
+              }}
+              await openPanel(page, 'Agent');
               await expect(page.locator('#output')).toContainText('Agent 身份配置');
               for (const agentName of ctfCase.expected_agents) {{
                 await expect(page.locator('#output')).toContainText(agentName);

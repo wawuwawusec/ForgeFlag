@@ -98,11 +98,12 @@ def candidates_to_payload(candidates: tuple[TransformCandidate, ...], limit: int
 
 def _seed_values(text: str) -> list[str]:
     seeds: list[str] = []
+    morse_values = _morse_seed_values(text)
     for value in [
         text,
         *BINARY_ASCII_PATTERN.findall(text),
         *NUMBER_ASCII_PATTERN.findall(text),
-        *MORSE_PATTERN.findall(text),
+        *morse_values,
         *TOKEN_PATTERN.findall(text),
     ]:
         normalized = value.strip()
@@ -111,6 +112,16 @@ def _seed_values(text: str) -> list[str]:
         if normalized not in seeds:
             seeds.append(normalized)
     return seeds[:60]
+
+
+def _morse_seed_values(text: str) -> list[str]:
+    values: list[str] = []
+    for line in text.splitlines():
+        for value in MORSE_PATTERN.findall(line):
+            normalized = value.strip()
+            if normalized and normalized not in values:
+                values.append(normalized)
+    return values
 
 
 def _apply_transforms(value: str) -> list[tuple[str, str]]:

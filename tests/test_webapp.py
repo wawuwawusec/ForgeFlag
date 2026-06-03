@@ -346,6 +346,30 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("API Key 仅用于本次请求", html)
         self.assertNotIn("配置已保存到本浏览器（含 Key）", html)
 
+    def test_index_renders_classical_crypto_evidence_summary(self) -> None:
+        handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
+
+        html = handler_cls.render_index()
+
+        self.assertIn("renderClassicalCryptoEvidence", html)
+        self.assertIn("renderRsaRecoveryEvidence", html)
+        self.assertIn("renderWebRouteEvidence", html)
+        self.assertIn("renderWebSourceEvidence", html)
+        self.assertIn("renderToolSampleEvidence", html)
+        self.assertIn("renderTransformRecipeEvidence", html)
+        self.assertIn("renderArchiveImageEvidence", html)
+        self.assertIn("rsa_recovery", html)
+        self.assertIn("rsa.method", html)
+        self.assertIn("single_byte_xor", html)
+        self.assertIn("repeating_key_xor", html)
+        self.assertIn("followed_urls", html)
+        self.assertIn("transform_candidates", html)
+        self.assertIn("bug_class_hints", html)
+        self.assertIn("source_samples", html)
+        self.assertIn("routes_by_attachment", html)
+        self.assertIn("tool_samples", html)
+        self.assertIn("image_stego", html)
+
     def test_run_challenge_payload_can_enable_llm_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

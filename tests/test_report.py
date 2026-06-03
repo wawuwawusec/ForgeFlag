@@ -350,6 +350,273 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertNotIn("关键证据", report["writeup"]["markdown"])
         self.assertNotIn("tool_samples", report["writeup"]["markdown"])
 
+    def test_writeup_uses_transform_candidate_matching_accepted_flag(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="caesar-report",
+                solver="CryptoSolver",
+                finding="Decoded crypto transform candidates",
+                evidence={
+                    "transform_candidates": [
+                        {"recipe": ["rot13_decode"], "value": "zfua{wrong_candidate}"},
+                        {"recipe": ["caesar_shift_7"], "value": "flag{expanded_caesar}"},
+                    ]
+                },
+                confidence=0.82,
+                hypothesis="A reversible transform chain produced a flag-like token.",
+                next_action="Send decoded candidates to Verifier and preserve the transform recipe.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="caesar-report",
+            category=ChallengeCategory.CRYPTO,
+            attachment_paths=("/tmp/crypto_caesar.txt",),
+        )
+
+        report = ReportBuilder().build("caesar-report", ("flag{expanded_caesar}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("caesar_shift_7", markdown)
+        self.assertIn("flag{expanded_caesar}", markdown)
+        self.assertNotIn("zfua{wrong_candidate}", markdown)
+
+    def test_writeup_describes_classical_xor_recovery_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="xor-report",
+                solver="CryptoSolver",
+                finding="Recovered classical crypto flag candidates",
+                evidence={
+                    "flags": ["flag{expanded_single_xor}"],
+                    "single_byte_xor": {
+                        "ciphertext": "515b56504c524f47565953525368445e59505b52684f58454a",
+                        "flags": ["flag{expanded_single_xor}"],
+                        "key": "0x37",
+                        "method": "single_byte_xor",
+                        "plaintext_preview": "flag{expanded_single_xor}",
+                    },
+                },
+                confidence=0.84,
+                hypothesis="Classical XOR recovery produced a flag-like plaintext.",
+                next_action="Send recovered candidates to Verifier and preserve the ciphertext, key, and method evidence for replay.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="xor-report",
+            category=ChallengeCategory.CRYPTO,
+            attachment_paths=("/tmp/crypto_single_xor.txt",),
+        )
+
+        report = ReportBuilder().build("xor-report", ("flag{expanded_single_xor}",), findings, [], challenge=challenge)
+
+        steps = {section["title"]: section for section in report["writeup"]["sections"]}["复现步骤"]["steps"]
+        self.assertIn("single_byte_xor", " ".join(steps))
+        self.assertIn("0x37", " ".join(steps))
+        self.assertIn("flag{expanded_single_xor}", " ".join(steps))
+
+    def test_writeup_describes_direct_web_response_flag_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="web-visible-writeup",
+                solver="WebSolver",
+                finding="Analyzed scoped HTTP response structure",
+                evidence={
+                    "target": "http://127.0.0.1:18094/visible",
+                    "response_sample": "flag{expanded_web_visible}",
+                    "response_headers": {"content-type": "text/plain"},
+                    "flag_candidates": ["flag{expanded_web_visible}"],
+                },
+                confidence=0.82,
+                hypothesis="The first scoped response contains a flag-like token that should be verified.",
+                next_action="Send candidates to Verifier and record the minimal reproduction path.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="web-visible-writeup",
+            category=ChallengeCategory.WEB,
+            target="http://127.0.0.1:18094/visible",
+        )
+
+        report = ReportBuilder().build("web-visible-writeup", ("flag{expanded_web_visible}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("curl -i http://127.0.0.1:18094/visible", markdown)
+        self.assertIn("flag{expanded_web_visible}", markdown)
+
+    def test_writeup_describes_web_header_cookie_flag_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="web-header-writeup",
+                solver="WebSolver",
+                finding="Analyzed scoped HTTP response structure",
+                evidence={
+                    "target": "http://127.0.0.1:18094/header-cookie",
+                    "response_sample": "",
+                    "response_headers": {
+                        "X-Flag-Hint": "flag{expanded_web_header_cookie}",
+                        "Set-Cookie": "session=flag{expanded_web_header_cookie}; HttpOnly; Path=/",
+                    },
+                    "set_cookie_names": ["session"],
+                    "flag_candidates": ["flag{expanded_web_header_cookie}"],
+                },
+                confidence=0.82,
+                hypothesis="The first scoped response contains a flag-like token that should be verified.",
+                next_action="Send candidates to Verifier and record the minimal reproduction path.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="web-header-writeup",
+            category=ChallengeCategory.WEB,
+            target="http://127.0.0.1:18094/header-cookie",
+        )
+
+        report = ReportBuilder().build("web-header-writeup", ("flag{expanded_web_header_cookie}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("curl -i http://127.0.0.1:18094/header-cookie", markdown)
+        self.assertIn("X-Flag-Hint", markdown)
+        self.assertIn("session", markdown)
+        self.assertIn("flag{expanded_web_header_cookie}", markdown)
+
+    def test_writeup_describes_traffic_pcap_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="traffic-writeup",
+                solver="TrafficSolver",
+                finding="Analyzed packet capture traffic",
+                evidence={
+                    "artifact": {"name": "traffic_http_0.pcap"},
+                    "flag_candidates": ["flag{expanded_traffic_http_0}"],
+                    "http_object_exports": [
+                        {
+                            "name": "%2f",
+                            "flags": ["flag{expanded_traffic_http_0}"],
+                            "text_preview": "flag{expanded_traffic_http_0}",
+                        }
+                    ],
+                    "tcp_stream_payloads": [
+                        {
+                            "stream_id": "0",
+                            "flags": ["flag{expanded_traffic_http_0}"],
+                            "sample": "GET / HTTP/1.1 flag{expanded_traffic_http_0}",
+                        }
+                    ],
+                },
+                confidence=0.82,
+                next_action="Send candidates to Verifier and preserve the packet capture as reproduction evidence.",
+            )
+        ]
+        observations = [
+            Observation(
+                challenge_id="traffic-writeup",
+                source="TrafficSolver",
+                kind="flag_candidate",
+                summary="flag{expanded_traffic_http_0}",
+                evidence={"candidate": "flag{expanded_traffic_http_0}"},
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="traffic-writeup",
+            category=ChallengeCategory.TRAFFIC,
+            attachment_paths=("/tmp/traffic_http_0.pcap",),
+        )
+
+        report = ReportBuilder().build("traffic-writeup", ("flag{expanded_traffic_http_0}",), findings, observations, challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("tshark", markdown)
+        self.assertIn("tcp.stream eq 0", markdown)
+        self.assertIn("flag{expanded_traffic_http_0}", markdown)
+
+    def test_writeup_describes_dns_exfil_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="dns-writeup",
+                solver="TrafficSolver",
+                finding="Analyzed packet capture traffic",
+                evidence={
+                    "artifact": {"name": "traffic_dns_0.pcap"},
+                    "flag_candidates": ["flag{expanded_traffic_dns_0}"],
+                    "dns_summary": {
+                        "decoded_query_hints": ["flag{expanded_traffic_dns_0}"],
+                        "query_names": [
+                            {
+                                "name": "mzwgcz33mv4haylomr.swix3uojqwmztjmnpw.i3ttl4yh2.exfil.test",
+                                "count": 1,
+                            }
+                        ],
+                    },
+                },
+                confidence=0.82,
+                next_action="Send candidates to Verifier and preserve the packet capture as reproduction evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="dns-writeup",
+            category=ChallengeCategory.TRAFFIC,
+            attachment_paths=("/tmp/traffic_dns_0.pcap",),
+        )
+
+        report = ReportBuilder().build("dns-writeup", ("flag{expanded_traffic_dns_0}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("dns.qry.name", markdown)
+        self.assertIn("mzwgcz33mv4haylomr", markdown)
+        self.assertIn("flag{expanded_traffic_dns_0}", markdown)
+
+    def test_writeup_describes_forensics_strings_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="forensics-writeup",
+                solver="ForensicsSolver",
+                finding="Triaged forensic attachment",
+                evidence={
+                    "artifact": {"name": "forensics_strings.bin"},
+                    "flag_candidates": ["flag{expanded_forensics_strings}"],
+                    "tool_samples": {
+                        "file": {"stdout": "forensics_strings.bin: data\n"},
+                        "strings": {"stdout": "flag{expanded_forensics_strings}\n"},
+                    },
+                },
+                confidence=0.78,
+                next_action="Send candidates to Verifier and preserve the attachment path as reproduction evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="forensics-writeup",
+            category=ChallengeCategory.FORENSICS,
+            attachment_paths=("/tmp/forensics_strings.bin",),
+        )
+
+        report = ReportBuilder().build("forensics-writeup", ("flag{expanded_forensics_strings}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("file forensics_strings.bin", markdown)
+        self.assertIn("strings -n 4 forensics_strings.bin", markdown)
+        self.assertIn("flag{expanded_forensics_strings}", markdown)
+
+    def test_writeup_describes_pwn_tcp_banner_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="pwn-service-writeup",
+                solver="PwnSolver",
+                finding="Interacted with scoped pwn service",
+                evidence={
+                    "target": "127.0.0.1:31337",
+                    "flag_candidates": ["flag{expanded_pwn_service_banner}"],
+                    "transcript": "ready\nflag{expanded_pwn_service_banner}\n",
+                },
+                confidence=0.78,
+                next_action="Send candidates to Verifier and preserve the TCP transcript as replay evidence.",
+            )
+        ]
+
+        report = ReportBuilder().build("pwn-service-writeup", ("flag{expanded_pwn_service_banner}",), findings, [])
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("nc 127.0.0.1 31337", markdown)
+        self.assertIn("flag{expanded_pwn_service_banner}", markdown)
+
     def test_writeup_describes_extra_png_idat_reproduction_steps(self) -> None:
         findings = [
             Finding(
@@ -401,6 +668,96 @@ class ReportBuilderTest(unittest.TestCase):
         )
         self.assertEqual(list(sections), ["解题思路", "复现步骤"])
         self.assertNotIn("关键证据", report["writeup"]["markdown"])
+
+    def test_writeup_describes_archive_preview_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="archive-writeup",
+                solver="MiscSolver",
+                finding="Analyzed misc archive artifact",
+                evidence={
+                    "artifact": {"name": "misc_zip.zip", "path": "/tmp/misc_zip.zip"},
+                    "archive": {
+                        "kind": "zip",
+                        "entry_count": 1,
+                        "interesting_entries": ["secret/flag.txt"],
+                        "entries": [
+                            {
+                                "name": "secret/flag.txt",
+                                "size": 23,
+                                "compressed_size": 23,
+                                "encrypted": False,
+                                "is_dir": False,
+                            }
+                        ],
+                    },
+                    "archive_text_previews": [
+                        {"name": "secret/flag.txt", "size": 23, "text_preview": "flag{expanded_misc_zip}"}
+                    ],
+                    "flag_candidates": ["flag{expanded_misc_zip}"],
+                },
+                confidence=0.78,
+                hypothesis="Archive preview contains a flag-like token.",
+                next_action="Send archive-derived candidates to Verifier and preserve the archive preview evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="archive-writeup",
+            category=ChallengeCategory.MISC,
+            attachment_paths=("/tmp/misc_zip.zip",),
+        )
+
+        report = ReportBuilder().build("archive-writeup", ("flag{expanded_misc_zip}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("unzip -l misc_zip.zip", markdown)
+        self.assertIn("unzip -p misc_zip.zip secret/flag.txt", markdown)
+        self.assertIn("flag{expanded_misc_zip}", markdown)
+
+    def test_writeup_describes_png_text_chunk_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="png-text-writeup",
+                solver="MiscSolver",
+                finding="Analyzed misc image artifact",
+                evidence={
+                    "artifact": {"name": "misc_png.png", "path": "/tmp/misc_png.png"},
+                    "flag_candidates": ["flag{expanded_misc_png}"],
+                    "image_stego": {
+                        "format": "png",
+                        "chunks": [
+                            {"type": "IHDR", "size": 13},
+                            {"type": "tEXt", "size": 31},
+                            {"type": "IDAT", "size": 12},
+                            {"type": "IEND", "size": 0},
+                        ],
+                        "text_chunks": [
+                            {
+                                "keyword": "Comment",
+                                "text_preview": "flag{expanded_misc_png}",
+                                "type": "tEXt",
+                            }
+                        ],
+                    },
+                },
+                confidence=0.78,
+                hypothesis="PNG text chunk contains a flag-like token.",
+                next_action="Send image-derived flag candidates to Verifier and preserve the image evidence path.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="png-text-writeup",
+            category=ChallengeCategory.MISC,
+            attachment_paths=("/tmp/misc_png.png",),
+        )
+
+        report = ReportBuilder().build("png-text-writeup", ("flag{expanded_misc_png}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("file misc_png.png", markdown)
+        self.assertIn("exiftool misc_png.png", markdown)
+        self.assertIn("tEXt/Comment", markdown)
+        self.assertIn("flag{expanded_misc_png}", markdown)
 
 
 if __name__ == "__main__":

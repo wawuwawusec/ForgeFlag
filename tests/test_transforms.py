@@ -56,6 +56,17 @@ class TransformTest(unittest.TestCase):
 
         self.assertIn("flag{braces}", {candidate.value for candidate in candidates})
 
+    def test_transform_candidates_decodes_morse_after_filename_line(self) -> None:
+        text = (
+            "Expanded benchmark pattern distilled from public CTF writeups and practice notes: Crypto crypto_morse.txt.\n"
+            "..-. .-.. .- --. / -.-. .-. -.-- .--. - --- / -- --- .-. ... ."
+        )
+
+        candidates = transform_candidates(text)
+
+        self.assertIn("flag{crypto_morse}", {candidate.value for candidate in candidates})
+        self.assertNotIn("eflag crypto morse", {candidate.value for candidate in candidates})
+
     def test_transform_candidates_decodes_decimal_ascii_flag(self) -> None:
         candidates = transform_candidates("102 108 97 103 123 100 101 99 105 109 97 108 125")
 

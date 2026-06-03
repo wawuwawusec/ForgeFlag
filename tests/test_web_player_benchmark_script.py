@@ -29,6 +29,47 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
         self.assertTrue({"web", "crypto", "forensics", "traffic", "reverse", "pwn", "misc"}.issubset(categories))
         self.assertTrue(any(case["llm_enabled"] is False for case in cases))
 
+    def test_expanded_suite_can_be_listed_for_browser_player(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-web-player-benchmark"
+
+        completed = subprocess.run([sys.executable, str(script), "--suite", "expanded", "--list"], capture_output=True, check=False, text=True)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["suite"], "expanded")
+        cases = payload["cases"]
+        self.assertGreaterEqual(len(cases), 70)
+        self.assertTrue(all(case["via"] == "web_ui" for case in cases))
+        categories = {case["category"] for case in cases}
+        self.assertTrue({"web", "crypto", "forensics", "traffic", "reverse", "pwn", "misc"}.issubset(categories))
+        self.assertTrue(any(case["expected_flag"] is None for case in cases))
+        self.assertTrue(any(case["required_evidence"] for case in cases))
+
+    def test_expanded_suite_can_be_filtered_by_category(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-web-player-benchmark"
+
+        completed = subprocess.run(
+            [sys.executable, str(script), "--suite", "expanded", "--category", "crypto", "--list"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        cases = payload["cases"]
+        self.assertGreaterEqual(len(cases), 10)
+        self.assertEqual({case["category"] for case in cases}, {"crypto"})
+
+    def test_expanded_active_probe_cases_include_allowed_hosts_scope(self) -> None:
+        module = _load_script_module()
+
+        context = module.build_suite_context("expanded", start_servers=False)
+        active_cases = [case for case in context["cases"] if case["active_probe"]]
+
+        self.assertTrue(active_cases)
+        self.assertTrue(all(case["allowed_hosts"] == "127.0.0.1,localhost" for case in active_cases))
+
     def test_playwright_json_is_formatted_as_readable_scorecard(self) -> None:
         module = _load_script_module()
         report = {
@@ -89,6 +130,12 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
         self.assertIn("PASS [web/deterministic] player-web-visible", rendered)
         self.assertIn("agents=ChallengeTriageAgent,WebExploitAgent,EvidenceJudgeAgent", rendered)
         self.assertIn("FAIL [traffic/deterministic] player-traffic-http", rendered)
+
+    def test_playwright_timeout_scales_for_large_browser_suites(self) -> None:
+        module = _load_script_module()
+
+        self.assertEqual(module.playwright_timeout_seconds(1), 180)
+        self.assertGreaterEqual(module.playwright_timeout_seconds(74), 74 * 120)
 
     def test_run_mode_can_create_llm_and_comparison_variants(self) -> None:
         module = _load_script_module()

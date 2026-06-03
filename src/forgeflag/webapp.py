@@ -957,6 +957,13 @@ INDEX_HTML = r"""<!doctype html>
         const confidence = typeof finding.confidence === "number" ? Math.round(finding.confidence * 100) + "%" : "n/a";
         const evidence = finding.evidence || {};
         const candidates = evidence.transform_candidates || evidence.flag_candidates || evidence.decoded_http_artifacts || [];
+        const rsaRecovery = renderRsaRecoveryEvidence(evidence);
+        const classicalCrypto = renderClassicalCryptoEvidence(evidence);
+        const webRoutes = renderWebRouteEvidence(evidence);
+        const webSource = renderWebSourceEvidence(evidence);
+        const toolSamples = renderToolSampleEvidence(evidence);
+        const transformRecipes = renderTransformRecipeEvidence(evidence);
+        const archiveImage = renderArchiveImageEvidence(evidence);
         return `
           <div class="result-card">
             <div class="card-head">
@@ -968,10 +975,128 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             ${finding.hypothesis ? `<div><strong>判断：</strong>${escapeHtml(finding.hypothesis)}</div>` : ""}
             ${finding.next_action ? `<div><strong>下一步：</strong>${escapeHtml(finding.next_action)}</div>` : ""}
+            ${rsaRecovery}
+            ${classicalCrypto}
+            ${webRoutes}
+            ${webSource}
+            ${toolSamples}
+            ${transformRecipes}
+            ${archiveImage}
             ${Array.isArray(candidates) && candidates.length ? `<div><strong>关键候选：</strong><div class="flag-list">${candidates.slice(0, 6).map(item => `<span class="flag-chip">${escapeHtml(item.value || item)}</span>`).join("")}</div></div>` : ""}
             ${rawJson(finding)}
           </div>`;
       }).join("");
+    }
+    function renderRsaRecoveryEvidence(evidence) {
+      const rsa = evidence.rsa_recovery || null;
+      if (!rsa) return "";
+      const flags = asList(rsa.flags);
+      const method = rsa.method || "rsa_recovery";
+      const tools = asList(rsa.recommended_tools);
+      return `<div><strong>RSA 恢复：</strong><div class="kv-grid">
+        <div class="kv">
+          <span>method</span>
+          <strong>${escapeHtml(method)}</strong>
+          ${rsa.plaintext_preview ? `<div class="meta">${escapeHtml(rsa.plaintext_preview)}</div>` : ""}
+        </div>
+        ${flags.length ? `<div class="kv"><span>flags</span><strong>${escapeHtml(flags[0])}</strong></div>` : ""}
+        ${tools.length ? `<div class="kv"><span>tools</span><strong>${tools.map(escapeHtml).join(", ")}</strong></div>` : ""}
+      </div></div>`;
+    }
+    function renderClassicalCryptoEvidence(evidence) {
+      const rows = ["single_byte_xor", "repeating_key_xor", "vigenere"]
+        .map(name => [name, evidence[name]])
+        .filter(([, value]) => value && (asList(value.flags).length || value.key || value.plaintext_preview));
+      if (!rows.length) return "";
+      return `<div><strong>经典密码恢复：</strong><div class="kv-grid">${rows.map(([name, value]) => `
+        <div class="kv">
+          <span>${escapeHtml(name)}</span>
+          <strong>${escapeHtml(asList(value.flags)[0] || value.plaintext_preview || "candidate")}</strong>
+          ${value.key ? `<div class="meta">key=${escapeHtml(value.key)}</div>` : ""}
+          ${value.plaintext_preview ? `<div class="meta">${escapeHtml(value.plaintext_preview)}</div>` : ""}
+        </div>`).join("")}</div></div>`;
+    }
+    function renderWebRouteEvidence(evidence) {
+      const routes = asList(evidence.followed_urls);
+      const sample = evidence.response_sample || "";
+      const headers = evidence.response_headers || {};
+      const headerItems = Object.entries(headers).slice(0, 8);
+      if (!routes.length && !sample && !headerItems.length) return "";
+      return `<div><strong>Web 证据：</strong>
+        ${routes.length ? `<div class="flag-list">${routes.slice(0, 6).map(url => `<span class="flag-chip">${escapeHtml(url)}</span>`).join("")}</div>` : ""}
+        ${sample ? `<div class="meta">${escapeHtml(sample)}</div>` : ""}
+        ${headerItems.length ? `<div class="meta">${headerItems.map(([key, value]) => `${escapeHtml(key)}=${escapeHtml(value)}`).join(" · ")}</div>` : ""}
+      </div>`;
+    }
+    function renderWebSourceEvidence(evidence) {
+      const hints = asList(evidence.bug_class_hints);
+      const routes = asList(evidence.routes);
+      const routeGroups = evidence.routes_by_attachment || {};
+      const samples = evidence.source_samples || {};
+      const routeGroupItems = Object.entries(routeGroups).slice(0, 4);
+      const sampleItems = Object.entries(samples).slice(0, 4);
+      if (!hints.length && !routes.length && !routeGroupItems.length && !sampleItems.length) return "";
+      return `<div><strong>源码线索：</strong>
+        ${hints.length ? `<div class="flag-list">${hints.map(hint => `<span class="flag-chip">${escapeHtml(hint)}</span>`).join("")}</div>` : ""}
+        ${routes.length ? `<div class="meta">Routes: ${routes.slice(0, 8).map(escapeHtml).join(" · ")}</div>` : ""}
+        ${routeGroupItems.length ? `<div class="meta">${routeGroupItems.map(([path, values]) => `${escapeHtml(path.split("/").pop() || path)} -> ${asList(values).slice(0, 6).map(escapeHtml).join(", ") || "no routes"}`).join("；")}</div>` : ""}
+        ${sampleItems.length ? `<div class="meta">${sampleItems.map(([path, values]) => `${escapeHtml(path.split("/").pop() || path)}: ${asList(values).slice(0, 3).map(escapeHtml).join(" | ") || "no source sample"}`).join("；")}</div>` : ""}
+      </div>`;
+    }
+    function renderToolSampleEvidence(evidence) {
+      const samples = evidence.tool_samples || {};
+      const rows = Object.entries(samples)
+        .map(([name, sample]) => {
+          const stdout = sample && typeof sample === "object" ? sample.stdout : "";
+          const stderr = sample && typeof sample === "object" ? sample.stderr : "";
+          const text = String(stdout || stderr || "").trim().split(/\r?\n/).filter(Boolean).slice(0, 4).join(" | ");
+          return { name, text };
+        })
+        .filter(row => row.text)
+        .slice(0, 6);
+      if (!rows.length) return "";
+      return `<div><strong>工具输出摘要：</strong><div class="kv-grid">${rows.map(row => `
+        <div class="kv">
+          <span>${escapeHtml(row.name)}</span>
+          <strong>${escapeHtml(row.text.slice(0, 240))}</strong>
+        </div>`).join("")}</div></div>`;
+    }
+    function renderTransformRecipeEvidence(evidence) {
+      const candidates = asList(evidence.transform_candidates || evidence.decoded_transform_candidates)
+        .filter(item => item && typeof item === "object")
+        .slice(0, 6);
+      if (!candidates.length) return "";
+      return `<div><strong>转换路线：</strong><div class="kv-grid">${candidates.map(item => {
+        const recipe = asList(item.recipe).length ? asList(item.recipe).join(" -> ") : (item.method || "direct");
+        const value = item.value || "candidate";
+        return `<div class="kv">
+          <span>${escapeHtml(recipe)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>`;
+      }).join("")}</div></div>`;
+    }
+    function renderArchiveImageEvidence(evidence) {
+      const archive = evidence.archive || null;
+      const archivePreviews = asList(evidence.archive_text_previews);
+      const image = evidence.image_stego || null;
+      const parts = [];
+      if (archive) {
+        const entries = asList(archive.interesting_entries).length ? asList(archive.interesting_entries) : asList(archive.entries).map(entry => entry && entry.name).filter(Boolean);
+        parts.push(`<div><strong>archive 证据：</strong>
+          <div class="meta">kind=${escapeHtml(archive.kind || "archive")} · entries=${escapeHtml(archive.entry_count ?? entries.length)} · encrypted=${escapeHtml(archive.encrypted ?? false)}</div>
+          ${entries.length ? `<div class="flag-list">${entries.slice(0, 6).map(name => `<span class="flag-chip">${escapeHtml(name)}</span>`).join("")}</div>` : ""}
+          ${archivePreviews.length ? `<div class="meta">${archivePreviews.slice(0, 4).map(item => `${escapeHtml(item.name || "entry")}: ${escapeHtml(item.text_preview || "")}`).join("；")}</div>` : ""}
+        </div>`);
+      }
+      if (image) {
+        const chunks = asList(image.chunks).map(chunk => `${chunk.type || "chunk"}:${chunk.size ?? "-"}`);
+        const textChunks = asList(image.text_chunks).map(chunk => `${chunk.keyword || chunk.type || "text"}=${chunk.text_preview || ""}`);
+        parts.push(`<div><strong>image_stego 证据：</strong>
+          <div class="meta">format=${escapeHtml(image.format || "image")}${chunks.length ? ` · chunks=${chunks.slice(0, 8).map(escapeHtml).join(", ")}` : ""}</div>
+          ${textChunks.length ? `<div class="flag-list">${textChunks.slice(0, 5).map(item => `<span class="flag-chip">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+        </div>`);
+      }
+      return parts.join("");
     }
     function renderObservations(data) {
       const observations = asList(data);
