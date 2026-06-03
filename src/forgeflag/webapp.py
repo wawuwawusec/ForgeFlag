@@ -659,7 +659,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="llm-actions">
             <button class="secondary" id="llmSaveConfig">保存配置</button>
             <button class="secondary" id="llmTestBtn">测试大模型</button>
-            <span class="llm-status" id="llmConfigStatus">配置未保存，API Key 仅用于本次请求</span>
+            <span class="llm-status" id="llmConfigStatus">配置未保存；保存后 API Key 会保存到本浏览器</span>
           </div>
         </div>
       </div>
@@ -783,6 +783,7 @@ INDEX_HTML = r"""<!doctype html>
       if (zhipu && !$("llmModel").value.trim()) $("llmModel").value = DEFAULT_ZHIPU_MODEL;
       $("llmApiKey").placeholder = zhipu ? "ZAI_API_KEY" : "sk-...";
       $("llmBaseUrl").placeholder = zhipu ? "https://open.bigmodel.cn/api/paas/v4" : "https://api.openai.com/v1";
+      hydrateLLMKeyFromStorage();
     }
     function llmPayload() {
       const llmEnabled = $("llmEnabled").checked;
@@ -801,31 +802,42 @@ INDEX_HTML = r"""<!doctype html>
         llm_enabled: payload.llm_enabled,
         llm_provider: payload.llm_provider,
         llm_model: payload.llm_model,
+        llm_api_key: payload.llm_api_key,
         llm_base_url: payload.llm_base_url,
         llm_timeout_seconds: payload.llm_timeout_seconds
       };
       localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify(saved));
-      $("llmConfigStatus").textContent = "配置已保存到本浏览器（不含 Key）";
+      $("llmConfigStatus").textContent = payload.llm_api_key ? "配置已保存到本浏览器（含 Key）" : "配置已保存到本浏览器（未保存 Key）";
       flashButton("llmSaveConfig", "success");
       status("大模型配置已保存", "success");
     }
-    function restoreLLMConfig() {
+    function readSavedLLMConfig() {
       const raw = localStorage.getItem(LLM_CONFIG_KEY);
-      if (!raw) return syncLLMSettings();
+      if (!raw) return null;
       try {
-        const saved = JSON.parse(raw);
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+    function hydrateLLMKeyFromStorage() {
+      if (!$("llmEnabled").checked || $("llmApiKey").value.trim()) return;
+      const saved = readSavedLLMConfig();
+      if (!saved || !saved.llm_api_key) return;
+      if (saved.llm_provider && saved.llm_provider !== $("llmProvider").value) return;
+      $("llmApiKey").value = saved.llm_api_key;
+    }
+    function restoreLLMConfig() {
+      const saved = readSavedLLMConfig();
+      if (!saved) return syncLLMSettings();
+      try {
         $("llmEnabled").checked = !!saved.llm_enabled;
         $("llmProvider").value = saved.llm_provider || "zhipu";
         $("llmModel").value = saved.llm_model || "";
         $("llmBaseUrl").value = saved.llm_base_url || "";
         $("llmTimeout").value = saved.llm_timeout_seconds || "30";
-        $("llmApiKey").value = "";
-        if (saved.llm_api_key || saved.remember_key) {
-          delete saved.llm_api_key;
-          delete saved.remember_key;
-          localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify(saved));
-        }
-        $("llmConfigStatus").textContent = "已载入本浏览器配置（不含 Key）";
+        $("llmApiKey").value = saved.llm_api_key || "";
+        $("llmConfigStatus").textContent = saved.llm_api_key ? "已载入本浏览器配置（含 Key）" : "已载入本浏览器配置（未保存 Key）";
       } catch {
         $("llmConfigStatus").textContent = "本地配置读取失败";
       }

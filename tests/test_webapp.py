@@ -365,8 +365,11 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn('id="llmConfigStatus"', html)
         self.assertIn('<option value="zhipu">智谱 GLM</option>', html)
         self.assertIn("大模型分析", html)
-        self.assertIn("API Key 仅用于本次请求", html)
-        self.assertNotIn("配置已保存到本浏览器（含 Key）", html)
+        self.assertIn("API Key 会保存到本浏览器", html)
+        self.assertIn("llm_api_key: payload.llm_api_key", html)
+        self.assertIn('$("llmApiKey").value = saved.llm_api_key || "";', html)
+        self.assertIn("配置已保存到本浏览器（含 Key）", html)
+        self.assertNotIn("delete saved.llm_api_key", html)
 
     def test_index_renders_classical_crypto_evidence_summary(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
