@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from forgeflag.agent_roster import default_agent_roster, load_agent_roster, write_default_agent_roster
+from forgeflag.domain import ChallengeCategory
 
 
 class AgentRosterTest(unittest.TestCase):
@@ -69,6 +70,29 @@ class AgentRosterTest(unittest.TestCase):
         self.assertEqual(loaded.coordinator.id, "forgeflag-manager")
         self.assertTrue(loaded.warnings)
         self.assertIn("agent-roster.json", loaded.warnings[0])
+
+    def test_solver_names_for_category_follow_enabled_agent_order(self) -> None:
+        roster = default_agent_roster()
+
+        self.assertEqual(roster.solver_names_for(ChallengeCategory.WEB), ("ReconSolver", "LLMSolver", "WebSolver"))
+        self.assertIn("WebSolver", roster.solver_names_for(ChallengeCategory.UNKNOWN))
+        self.assertEqual(
+            roster.solver_names_for(ChallengeCategory.TRAFFIC),
+            ("ReconSolver", "LLMSolver", "TrafficSolver", "ForensicsSolver"),
+        )
+
+    def test_disabled_agent_removes_owned_solver_from_category_queue(self) -> None:
+        payload = default_agent_roster().to_dict()
+        for agent in payload["agents"]:
+            if agent["id"] == "web-exploit":
+                agent["enabled"] = False
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent-roster.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            roster = load_agent_roster(path)
+
+        self.assertEqual(roster.solver_names_for(ChallengeCategory.WEB), ("ReconSolver", "LLMSolver"))
 
 
 if __name__ == "__main__":

@@ -26,6 +26,18 @@ The generated config lives at:
 
 The file is safe to edit and does not store LLM API keys.
 
+## Runtime Effect
+
+The roster now influences the solver queue:
+
+- enabled agents contribute their declared `solvers` in roster order
+- disabled agents remove their owned solvers from the managed queue
+- custom/injected test solvers that are not named in the roster pass through unchanged
+- `LLMSolver` is listed by the route-planner identity, but it only runs when the configured LLM provider is enabled
+- `Verifier` and `ReportBuilder` are role markers for evidence judging and write-up work, not executable solvers
+
+For example, disabling `WebExploitAgent` removes `WebSolver` from Web challenge runs while keeping `ChallengeTriageAgent`/`ReconSolver` available. Moving `TrafficAgent` earlier in the JSON makes traffic-related solvers run earlier for matching categories.
+
 ## Default Roles
 
 | Role | Purpose |
@@ -66,9 +78,8 @@ This keeps the answerer view focused on who did what and which evidence supports
 
 ## Next Expansion
 
-The current roster is declarative. The next useful step is to let the roster influence solver ordering and benchmark modes:
+The current roster is declarative and queue-aware. The next useful step is to make benchmarks report role-level scores:
 
-- category-specific role priority
 - deterministic-only versus GLM-assisted browser-player tests
 - hard benchmark scorecards by role
 - optional parallel sidecar investigations for independent challenge families

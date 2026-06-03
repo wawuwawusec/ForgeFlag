@@ -65,7 +65,25 @@ class AgentRoster:
     warnings: tuple[str, ...] = ()
 
     def active_agents_for(self, category: ChallengeCategory) -> tuple[AgentIdentity, ...]:
+        if category == ChallengeCategory.UNKNOWN:
+            return tuple(agent for agent in self.agents if agent.enabled)
         return tuple(agent for agent in self.agents if agent.enabled and agent.applies_to(category))
+
+    def managed_solver_names(self) -> tuple[str, ...]:
+        names: list[str] = []
+        for agent in self.agents:
+            names.extend(agent.solvers)
+        return tuple(_dedupe(names))
+
+    def solver_names_for(self, category: ChallengeCategory) -> tuple[str, ...]:
+        names: list[str] = []
+        for agent in self.active_agents_for(category):
+            names.extend(agent.solvers)
+        return tuple(
+            name
+            for name in _dedupe(names)
+            if name not in {"Verifier", "ReportBuilder"}
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -258,3 +276,15 @@ def _int_value(value: object, default: int) -> int:
         return int(str(value))
     except (TypeError, ValueError):
         return default
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = value.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result

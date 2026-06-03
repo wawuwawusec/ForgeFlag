@@ -22,6 +22,7 @@ Implemented so far:
   - `forgeflag.agent_roster` defines `ForgeFlagManager` plus 9 professional subagent identities
   - roles cover triage, LLM route planning, Web, Crypto, Binary, Forensics, Traffic, Evidence Judge, and Browser Player QA
   - `forgeflag agents` lists the active roster; `forgeflag agents --write-default` writes `.forgeflag/agent-roster.json`
+  - enabled agents contribute their declared solver names in roster order; disabled agents remove their managed solvers from the queue
   - run summaries include an `agent_roster` section with coordinator, selected category, solver queue, and participating identities
   - Web UI exposes `/api/agents` and the Agent tab shows configured and per-run identities
   - documented in `docs/agent-roster.md`
@@ -199,7 +200,7 @@ Current local setup after migration:
   - Docker wrappers: `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`
   - hashcat is installed, but current OrbStack runtime does not expose an OpenCL/CUDA device, so cracking smoke skips hashcat device execution
   - `ToolRunner` automatically reads `.forgeflag/docker.env` when explicit Docker tool environment variables are unset, so direct CLI/Web runs show the same Docker fallback inventory as `scripts/forgeflag-control`
-- Tests passed: 213 tests OK
+- Tests passed: 216 tests OK
 - Browser-player benchmark passed: 3/3 Web UI flows OK
 
 Useful commands:

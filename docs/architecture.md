@@ -28,6 +28,8 @@ Each run summary includes an `agent_roster` section showing the coordinator, sel
 
 The default roster contains `ChallengeTriageAgent`, `LLMRoutePlannerAgent`, `WebExploitAgent`, `CryptoMathAgent`, `BinaryAgent`, `ForensicsAgent`, `TrafficAgent`, `EvidenceJudgeAgent`, and `BrowserPlayerQAAgent`. It can be listed with `forgeflag agents` and persisted to `.forgeflag/agent-roster.json` with `forgeflag agents --write-default`.
 
+Enabled agents contribute their declared solver names in roster order. Disabled agents remove their managed solvers from the queue, while custom injected solvers that are not named by the roster pass through for tests and future extensions.
+
 The roster is configuration, not a secret store. API keys stay in runtime LLM config or Web request payloads and are not written to the roster file.
 
 ### Shared Notebook

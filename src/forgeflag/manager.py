@@ -207,7 +207,20 @@ class Manager:
                 for solver in self.solvers
                 if solver not in selected and ChallengeCategory.UNKNOWN in solver.supported_categories
             )
-        return selected
+        return self._apply_roster_solver_order(category, selected)
+
+    def _apply_roster_solver_order(self, category: ChallengeCategory, selected: list[Solver]) -> list[Solver]:
+        roster_order = self.agent_roster.solver_names_for(category)
+        managed_names = set(self.agent_roster.managed_solver_names())
+        by_name = {solver.name: solver for solver in selected}
+        ordered = [by_name[name] for name in roster_order if name in by_name]
+        ordered_names = {solver.name for solver in ordered}
+        passthrough = [
+            solver
+            for solver in selected
+            if solver.name not in managed_names and solver.name not in ordered_names
+        ]
+        return ordered + passthrough
 
     def _apply_llm_solver_plan(
         self,

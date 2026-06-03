@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from forgeflag.agent_roster import AgentRoster, default_agent_roster
 from forgeflag.domain import Challenge, ChallengeCategory, Finding, RunConfig, SolverResult, ToolResult
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
@@ -531,6 +532,40 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("EvidenceJudgeAgent", names)
         self.assertNotIn("LLMRoutePlannerAgent", names)
         self.assertNotIn("BrowserPlayerQAAgent", names)
+
+    def test_manager_uses_roster_to_filter_solver_queue(self) -> None:
+        class FakeRecon:
+            name = "ReconSolver"
+            supported_categories = {ChallengeCategory.WEB}
+
+            def solve(self, context: SolverContext) -> SolverResult:
+                return SolverResult(self.name, context.challenge.challenge_id, "ok")
+
+        class FakeWeb:
+            name = "WebSolver"
+            supported_categories = {ChallengeCategory.WEB}
+
+            def solve(self, context: SolverContext) -> SolverResult:
+                raise AssertionError("disabled WebExploitAgent should remove WebSolver from queue")
+
+        payload = default_agent_roster().to_dict()
+        for agent in payload["agents"]:
+            if agent["id"] == "web-exploit":
+                agent["enabled"] = False
+        roster = AgentRoster.from_dict(payload)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="web-disabled", category=ChallengeCategory.WEB))
+
+            summary = Manager(
+                notebook,
+                RunConfig(),
+                solvers=[FakeRecon(), FakeWeb()],
+                agent_roster=roster,
+            ).run_challenge("web-disabled")
+
+        self.assertEqual([row["solver"] for row in summary["solvers"]], ["ReconSolver"])
 
 
 if __name__ == "__main__":
