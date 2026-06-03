@@ -607,11 +607,11 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <div class="tabs" style="margin-top:18px">
         <button class="active" data-tab="summary">Summary</button>
+        <button data-tab="report">Write-up</button>
         <button data-tab="agent">Agent</button>
         <button data-tab="findings">Findings</button>
         <button data-tab="observations">Observations</button>
         <button data-tab="artifacts">Artifacts</button>
-        <button data-tab="report">Write-up</button>
         <button data-tab="tools">Tools</button>
         <button data-tab="catalog">Catalog</button>
       </div>

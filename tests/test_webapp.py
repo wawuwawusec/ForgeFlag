@@ -231,6 +231,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("function renderReport", html)
         self.assertIn("function renderWriteupReport", html)
         self.assertIn('data-tab="report">Write-up</button>', html)
+        self.assertLess(html.index('data-tab="summary"'), html.index('data-tab="report"'))
+        self.assertLess(html.index('data-tab="report"'), html.index('data-tab="agent"'))
         self.assertNotIn('data-tab="report">Report</button>', html)
         self.assertIn("function tabIntro", html)
         self.assertIn("总览本题最近一次运行状态", html)
