@@ -34,9 +34,10 @@ Implemented so far:
   - Manager records `solve_trace_step` observations after each solver run
   - Write-ups expose `solve_trace`, per-flag `trace_path`, and write-up `shortest_discovery_path`
 - Optional LLM planning layer:
-  - `LLMConfig` reads `FORGEFLAG_LLM_PROVIDER`, `FORGEFLAG_LLM_MODEL`, `FORGEFLAG_LLM_API_KEY`, `OPENAI_API_KEY`, `ZAI_API_KEY`, and `FORGEFLAG_LLM_BASE_URL`
+  - `LLMConfig` reads `FORGEFLAG_LLM_PROVIDER`, `FORGEFLAG_LLM_MODEL`, `FORGEFLAG_LLM_API_KEY`, `OPENAI_API_KEY`, `ZAI_API_KEY`, `FORGEFLAG_LLM_BASE_URL`, and rate-limit controls `FORGEFLAG_LLM_MAX_RETRIES`, `FORGEFLAG_LLM_RETRY_INITIAL_SECONDS`, `FORGEFLAG_LLM_RETRY_MAX_SECONDS`, `FORGEFLAG_LLM_COOLDOWN_SECONDS`
   - `OpenAIResponsesProvider` uses the Responses API via standard-library HTTP
   - `ZhipuChatCompletionsProvider` uses `/chat/completions` at `https://open.bigmodel.cn/api/paas/v4`
+  - LLM provider calls are process-serialized and retry `429`/temporary `5xx` responses with `Retry-After` or bounded exponential backoff before entering a cooldown circuit breaker
   - `LLMSolver` writes scoped strategy guidance; it does not submit unverified flag candidates
   - `forgeflag.llm_prompts.category_playbook` injects category-specific CTF method cards into LLM prompts
   - `forgeflag.knowledge` retrieves matching `docs/ctf-playbook.md` method cards and prior notebook write-up Markdown for LLM prompt grounding

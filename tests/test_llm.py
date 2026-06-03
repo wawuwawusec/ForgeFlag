@@ -4,8 +4,11 @@ import json
 import os
 import tempfile
 import unittest
+from email.message import Message
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.llm import LLMResponse, OpenAIResponsesProvider, ZhipuChatCompletionsProvider
@@ -14,6 +17,14 @@ from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.solvers.llm import LLMSolver
 from forgeflag.solvers.base import SolverContext
+
+
+def _http_error(status: int, payload: dict[str, object], headers: dict[str, str] | None = None) -> HTTPError:
+    message = Message()
+    for key, value in (headers or {}).items():
+        message[key] = value
+    body = BytesIO(json.dumps(payload).encode("utf-8"))
+    return HTTPError("https://open.bigmodel.cn/api/paas/v4/chat/completions", status, "error", message, body)
 
 
 class LLMConfigTest(unittest.TestCase):
@@ -62,6 +73,23 @@ class LLMConfigTest(unittest.TestCase):
 
         self.assertEqual(config.provider, "disabled")
         self.assertFalse(config.enabled)
+
+    def test_llm_config_reads_rate_limit_controls_from_env(self) -> None:
+        config = LLMConfig.from_env(
+            {
+                "FORGEFLAG_LLM_PROVIDER": "zhipu",
+                "FORGEFLAG_LLM_MODEL": "glm-5.1",
+                "FORGEFLAG_LLM_MAX_RETRIES": "4",
+                "FORGEFLAG_LLM_RETRY_INITIAL_SECONDS": "3",
+                "FORGEFLAG_LLM_RETRY_MAX_SECONDS": "30",
+                "FORGEFLAG_LLM_COOLDOWN_SECONDS": "240",
+            }
+        )
+
+        self.assertEqual(config.max_retries, 4)
+        self.assertEqual(config.retry_initial_seconds, 3)
+        self.assertEqual(config.retry_max_seconds, 30)
+        self.assertEqual(config.cooldown_seconds, 240)
 
 
 class OpenAIResponsesProviderTest(unittest.TestCase):
@@ -120,6 +148,60 @@ class ZhipuChatCompletionsProviderTest(unittest.TestCase):
         self.assertEqual(body["messages"][0], {"role": "system", "content": "You are ForgeFlag."})
         self.assertEqual(body["messages"][1], {"role": "user", "content": "Solve this scoped CTF challenge."})
         self.assertFalse(body["stream"])
+
+    def test_generate_retries_429_with_retry_after_before_succeeding(self) -> None:
+        response_payload = {"choices": [{"message": {"content": "连接恢复。"}}]}
+        fake_response = Mock()
+        fake_response.__enter__ = Mock(return_value=fake_response)
+        fake_response.__exit__ = Mock(return_value=None)
+        fake_response.read.return_value = json.dumps(response_payload).encode("utf-8")
+        rate_limit = _http_error(429, {"error": {"message": "Too Many Requests"}}, {"Retry-After": "2"})
+
+        with (
+            patch("forgeflag.llm.request.urlopen", side_effect=[rate_limit, fake_response]) as urlopen,
+            patch("forgeflag.llm.time.sleep") as sleep,
+        ):
+            provider = ZhipuChatCompletionsProvider(
+                LLMConfig(
+                    provider="zhipu",
+                    model="glm-5.1",
+                    api_key="zhipu-test",
+                    max_retries=2,
+                    cooldown_seconds=120,
+                )
+            )
+            result = provider.generate("You are ForgeFlag.", "Solve this scoped CTF challenge.")
+
+        self.assertEqual(result.content, "连接恢复。")
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(2)
+
+    def test_generate_enters_cooldown_after_retry_budget_is_exhausted(self) -> None:
+        first = _http_error(429, {"error": {"message": "Too Many Requests"}})
+        second = _http_error(429, {"error": {"message": "Too Many Requests"}})
+
+        with (
+            patch("forgeflag.llm.request.urlopen", side_effect=[first, second]) as urlopen,
+            patch("forgeflag.llm.time.sleep"),
+            patch("forgeflag.llm.time.monotonic", side_effect=[10, 10, 10, 10, 11]),
+        ):
+            provider = ZhipuChatCompletionsProvider(
+                LLMConfig(
+                    provider="zhipu",
+                    model="glm-5.1",
+                    api_key="zhipu-test",
+                    base_url="https://cooldown.test/api/paas/v4",
+                    max_retries=1,
+                    retry_initial_seconds=1,
+                    cooldown_seconds=120,
+                )
+            )
+            with self.assertRaisesRegex(RuntimeError, "rate limit"):
+                provider.generate("You are ForgeFlag.", "Solve this scoped CTF challenge.")
+            with self.assertRaisesRegex(RuntimeError, "cooling down"):
+                provider.generate("You are ForgeFlag.", "Solve this scoped CTF challenge again.")
+
+        self.assertEqual(urlopen.call_count, 2)
 
 
 class LLMSolverTest(unittest.TestCase):

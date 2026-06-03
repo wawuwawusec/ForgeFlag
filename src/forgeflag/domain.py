@@ -99,6 +99,10 @@ class LLMConfig:
     api_key: str | None = None
     base_url: str = "https://api.openai.com/v1"
     timeout_seconds: int = 30
+    max_retries: int = 2
+    retry_initial_seconds: int = 1
+    retry_max_seconds: int = 20
+    cooldown_seconds: int = 120
 
     @property
     def enabled(self) -> bool:
@@ -129,6 +133,10 @@ class LLMConfig:
             api_key=api_key,
             base_url=values.get("FORGEFLAG_LLM_BASE_URL") or _default_llm_base_url(provider),
             timeout_seconds=timeout,
+            max_retries=max(0, _int_env(values.get("FORGEFLAG_LLM_MAX_RETRIES"), default=2)),
+            retry_initial_seconds=max(0, _int_env(values.get("FORGEFLAG_LLM_RETRY_INITIAL_SECONDS"), default=1)),
+            retry_max_seconds=max(1, _int_env(values.get("FORGEFLAG_LLM_RETRY_MAX_SECONDS"), default=20)),
+            cooldown_seconds=max(0, _int_env(values.get("FORGEFLAG_LLM_COOLDOWN_SECONDS"), default=120)),
         )
 
 

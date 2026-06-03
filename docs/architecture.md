@@ -58,6 +58,8 @@ After each solver run, the manager records a `solve_trace_step` observation with
 
 `LLMSolver` is optional and disabled unless an LLM provider is configured. The prompt includes a category-specific playbook for Web, Crypto, Forensics, Traffic, Reverse, Pwn, Misc, Infra, Recon, or Unknown routing, then asks for free-form strategy text or compact Planner v2 JSON with `summary`, `hypotheses`, `suggested_solvers`, `next_actions`, `tool_hints`, `expected_evidence`, and `fallback_plan`; the observer promotes structured plans into shared observations for the manager to use in solver scheduling.
 
+Provider calls are serialized inside the ForgeFlag process and use a rate-limit-aware HTTP wrapper. `429` and temporary `5xx` responses are retried with `Retry-After` or bounded exponential backoff; repeated 429 failures enter a cooldown circuit breaker so deterministic solvers can continue instead of hammering the model API.
+
 After an LLM-enabled run stalls without an accepted flag, the manager can call a Post-run Critic. The critic compares findings, observations, solver results, and missing evidence, then records an `llm_post_run_critic` observation with blockers, missing evidence, suggested solvers, tool hints, next actions, and rerun reason.
 
 ### Local Knowledge Retrieval

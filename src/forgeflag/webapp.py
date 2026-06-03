@@ -399,6 +399,10 @@ def _llm_config(payload: dict[str, Any]) -> LLMConfig:
             api_key=base.api_key,
             base_url=base.base_url,
             timeout_seconds=base.timeout_seconds,
+            max_retries=base.max_retries,
+            retry_initial_seconds=base.retry_initial_seconds,
+            retry_max_seconds=base.retry_max_seconds,
+            cooldown_seconds=base.cooldown_seconds,
         )
     return LLMConfig(
         provider=provider,
@@ -406,6 +410,10 @@ def _llm_config(payload: dict[str, Any]) -> LLMConfig:
         api_key=_optional_string(payload.get("llm_api_key")) or base.api_key,
         base_url=_optional_string(payload.get("llm_base_url")) or _default_llm_base_url(provider, base.base_url),
         timeout_seconds=_int_value(payload.get("llm_timeout_seconds"), base.timeout_seconds),
+        max_retries=_int_value(payload.get("llm_max_retries"), base.max_retries),
+        retry_initial_seconds=_int_value(payload.get("llm_retry_initial_seconds"), base.retry_initial_seconds),
+        retry_max_seconds=_int_value(payload.get("llm_retry_max_seconds"), base.retry_max_seconds),
+        cooldown_seconds=_int_value(payload.get("llm_cooldown_seconds"), base.cooldown_seconds),
     )
 
 
