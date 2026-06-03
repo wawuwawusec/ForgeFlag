@@ -624,7 +624,7 @@ INDEX_HTML = r"""<!doctype html>
     const statusFilters = ["all","solved","ran","not_run"];
     const statusLabels = { all:"全部", solved:"已出 flag", ran:"已运行未出", not_run:"未运行" };
     const state = { selected: null, activeCategory: "all", activeStatus: "all", challenges: [], lastSummary: {}, summaries: {} };
-    const writeupSectionOrder = ["结论", "解题思路", "复现步骤", "关键证据"];
+    const writeupSectionOrder = ["解题思路", "复现步骤"];
     const $ = (id) => document.getElementById(id);
     let toastTimer = null;
     const status = (text, tone="info") => {
@@ -892,7 +892,7 @@ INDEX_HTML = r"""<!doctype html>
         findings: ["Findings", "每个 solver 产出的发现、判断依据、置信度和建议下一步。"],
         observations: ["Observations", "跨 solver 共享的线索池，包括 LLM 建议、flag 候选和工具压缩摘要。"],
         artifacts: ["Artifacts", "确认上传附件是否已进入工作区，并查看文件大小、SHA256 和实际路径。"],
-        report: ["Write-up", "Write-up 复现稿，找到 flag 后会整理结论、解题思路、复现步骤和关键证据。"],
+        report: ["Write-up", "只保留解题思路和复现步骤，方便照着复现拿 flag。"],
         tools: ["Tools", "本机和 Docker 中可用的工具清单，以及缺失工具和验证命令。"],
         catalog: ["Catalog", "推荐集成的 CTF 项目目录，用来规划后续工具能力，不会自动安装。"],
       };
@@ -1183,18 +1183,8 @@ INDEX_HTML = r"""<!doctype html>
     }
     function renderWriteupReport(data) {
       const writeup = data.writeup || {};
-      const sections = asList(writeup.sections);
+      const sections = orderedWriteupSections(asList(writeup.sections));
       return `
-        <div class="result-card writeup-hero">
-          <div class="card-head">
-            <div class="card-title">
-              <h3>${escapeHtml(writeup.title || data.challenge_id || "Write-up")}</h3>
-              <div class="meta">Write-up 复现稿 · ${escapeHtml(writeup.category || "unknown")} · 重点是如何复现拿到 flag</div>
-            </div>
-            <span class="badge">accepted</span>
-          </div>
-          ${flagChips(writeup.final_flags)}
-        </div>
         ${sections.map(section => `
           <div class="result-card writeup-section">
             <div class="card-head">
@@ -1203,24 +1193,13 @@ INDEX_HTML = r"""<!doctype html>
               </div>
             </div>
             <p class="writeup-section-body">${escapeHtml(section.body || "")}</p>
-            ${section.flags ? flagChips(section.flags) : ""}
-            ${asList(section.items).map(item => `
-              <div class="kv">
-                <span>${escapeHtml(item.label || "")}</span>
-                <strong>${escapeHtml(item.value || "")}</strong>
-              </div>`).join("")}
             ${asList(section.steps).length ? `<ol class="steps">${section.steps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}
           </div>`).join("")}
-        <div class="result-card">
-          <div class="card-head">
-            <div class="card-title">
-              <h3>Write-up Markdown</h3>
-              <div class="meta">可直接复制到博客、论坛或赛后复盘；调试 JSON 已折叠在下方。</div>
-            </div>
-          </div>
-          <pre class="raw-json">${escapeHtml(writeup.markdown || "")}</pre>
-          ${rawJson(data)}
-        </div>`;
+        ${sections.length ? "" : `<div class="empty-state">还没有可展示的解题思路和复现步骤。</div>`}`;
+    }
+    function orderedWriteupSections(sections) {
+      const allowed = new Map(sections.filter(section => writeupSectionOrder.includes(section.title)).map(section => [section.title, section]));
+      return writeupSectionOrder.map(title => allowed.get(title)).filter(Boolean);
     }
     function renderToolRows(data, title, kind) {
       if (kind === "tool" && data && !Array.isArray(data) && (data.wrappers || data.catalog)) {

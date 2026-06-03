@@ -81,14 +81,15 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertEqual(writeup["kind"], "ctf_writeup")
         self.assertEqual(writeup["title"], "Base32 warmup")
         self.assertEqual(writeup["final_flags"], ["flag{writeup_style}"])
-        self.assertEqual([section["title"] for section in writeup["sections"]], ["结论", "解题思路", "复现步骤", "关键证据"])
+        self.assertEqual([section["title"] for section in writeup["sections"]], ["解题思路", "复现步骤"])
         self.assertNotIn("题目概览", [section["title"] for section in writeup["sections"]])
         self.assertIn("解题思路", [section["title"] for section in writeup["sections"]])
-        self.assertIn("关键证据", [section["title"] for section in writeup["sections"]])
         self.assertIn("复现步骤", [section["title"] for section in writeup["sections"]])
+        self.assertNotIn("结论", [section["title"] for section in writeup["sections"]])
+        self.assertNotIn("关键证据", [section["title"] for section in writeup["sections"]])
         self.assertNotIn("工具与观察", [section["title"] for section in writeup["sections"]])
         self.assertIn("# Base32 warmup", writeup["markdown"])
-        self.assertIn("## 结论", writeup["markdown"])
+        self.assertNotIn("## 结论", writeup["markdown"])
         self.assertIn("## 复现步骤", writeup["markdown"])
         self.assertIn("flag{writeup_style}", writeup["markdown"])
         sections = {section["title"]: section for section in writeup["sections"]}
@@ -260,8 +261,7 @@ class ReportBuilderTest(unittest.TestCase):
         report = ReportBuilder().build("crypto-repro", ("flag{just_a_seed}",), findings, observations, challenge=challenge)
 
         sections = {section["title"]: section for section in report["writeup"]["sections"]}
-        self.assertEqual(list(sections), ["结论", "解题思路", "复现步骤", "关键证据"])
-        self.assertIn("flag{just_a_seed}", sections["结论"]["body"])
+        self.assertEqual(list(sections), ["解题思路", "复现步骤"])
         self.assertIn("弱随机种子", sections["解题思路"]["body"])
         self.assertEqual(
             sections["复现步骤"]["steps"],
@@ -272,9 +272,8 @@ class ReportBuilderTest(unittest.TestCase):
                 "命中 seed=3277，明文为 flag{just_a_seed}。",
             ],
         )
-        evidence_labels = [item["label"] for item in sections["关键证据"]["items"]]
-        self.assertEqual(evidence_labels, ["密文整数", "key 位数", "命中 seed", "还原明文"])
         self.assertIn("seed=3277", report["writeup"]["markdown"])
+        self.assertNotIn("关键证据", report["writeup"]["markdown"])
 
     def test_writeup_describes_plain_transform_candidates_without_awkward_method_text(self) -> None:
         findings = [
@@ -347,11 +346,8 @@ class ReportBuilderTest(unittest.TestCase):
                 "在 strings 输出中看到 `flag{reverse_strings}`，提交该 flag。",
             ],
         )
-        evidence = {item["label"]: item["value"] for item in sections["关键证据"]["items"]}
-        self.assertEqual(evidence["附件"], "reverse_0")
-        self.assertEqual(evidence["文件类型"], "Mach-O 64-bit executable arm64")
-        self.assertEqual(evidence["strings 命中"], "flag{reverse_strings}")
         self.assertIn("strings -n 4 reverse_0", report["writeup"]["markdown"])
+        self.assertNotIn("关键证据", report["writeup"]["markdown"])
         self.assertNotIn("tool_samples", report["writeup"]["markdown"])
 
     def test_writeup_describes_extra_png_idat_reproduction_steps(self) -> None:
@@ -403,9 +399,8 @@ class ReportBuilderTest(unittest.TestCase):
                 "提交 flag{extra_png_idat}，verifier 验证通过。",
             ],
         )
-        evidence = {item["label"]: item["value"] for item in sections["关键证据"]["items"]}
-        self.assertEqual(evidence["额外 IDAT"], "chunk_index=1, decompressed_size=22, truncated=True")
-        self.assertEqual(evidence["解压文本"], "flag{extra_png_idat}")
+        self.assertEqual(list(sections), ["解题思路", "复现步骤"])
+        self.assertNotIn("关键证据", report["writeup"]["markdown"])
 
 
 if __name__ == "__main__":

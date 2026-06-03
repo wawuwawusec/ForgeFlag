@@ -107,42 +107,21 @@ class ReportBuilder:
         attachments = list(challenge.attachment_paths) if challenge else []
         path_steps = flag_reports[0]["path"] if flag_reports else []
         trace_path = flag_reports[0]["trace_path"] if flag_reports else solve_trace[:5]
-        observation_steps = flag_reports[0]["observations"] if flag_reports else []
         replay_steps = flag_reports[0]["replay_steps"] if flag_reports else []
         reproduction_steps = _reproduction_steps(path_steps, trace_path, replay_steps, attachments)
 
         sections = [
             {
-                "title": "结论",
-                "body": _conclusion_body(list(accepted_flags), challenge),
-                "flags": list(accepted_flags),
-                "items": _non_empty_items(
-                    [
-                        ("题目", title),
-                        ("分类", category),
-                        ("目标", challenge.target if challenge else None),
-                        ("标签", ", ".join(tags) if tags else None),
-                        ("附件", ", ".join(_basename(path) for path in attachments) if attachments else None),
-                    ]
-                ),
-            },
-            {
                 "title": "解题思路",
                 "body": _approach_summary(path_steps, findings),
-                "items": _approach_items(path_steps, trace_path),
             },
             {
                 "title": "复现步骤",
                 "body": "照下面做即可复现获取 flag 的过程。",
                 "steps": reproduction_steps,
             },
-            {
-                "title": "关键证据",
-                "body": "只保留支撑结论的关键参数和结果，完整内部日志可在调试 JSON 中查看。",
-                "items": _evidence_items(path_steps, observation_steps),
-            },
         ]
-        markdown = _markdown_writeup(title, challenge_id, category, list(accepted_flags), sections)
+        markdown = _markdown_writeup(title, sections)
         return {
             "kind": "ctf_writeup",
             "title": title,
@@ -554,24 +533,11 @@ def _string_list(value: object) -> list[str]:
 
 def _markdown_writeup(
     title: str,
-    challenge_id: str,
-    category: str,
-    flags: list[str],
     sections: list[dict[str, Any]],
 ) -> str:
-    lines = [f"# {title}", "", f"- Challenge ID: `{challenge_id}`", f"- Category: `{category}`"]
-    if flags:
-        lines.append("- Flag: " + ", ".join(f"`{flag}`" for flag in flags))
-    lines.append("")
+    lines = [f"# {title}", ""]
     for section in sections:
         lines.extend([f"## {section['title']}", "", str(section.get("body") or ""), ""])
-        if section.get("flags"):
-            lines.extend(f"- `{flag}`" for flag in section["flags"])
-            lines.append("")
-        if section.get("items"):
-            for item in section["items"]:
-                lines.append(f"- {item['label']}: {item['value']}")
-            lines.append("")
         if section.get("steps"):
             for index, step in enumerate(section["steps"], 1):
                 lines.append(f"{index}. {step}")
