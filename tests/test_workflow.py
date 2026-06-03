@@ -118,6 +118,25 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(summary["status"], "completed")
         self.assertTrue(any("category=crypto" in f.finding for f in findings))
 
+    def test_recon_verifies_flag_like_token_from_challenge_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="text-flag",
+                    title="Web prompt pasted from UI",
+                    description="The visible challenge prompt includes flag{challenge_text_candidate}.",
+                    tags=("ui", "smoke"),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("text-flag")
+            findings = notebook.findings_for("text-flag")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{challenge_text_candidate}"])
+        self.assertTrue(any(f.finding == "Found flag-like token in challenge text" for f in findings))
+
     def test_all_declared_categories_have_solver_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")

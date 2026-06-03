@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
+from forgeflag.flags import extract_flags
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools.http_probe import HttpProbeTool
 
@@ -12,6 +13,7 @@ class ReconSolver:
     def solve(self, context: SolverContext) -> SolverResult:
         challenge = context.challenge
         findings: list[Finding] = []
+        flag_candidates: list[str] = []
 
         category_hint = challenge.category.value
         if challenge.category == ChallengeCategory.UNKNOWN:
@@ -28,6 +30,25 @@ class ReconSolver:
         )
         context.notebook.add_finding(finding)
         findings.append(finding)
+
+        text_flags = extract_flags(_challenge_text(challenge))
+        if text_flags:
+            flag_candidates.extend(text_flags)
+            text_finding = Finding(
+                challenge_id=challenge.challenge_id,
+                solver=self.name,
+                finding="Found flag-like token in challenge text",
+                evidence={
+                    "flag_candidates": list(text_flags),
+                    "source": "title/description/tags/target",
+                    "matching_lines": _matching_flag_lines(_challenge_text(challenge)),
+                },
+                hypothesis="The challenge text itself contains a complete flag-like token or proof candidate.",
+                confidence=0.86,
+                next_action="Verify whether the text candidate is the intended flag, then record the shortest reproduction path.",
+            )
+            context.notebook.add_finding(text_finding)
+            findings.append(text_finding)
 
         if challenge.target and challenge.target.startswith(("http://", "https://")) and context.scope.active_probe:
             tool_result = HttpProbeTool(context.scope).run(challenge.target)
@@ -47,8 +68,9 @@ class ReconSolver:
         return SolverResult(
             solver=self.name,
             challenge_id=challenge.challenge_id,
-            status="ok",
+            status="flag_candidate" if flag_candidates else "ok",
             findings=tuple(findings),
+            flag_candidates=tuple(dict.fromkeys(flag_candidates)),
         )
 
 
@@ -66,3 +88,25 @@ def infer_category(tags: tuple[str, ...], description: str, target: str | None) 
         return ChallengeCategory.FORENSICS.value
     return ChallengeCategory.UNKNOWN.value
 
+
+def _challenge_text(challenge) -> str:
+    return "\n".join(
+        value
+        for value in (
+            challenge.title or "",
+            challenge.description or "",
+            " ".join(challenge.tags),
+            challenge.target or "",
+        )
+        if value.strip()
+    )
+
+
+def _matching_flag_lines(text: str, limit: int = 6) -> list[str]:
+    lines: list[str] = []
+    for line in text.splitlines():
+        if extract_flags(line):
+            lines.append(line.strip()[:220])
+        if len(lines) >= limit:
+            break
+    return lines
