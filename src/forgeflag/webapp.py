@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timezone
 import json
 import shutil
 from http import HTTPStatus
@@ -161,8 +162,12 @@ def create_handler(db_path: str | Path):
 
         @classmethod
         def handle_create_challenge(cls, payload: dict[str, Any]) -> dict[str, Any]:
-            challenge_id = _required_string(payload, "challenge_id")
             category = ChallengeCategory(str(payload.get("category") or ChallengeCategory.UNKNOWN.value))
+            challenge_id = _optional_string(payload.get("challenge_id")) or _generated_challenge_id(
+                cls.notebook,
+                category.value,
+                _optional_string(payload.get("title")),
+            )
             upload_dir = cls.db_path.parent / "uploads" / _safe_name(challenge_id)
             upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -369,6 +374,40 @@ def _safe_name(value: str) -> str:
     return cleaned.strip("._") or "upload.bin"
 
 
+def _generated_challenge_id(notebook: SQLiteNotebook, category: str, title: str | None = None) -> str:
+    category_slug = _slug_part(category or ChallengeCategory.UNKNOWN.value) or ChallengeCategory.UNKNOWN.value
+    title_slug = _slug_part(title or "challenge") or "challenge"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    base = f"{category_slug}-{stamp}-{title_slug}"
+    candidate = base
+    suffix = 2
+    while _challenge_exists(notebook, candidate):
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _slug_part(value: str) -> str:
+    cleaned = []
+    last_dash = False
+    for char in value.lower():
+        if char.isalnum():
+            cleaned.append(char)
+            last_dash = False
+        elif not last_dash:
+            cleaned.append("-")
+            last_dash = True
+    return "".join(cleaned).strip("-")[:36]
+
+
+def _challenge_exists(notebook: SQLiteNotebook, challenge_id: str) -> bool:
+    try:
+        notebook.get_challenge(challenge_id)
+    except KeyError:
+        return False
+    return True
+
+
 def _remove_challenge_dirs(root: Path, challenge_id: str) -> list[str]:
     removed: list[str] = []
     safe_id = _safe_name(challenge_id)
@@ -547,7 +586,10 @@ INDEX_HTML = r"""<!doctype html>
     <aside>
       <h2>新建 / 更新题目</h2>
       <label>Challenge ID</label>
-      <input id="challengeId" placeholder="forensics-01">
+      <div class="row">
+        <input id="challengeId" placeholder="自动生成，如 crypto-20260603-195201-rsa">
+        <button class="secondary" id="generateIdBtn" type="button">自动生成</button>
+      </div>
       <div class="row">
         <div><label>Category</label><select id="category"></select></div>
         <div><label>Tags</label><input id="tags" placeholder="zip,stego"></div>
@@ -638,7 +680,7 @@ INDEX_HTML = r"""<!doctype html>
     const categoryLabels = { all:"全部", unknown:"未知", web:"Web", pwn:"Pwn", reverse:"Reverse", crypto:"Crypto", forensics:"Forensics", traffic:"Traffic", misc:"Misc", infra:"Infra" };
     const statusFilters = ["all","solved","ran","not_run"];
     const statusLabels = { all:"全部", solved:"已出 flag", ran:"已运行未出", not_run:"未运行" };
-    const state = { selected: null, activeCategory: "all", activeStatus: "all", challenges: [], lastSummary: {}, summaries: {} };
+    const state = { selected: null, activeCategory: "all", activeStatus: "all", challenges: [], lastSummary: {}, summaries: {}, idTouched: false };
     const writeupSectionOrder = ["解题思路", "复现步骤"];
     const $ = (id) => document.getElementById(id);
     let toastTimer = null;
@@ -699,6 +741,39 @@ INDEX_HTML = r"""<!doctype html>
     const LLM_CONFIG_KEY = "forgeflag.llm.config.v1";
     const DEFAULT_ZHIPU_MODEL = "glm-5.1";
     categories.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; $("category").appendChild(o); });
+    function slugifyIdPart(value) {
+      return String(value || "")
+        .normalize("NFKD")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 36) || "challenge";
+    }
+    function timestampForId(date = new Date()) {
+      const pad = value => String(value).padStart(2, "0");
+      return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+    }
+    function generateChallengeId() {
+      const category = slugifyIdPart($("category").value || "unknown");
+      const upload = Array.from($("attachments").files || []).map(file => file.name)[0];
+      const titleSeed = $("title").value.trim() || $("target").value.trim() || upload || "challenge";
+      const base = `${category}-${timestampForId()}-${slugifyIdPart(titleSeed)}`;
+      const existing = new Set(state.challenges.map(ch => ch.challenge_id));
+      let candidate = base;
+      let suffix = 2;
+      while (existing.has(candidate)) candidate = `${base}-${suffix++}`;
+      return candidate;
+    }
+    function ensureChallengeId(force=false) {
+      if (!force && state.idTouched && $("challengeId").value.trim()) return $("challengeId").value.trim();
+      const generated = generateChallengeId();
+      $("challengeId").value = generated;
+      state.idTouched = false;
+      return generated;
+    }
+    function maybeRefreshGeneratedId() {
+      if (!state.idTouched || !$("challengeId").value.trim()) ensureChallengeId(false);
+    }
     function syncLLMSettings() {
       $("llmSettings").hidden = !$("llmEnabled").checked;
       if ($("llmEnabled").checked && $("llmProvider").value === "disabled") $("llmProvider").value = "zhipu";
@@ -1479,8 +1554,9 @@ INDEX_HTML = r"""<!doctype html>
       return [...known, ...rest];
     }
     async function saveChallenge() {
+      const challengeId = ensureChallengeId(false);
       const payload = {
-        challenge_id: $("challengeId").value.trim(),
+        challenge_id: challengeId,
         category: $("category").value,
         title: $("title").value.trim(),
         target: $("target").value.trim(),
@@ -1489,7 +1565,8 @@ INDEX_HTML = r"""<!doctype html>
         attachments: await filesPayload()
       };
       const res = await api("/api/challenges", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(payload) });
-      state.selected = payload.challenge_id;
+      state.selected = res.challenge_id || payload.challenge_id;
+      $("challengeId").value = state.selected;
       state.activeCategory = payload.category || state.activeCategory;
       state.activeStatus = "all";
       show(res, "raw");
@@ -1615,10 +1692,17 @@ INDEX_HTML = r"""<!doctype html>
     $("runBtn").onclick = () => runSelected().catch(e => { setRunState(false, "运行失败", "error"); show({error:e.message}); });
     $("llmSaveConfig").onclick = () => saveLLMConfig();
     $("llmTestBtn").onclick = () => withButtonFeedback("llmTestBtn", "测试中...", "", testLLM).catch(e => { $("llmConfigStatus").textContent = "测试失败"; show({error:e.message}); });
+    $("generateIdBtn").onclick = () => { ensureChallengeId(true); status("已生成题目 ID", "success"); };
+    $("challengeId").oninput = () => { state.idTouched = true; };
+    $("category").onchange = maybeRefreshGeneratedId;
+    $("title").oninput = maybeRefreshGeneratedId;
+    $("target").oninput = maybeRefreshGeneratedId;
+    $("attachments").onchange = maybeRefreshGeneratedId;
     $("llmEnabled").onchange = syncLLMSettings;
     $("llmProvider").onchange = () => { if ($("llmProvider").value === "disabled") $("llmEnabled").checked = false; syncLLMSettings(); };
     document.querySelectorAll(".tabs button").forEach(btn => btn.onclick = () => loadTab(btn.dataset.tab).catch(e => show({error:e.message})));
     restoreLLMConfig();
+    ensureChallengeId(false);
     refresh().catch(e => show({error:e.message}));
   </script>
 </body>

@@ -37,6 +37,19 @@ class WebAppApiTest(unittest.TestCase):
             self.assertEqual(len(challenge.attachment_paths), 1)
             self.assertEqual(Path(challenge.attachment_paths[0]).read_text(encoding="utf-8"), "flag{web_ui_upload}\n")
 
+    def test_create_challenge_payload_generates_missing_challenge_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            handler_cls = create_handler(db)
+
+            response = handler_cls.handle_create_challenge({"category": "crypto", "title": "RSA Warmup!!"})
+            challenge = handler_cls.notebook.get_challenge(response["challenge_id"])
+
+        self.assertRegex(response["challenge_id"], r"^crypto-\d{8}-\d{6}-rsa-warmup$")
+        self.assertEqual(challenge.challenge_id, response["challenge_id"])
+        self.assertEqual(challenge.title, "RSA Warmup!!")
+
     def test_artifacts_endpoint_returns_registered_attachment_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -211,6 +224,11 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn('data-tab="artifacts"', html)
         self.assertIn('id="deleteBtn"', html)
         self.assertIn('id="clearBtn"', html)
+        self.assertIn('id="generateIdBtn"', html)
+        self.assertIn("function generateChallengeId", html)
+        self.assertIn("function ensureChallengeId", html)
+        self.assertIn("idTouched", html)
+        self.assertIn("自动生成", html)
         self.assertIn("function deleteSelectedChallenge", html)
         self.assertIn("function clearChallenges", html)
         self.assertIn("function setRunState", html)
