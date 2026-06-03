@@ -16,5 +16,7 @@ class ToolSmokeScriptTest(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertIn("wrappers", payload)
         self.assertIn("catalog", payload)
+        wrapper_names = {row["name"] for row in payload["wrappers"]}
+        self.assertIn("stegseek", wrapper_names)
         self.assertGreaterEqual(len(payload["wrappers"]), 13)
         self.assertGreaterEqual(payload["catalog"]["total"], 90)

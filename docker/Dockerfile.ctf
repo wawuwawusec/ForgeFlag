@@ -10,6 +10,7 @@ RUN apt-get update \
         binwalk \
         build-essential \
         checksec \
+        cmake \
         curl \
         ffuf \
         file \
@@ -25,6 +26,9 @@ RUN apt-get update \
         libgmp-dev \
         libmpc-dev \
         libmpfr-dev \
+        libmcrypt-dev \
+        libmhash-dev \
+        libjpeg-dev \
         libssl-dev \
         nmap \
         p7zip-full \
@@ -42,6 +46,11 @@ RUN apt-get update \
         unzip \
         wget \
         yara \
+    && git clone --depth 1 --branch v0.6 https://github.com/RickdeJager/stegseek.git /tmp/stegseek \
+    && cmake -S /tmp/stegseek -B /tmp/stegseek/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/stegseek/build -j"$(nproc)" \
+    && cmake --install /tmp/stegseek/build \
+    && rm -rf /tmp/stegseek \
     && python3 -m venv /opt/forgeflag-venv \
     && /opt/forgeflag-venv/bin/pip install --no-cache-dir \
         ROPGadget \

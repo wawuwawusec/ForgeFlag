@@ -77,6 +77,7 @@ def _run_checks(fixtures: dict[str, Path | str], include_active_network: bool, i
     checks.append(_tool_check("strings", lambda: ctf.strings_extract(str(fixtures["blob"]), min_length=6), expected_text=FLAG))
     checks.append(_tool_check("binwalk", lambda: ctf.binwalk_scan(str(fixtures["blob"]))))
     checks.append(_tool_check("exiftool", lambda: ctf.exiftool_read(str(fixtures["text"])), expected_text="File Type"))
+    checks.append(_tool_check("stegseek", lambda: ToolRunner(ScopePolicy()).run("stegseek", ["--help"], timeout_seconds=10), expected_text="StegSeek"))
     checks.append(_tool_check("tshark", lambda: ctf.tshark_pcap_summary(str(fixtures["pcap"]), packet_limit=5), expected_text="HTTP"))
     checks.append(_tool_check("checksec", lambda: ctf.checksec_binary(str(fixtures["binary"]))))
     checks.append(_tool_check("ROPgadget", lambda: ctf.ropgadget_scan(str(fixtures["binary"]), depth=3)))

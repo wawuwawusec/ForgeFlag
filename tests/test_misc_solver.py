@@ -8,6 +8,7 @@ from pathlib import Path
 from forgeflag.domain import Challenge, ChallengeCategory, RunConfig
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
+from forgeflag.tools import ctf
 from tests.png_fixtures import png_with_extra_compressed_idat, png_with_text_and_trailing_data, png_with_wrong_declared_height
 
 
@@ -78,6 +79,137 @@ class MiscSolverTest(unittest.TestCase):
         self.assertEqual(summary["status"], "flag_found")
         self.assertEqual(summary["accepted_flags"], ["flag{extra_idat_stream}"])
         self.assertIn("idat_payloads", finding.evidence["image_stego"])
+
+    def test_misc_solver_recovers_steghide_flag_from_jpeg_with_hint_passphrase(self) -> None:
+        original_extract = getattr(ctf, "steghide_extract", None)
+        calls: list[str] = []
+
+        def fake_extract(path: str, passphrase: str, output_dir: str, scope=None):
+            calls.append(passphrase)
+            output = Path(output_dir) / "steghide-payload.txt"
+            if passphrase != "diamond":
+                return ctf.ToolResult(
+                    tool="steghide",
+                    target=path,
+                    status="error",
+                    evidence=["wrong passphrase"],
+                    raw={"stdout": "", "stderr": "could not extract any data with that passphrase!"},
+                )
+            output.write_text("flag{jpeg_steghide_hint}", encoding="utf-8")
+            return ctf.ToolResult(
+                tool="steghide",
+                target=path,
+                status="success",
+                evidence=["payload extracted"],
+                artifacts=[str(output)],
+                raw={"stdout": "wrote extracted data", "stderr": ""},
+            )
+
+        setattr(ctf, "steghide_extract", fake_extract)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                attachment = root / "out.jpg"
+                app0 = b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+                attachment.write_bytes(
+                    b"\xff\xd8"
+                    + b"\xff\xe0" + (len(app0) + 2).to_bytes(2, "big") + app0
+                    + b"\xff\xda\x00\x08\x01\x01\x00\x00?\x00"
+                    + b"\x11\x22\x33"
+                    + b"\xff\xd9"
+                )
+                notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+                notebook.add_challenge(
+                    Challenge(
+                        challenge_id="misc-jpeg-steghide",
+                        category=ChallengeCategory.MISC,
+                        title="King diamond",
+                        description="A playing card. Try diamond.",
+                        attachment_paths=(str(attachment),),
+                    )
+                )
+
+                summary = Manager(notebook, RunConfig()).run_challenge("misc-jpeg-steghide")
+                finding = next(f for f in notebook.findings_for("misc-jpeg-steghide") if f.solver == "MiscSolver")
+        finally:
+            if original_extract is None:
+                delattr(ctf, "steghide_extract")
+            else:
+                setattr(ctf, "steghide_extract", original_extract)
+
+        self.assertIn("diamond", calls)
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{jpeg_steghide_hint}"])
+        self.assertEqual(finding.evidence["jpeg_stego_tools"]["steghide_extract"]["status"], "success")
+
+    def test_misc_solver_recovers_stegseek_flag_from_jpeg_hint_wordlist(self) -> None:
+        original_extract = getattr(ctf, "steghide_extract", None)
+        original_stegseek = getattr(ctf, "stegseek_crack", None)
+        wordlists: list[tuple[str, ...]] = []
+
+        def fake_extract(path: str, passphrase: str, output_dir: str, scope=None):
+            return ctf.ToolResult(
+                tool="steghide",
+                target=path,
+                status="error",
+                evidence=["wrong passphrase"],
+                raw={"stdout": "", "stderr": "could not extract any data with that passphrase!"},
+            )
+
+        def fake_stegseek(path: str, wordlist: tuple[str, ...], output_dir: str, scope=None):
+            wordlists.append(wordlist)
+            output = Path(output_dir) / "stegseek-payload.txt"
+            output.write_text("flag{jpeg_stegseek_hint}", encoding="utf-8")
+            return ctf.ToolResult(
+                tool="stegseek",
+                target=path,
+                status="success",
+                evidence=["passphrase found"],
+                artifacts=[str(output)],
+                raw={"stdout": "Found passphrase: diamond", "stderr": ""},
+            )
+
+        setattr(ctf, "steghide_extract", fake_extract)
+        setattr(ctf, "stegseek_crack", fake_stegseek)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                attachment = root / "out.jpg"
+                app0 = b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+                attachment.write_bytes(
+                    b"\xff\xd8"
+                    + b"\xff\xe0" + (len(app0) + 2).to_bytes(2, "big") + app0
+                    + b"\xff\xda\x00\x08\x01\x01\x00\x00?\x00"
+                    + b"\x11\x22\x33"
+                    + b"\xff\xd9"
+                )
+                notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+                notebook.add_challenge(
+                    Challenge(
+                        challenge_id="misc-jpeg-stegseek",
+                        category=ChallengeCategory.MISC,
+                        title="King diamond",
+                        description="A playing card. Try diamond.",
+                        attachment_paths=(str(attachment),),
+                    )
+                )
+
+                summary = Manager(notebook, RunConfig()).run_challenge("misc-jpeg-stegseek")
+                finding = next(f for f in notebook.findings_for("misc-jpeg-stegseek") if f.solver == "MiscSolver")
+        finally:
+            if original_extract is None:
+                delattr(ctf, "steghide_extract")
+            else:
+                setattr(ctf, "steghide_extract", original_extract)
+            if original_stegseek is None:
+                delattr(ctf, "stegseek_crack")
+            else:
+                setattr(ctf, "stegseek_crack", original_stegseek)
+
+        self.assertTrue(any("diamond" in wordlist for wordlist in wordlists))
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{jpeg_stegseek_hint}"])
+        self.assertEqual(finding.evidence["jpeg_stego_tools"]["stegseek_crack"]["status"], "success")
 
     def test_misc_solver_decodes_flag_from_text_attachment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

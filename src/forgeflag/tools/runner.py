@@ -35,6 +35,20 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
     "john": ToolSpec("john", ("john",), "crypto", "Run bounded dictionary password/hash recovery."),
     "binwalk": ToolSpec("binwalk", ("binwalk",), "forensics", "Scan firmware and embedded file signatures."),
     "exiftool": ToolSpec("exiftool", ("exiftool",), "forensics", "Read metadata from images and documents."),
+    "steghide": ToolSpec(
+        "steghide",
+        ("steghide",),
+        "forensics",
+        "Inspect and extract steghide payloads from JPEG/BMP/WAV/AU artifacts with explicit hints.",
+        default_timeout_seconds=20,
+    ),
+    "stegseek": ToolSpec(
+        "stegseek",
+        ("stegseek",),
+        "forensics",
+        "Run bounded steghide passphrase recovery with a challenge-scoped wordlist.",
+        default_timeout_seconds=30,
+    ),
     "tshark": ToolSpec("tshark", ("tshark",), "forensics", "Summarize packet capture contents."),
     "ffuf": ToolSpec(
         "ffuf",

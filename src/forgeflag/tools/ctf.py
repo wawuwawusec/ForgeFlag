@@ -90,6 +90,70 @@ def exiftool_read(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     return runner.run("exiftool", [path])
 
 
+def steghide_info(path: str, passphrase: str = "", scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("steghide", ["info", path, "-p", passphrase], timeout_seconds=15)
+
+
+def steghide_extract(
+    path: str,
+    passphrase: str,
+    output_dir: str,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    destination = Path(output_dir).expanduser().resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    output_path = destination / f"{Path(path).stem}-steghide-payload.bin"
+    runner = ToolRunner(scope or ScopePolicy())
+    result = runner.run(
+        "steghide",
+        ["extract", "-sf", path, "-p", passphrase, "-xf", str(output_path), "-f"],
+        timeout_seconds=20,
+    )
+    if result.status == "success" and output_path.is_file():
+        return ToolResult(
+            tool=result.tool,
+            target=result.target,
+            status=result.status,
+            evidence=result.evidence,
+            artifacts=[str(output_path)],
+            next_hints=result.next_hints,
+            raw=result.raw,
+            created_at=result.created_at,
+        )
+    return result
+
+
+def stegseek_crack(
+    path: str,
+    wordlist: tuple[str, ...],
+    output_dir: str,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    destination = Path(output_dir).expanduser().resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    words = _bounded_wordlist(wordlist)
+    if not words:
+        return ToolResult(tool="stegseek", target=path, status="refused", evidence=["wordlist is empty"])
+    wordlist_path = destination / "stegseek-wordlist.txt"
+    output_path = destination / f"{Path(path).stem}-stegseek-payload.bin"
+    wordlist_path.write_text("\n".join(words) + "\n", encoding="utf-8")
+    runner = ToolRunner(scope or ScopePolicy())
+    result = runner.run("stegseek", [path, str(wordlist_path), str(output_path)], timeout_seconds=30)
+    if result.status == "success" and output_path.is_file():
+        return ToolResult(
+            tool=result.tool,
+            target=result.target,
+            status=result.status,
+            evidence=result.evidence,
+            artifacts=[str(output_path)],
+            next_hints=result.next_hints,
+            raw=result.raw,
+            created_at=result.created_at,
+        )
+    return result
+
+
 def tshark_pcap_summary(path: str, packet_limit: int = 50, scope: ScopePolicy | None = None) -> ToolResult:
     packet_limit = max(1, min(packet_limit, 500))
     runner = ToolRunner(scope or ScopePolicy())
@@ -395,6 +459,19 @@ def _tshark_contains_literal(value: str) -> str:
 def _tool_search_literal(value: str) -> str:
     cleaned = "".join(char for char in value if char.isprintable() and char not in {"\x00", "\n", "\r"})
     return cleaned[:80] or "pop rdi; ret"
+
+
+def _bounded_wordlist(words: tuple[str, ...], limit: int = 256) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    for word in words:
+        value = "".join(char for char in word.strip() if char.isprintable() and char not in {"\x00", "\n", "\r"})
+        if len(value) > 128 or value in cleaned:
+            continue
+        if value:
+            cleaned.append(value)
+        if len(cleaned) >= limit:
+            break
+    return tuple(cleaned)
 
 
 def _ffuf_target_url(target: str) -> str:

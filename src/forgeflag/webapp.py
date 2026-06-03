@@ -1040,6 +1040,7 @@ INDEX_HTML = r"""<!doctype html>
         const transformRecipes = renderTransformRecipeEvidence(evidence);
         const antswordRecovery = renderAntSwordEvidence(evidence);
         const archiveImage = renderArchiveImageEvidence(evidence);
+        const jpegStego = renderJpegStegoEvidence(evidence);
         return `
           <div class="result-card">
             <div class="card-head">
@@ -1059,6 +1060,7 @@ INDEX_HTML = r"""<!doctype html>
             ${transformRecipes}
             ${antswordRecovery}
             ${archiveImage}
+            ${jpegStego}
             ${Array.isArray(candidates) && candidates.length ? `<div><strong>关键候选：</strong><div class="flag-list">${candidates.slice(0, 6).map(item => `<span class="flag-chip">${escapeHtml(item.value || item)}</span>`).join("")}</div></div>` : ""}
             ${rawJson(finding)}
           </div>`;
@@ -1197,6 +1199,44 @@ INDEX_HTML = r"""<!doctype html>
         </div>`);
       }
       return parts.join("");
+    }
+    function renderJpegStegoEvidence(evidence) {
+      const image = evidence.image_stego || null;
+      const tools = evidence.jpeg_stego_tools || null;
+      if ((!image || image.format !== "jpeg") && !tools) return "";
+      const markers = image ? asList(image.markers).map(marker => marker.type || "marker").filter(Boolean) : [];
+      const trailing = image && image.trailing_data ? image.trailing_data : null;
+      const info = tools && tools.steghide_info ? tools.steghide_info : null;
+      const extract = tools && tools.steghide_extract ? tools.steghide_extract : null;
+      const stegseek = tools && tools.stegseek_crack ? tools.stegseek_crack : null;
+      const attempts = tools ? asList(tools.steghide_attempts) : [];
+      const capacity = info && info.stdout_preview ? String(info.stdout_preview).split(/\r?\n/).map(line => line.trim()).filter(line => line.includes("capacity")).join(" · ") : "";
+      const attemptText = attempts.slice(0, 6).map(item => `${item.passphrase_hint || "hint"}:${item.status || "unknown"}`).join(" · ");
+      return `<div><strong>JPEG 隐写排查：</strong>
+        <div class="kv-grid">
+          <div class="kv">
+            <span>JPEG markers</span>
+            <strong>${escapeHtml(markers.slice(0, 14).join(" -> ") || "未记录")}</strong>
+            ${trailing ? `<div class="meta">EOI 后尾随 ${escapeHtml(trailing.length)} bytes</div>` : `<div class="meta">未发现 EOI 后尾随数据</div>`}
+          </div>
+          <div class="kv">
+            <span>steghide info</span>
+            <strong>${escapeHtml(info ? (capacity || info.status || "checked") : "未运行")}</strong>
+            ${info && info.stderr_preview ? `<div class="meta">${escapeHtml(info.stderr_preview.trim())}</div>` : ""}
+          </div>
+          <div class="kv">
+            <span>steghide hints</span>
+            <strong>${escapeHtml(extract ? extract.status || "checked" : "未尝试")}</strong>
+            ${attemptText ? `<div class="meta">${escapeHtml(attemptText)}</div>` : ""}
+          </div>
+          <div class="kv">
+            <span>stegseek_crack</span>
+            <strong>${escapeHtml(stegseek ? stegseek.status || "checked" : "未运行")}</strong>
+            ${stegseek && stegseek.wordlist_size ? `<div class="meta">bounded wordlist: ${escapeHtml(stegseek.wordlist_size)} hints</div>` : ""}
+            ${stegseek && (stegseek.stdout_preview || stegseek.stderr_preview) ? `<div class="meta">${escapeHtml(String(stegseek.stdout_preview || stegseek.stderr_preview).trim().slice(0, 220))}</div>` : ""}
+          </div>
+        </div>
+      </div>`;
     }
     function renderObservations(data) {
       const observations = asList(data);

@@ -378,6 +378,7 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("renderToolSampleEvidence", html)
         self.assertIn("renderTransformRecipeEvidence", html)
         self.assertIn("renderArchiveImageEvidence", html)
+        self.assertIn("renderJpegStegoEvidence", html)
         self.assertIn("rsa_recovery", html)
         self.assertIn("rsa.method", html)
         self.assertIn("single_byte_xor", html)
@@ -389,6 +390,9 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("routes_by_attachment", html)
         self.assertIn("tool_samples", html)
         self.assertIn("image_stego", html)
+        self.assertIn("jpeg_stego_tools", html)
+        self.assertIn("steghide_info", html)
+        self.assertIn("stegseek_crack", html)
 
     def test_run_challenge_payload_can_enable_llm_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

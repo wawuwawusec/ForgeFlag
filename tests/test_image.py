@@ -50,6 +50,29 @@ class ImageAnalysisTest(unittest.TestCase):
         self.assertIn("flag{jpeg_comment}", summary["comments"][0]["text_preview"])
         self.assertIn("APP1", summary["app_markers"])
 
+    def test_jpeg_stego_hints_record_markers_and_trailing_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "tail.jpg"
+            app0 = b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+            image.write_bytes(
+                b"\xff\xd8"
+                + b"\xff\xe0" + (len(app0) + 2).to_bytes(2, "big") + app0
+                + b"\xff\xda\x00\x08\x01\x01\x00\x00?\x00"
+                + b"\x11\x22\x33"
+                + b"\xff\xd9"
+                + b"flag{after_eoi}"
+            )
+
+            summary = analyze_image_stego_hints(image)
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["format"], "jpeg")
+        self.assertIn("APP0", summary["app_markers"])
+        self.assertEqual(summary["markers"][-1]["type"], "EOI")
+        self.assertEqual(summary["trailing_data"]["length"], len(b"flag{after_eoi}"))
+        self.assertIn("flag{after_eoi}", summary["trailing_data"]["ascii_preview"])
+
     def test_png_stego_hints_extract_independent_compressed_idat_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             image = Path(tmp) / "extra-idat.png"

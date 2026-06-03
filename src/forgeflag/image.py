@@ -182,17 +182,27 @@ def _analyze_jpeg_stego_hints(data: bytes) -> dict[str, Any] | None:
     pos = 2
     comments: list[dict[str, str]] = []
     app_markers: list[str] = []
+    markers: list[dict[str, Any]] = [{"type": "SOI", "offset": 0}]
+    trailing_data: dict[str, Any] | None = None
     while pos + 4 <= len(data):
         if data[pos] != 0xFF:
             pos += 1
             continue
+        marker_offset = pos
         while pos < len(data) and data[pos] == 0xFF:
             pos += 1
         if pos >= len(data):
             break
         marker = data[pos]
         pos += 1
-        if marker in {0xD9, 0xDA}:
+        if marker == 0x00:
+            continue
+        marker_type = _jpeg_marker_name(marker)
+        if marker == 0xD9:
+            markers.append({"type": marker_type, "offset": marker_offset})
+            tail = data[pos:]
+            if tail:
+                trailing_data = _byte_preview(tail)
             break
         if pos + 2 > len(data):
             break
@@ -200,19 +210,70 @@ def _analyze_jpeg_stego_hints(data: bytes) -> dict[str, Any] | None:
         if size < 2 or pos + size > len(data):
             break
         body = data[pos + 2 : pos + size]
+        markers.append({"type": marker_type, "offset": marker_offset, "size": size})
         if marker == 0xFE:
             comments.append({"text_preview": _decode_preview(body, limit=500)})
         if 0xE0 <= marker <= 0xEF:
             app_markers.append(f"APP{marker - 0xE0}")
+        if marker == 0xDA:
+            eoi_offset = _find_jpeg_eoi(data, pos + size)
+            if eoi_offset is not None:
+                markers.append({"type": "EOI", "offset": eoi_offset})
+                tail = data[eoi_offset + 2 :]
+                if tail:
+                    trailing_data = _byte_preview(tail)
+            break
         pos += size
 
-    if not comments and not app_markers:
+    if not comments and not app_markers and not trailing_data:
         return None
     return {
         "format": "jpeg",
         "comments": comments,
         "app_markers": list(dict.fromkeys(app_markers)),
+        "markers": markers[:120],
+        **({"trailing_data": trailing_data} if trailing_data else {}),
     }
+
+
+def _jpeg_marker_name(marker: int) -> str:
+    if 0xE0 <= marker <= 0xEF:
+        return f"APP{marker - 0xE0}"
+    names = {
+        0xC0: "SOF0",
+        0xC2: "SOF2",
+        0xC4: "DHT",
+        0xD8: "SOI",
+        0xD9: "EOI",
+        0xDA: "SOS",
+        0xDB: "DQT",
+        0xDD: "DRI",
+        0xFE: "COM",
+    }
+    if 0xD0 <= marker <= 0xD7:
+        return f"RST{marker - 0xD0}"
+    return names.get(marker, f"0xFF{marker:02X}")
+
+
+def _find_jpeg_eoi(data: bytes, start: int) -> int | None:
+    pos = start
+    while pos + 1 < len(data):
+        if data[pos] != 0xFF:
+            pos += 1
+            continue
+        marker_offset = pos
+        while pos < len(data) and data[pos] == 0xFF:
+            pos += 1
+        if pos >= len(data):
+            return None
+        marker = data[pos]
+        if marker == 0x00 or 0xD0 <= marker <= 0xD7:
+            pos += 1
+            continue
+        if marker == 0xD9:
+            return marker_offset
+        pos += 1
+    return None
 
 
 def _byte_preview(data: bytes) -> dict[str, Any]:
