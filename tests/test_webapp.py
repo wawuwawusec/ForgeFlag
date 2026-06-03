@@ -359,7 +359,9 @@ class WebAppApiTest(unittest.TestCase):
 
         self.assertIn('id="llmEnabled"', html)
         self.assertIn('id="llmApiKey"', html)
+        self.assertIn('id="llmSavedKeySelect"', html)
         self.assertIn('id="llmSaveConfig"', html)
+        self.assertIn('id="llmClearSavedKeys"', html)
         self.assertIn('id="llmTestBtn"', html)
         self.assertNotIn('id="llmRememberKey"', html)
         self.assertIn('id="llmConfigStatus"', html)
@@ -374,6 +376,16 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("if (!ensureLLMReady()) return false;", html)
         self.assertIn("if (!ensureLLMReady()) return {status:\"blocked\", reason:\"missing_llm_config\"};", html)
         self.assertIn("请先填写并保存大模型 API Key", html)
+        self.assertIn("function upsertSavedLLMKey", html)
+        self.assertIn("function renderSavedLLMKeyOptions", html)
+        self.assertIn("function applySavedLLMKey", html)
+        self.assertIn("function clearSavedLLMKeys", html)
+        self.assertIn("llm_saved_keys: upsertSavedLLMKey(previous, payload)", html)
+        self.assertIn("option.value = String(index);", html)
+        self.assertIn("maskLLMKey", html)
+        self.assertIn('$("llmSavedKeySelect").onchange', html)
+        self.assertIn('$("llmClearSavedKeys").onclick', html)
+        self.assertIn("选择已保存 Key", html)
 
     def test_index_renders_classical_crypto_evidence_summary(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))

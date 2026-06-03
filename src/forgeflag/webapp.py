@@ -649,6 +649,12 @@ INDEX_HTML = r"""<!doctype html>
             <input id="llmApiKey" type="password" autocomplete="off" placeholder="sk-...">
           </div>
           <div>
+            <label>Saved Key</label>
+            <select id="llmSavedKeySelect">
+              <option value="">选择已保存 Key</option>
+            </select>
+          </div>
+          <div>
             <label>Base URL</label>
             <input id="llmBaseUrl" placeholder="https://api.openai.com/v1">
           </div>
@@ -658,6 +664,7 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <div class="llm-actions">
             <button class="secondary" id="llmSaveConfig">保存配置</button>
+            <button class="secondary" id="llmClearSavedKeys">清空保存Key</button>
             <button class="secondary" id="llmTestBtn">测试大模型</button>
             <span class="llm-status" id="llmConfigStatus">配置未保存；保存后 API Key 会保存到本浏览器</span>
           </div>
@@ -740,6 +747,7 @@ INDEX_HTML = r"""<!doctype html>
     const asList = (value) => Array.isArray(value) ? value : [];
     const show = (data, tab="raw") => $("output").innerHTML = renderData(tab, data);
     const LLM_CONFIG_KEY = "forgeflag.llm.config.v1";
+    const LLM_SAVED_KEYS_LIMIT = 10;
     const DEFAULT_ZHIPU_MODEL = "glm-5.1";
     categories.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; $("category").appendChild(o); });
     function slugifyIdPart(value) {
@@ -784,6 +792,7 @@ INDEX_HTML = r"""<!doctype html>
       $("llmApiKey").placeholder = zhipu ? "ZAI_API_KEY" : "sk-...";
       $("llmBaseUrl").placeholder = zhipu ? "https://open.bigmodel.cn/api/paas/v4" : "https://api.openai.com/v1";
       hydrateLLMKeyFromStorage();
+      renderSavedLLMKeyOptions();
     }
     function llmPayload() {
       const llmEnabled = $("llmEnabled").checked;
@@ -798,15 +807,18 @@ INDEX_HTML = r"""<!doctype html>
     }
     function saveLLMConfig() {
       const payload = llmPayload();
+      const previous = readSavedLLMConfig() || {};
       const saved = {
         llm_enabled: payload.llm_enabled,
         llm_provider: payload.llm_provider,
         llm_model: payload.llm_model,
         llm_api_key: payload.llm_api_key,
+        llm_saved_keys: upsertSavedLLMKey(previous, payload),
         llm_base_url: payload.llm_base_url,
         llm_timeout_seconds: payload.llm_timeout_seconds
       };
       localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify(saved));
+      renderSavedLLMKeyOptions(payload.llm_api_key);
       $("llmConfigStatus").textContent = payload.llm_api_key ? "配置已保存到本浏览器（含 Key）" : "配置已保存到本浏览器（未保存 Key）";
       flashButton("llmSaveConfig", "success");
       status("大模型配置已保存", "success");
@@ -820,12 +832,101 @@ INDEX_HTML = r"""<!doctype html>
         return null;
       }
     }
+    function savedLLMKeys(saved = readSavedLLMConfig()) {
+      if (!saved) return [];
+      const rows = Array.isArray(saved.llm_saved_keys) ? saved.llm_saved_keys : [];
+      const legacy = saved.llm_api_key ? [{
+        provider: saved.llm_provider || "zhipu",
+        model: saved.llm_model || "",
+        api_key: saved.llm_api_key,
+        base_url: saved.llm_base_url || "",
+        saved_at: saved.saved_at || ""
+      }] : [];
+      const deduped = [];
+      const seen = new Set();
+      [...rows, ...legacy].forEach(row => {
+        const apiKey = String(row && (row.api_key || row.llm_api_key) || "");
+        if (!apiKey) return;
+        const provider = String(row.provider || row.llm_provider || "zhipu");
+        const identity = `${provider}:${apiKey}`;
+        if (seen.has(identity)) return;
+        seen.add(identity);
+        deduped.push({
+          provider,
+          model: String(row.model || row.llm_model || ""),
+          api_key: apiKey,
+          base_url: String(row.base_url || row.llm_base_url || ""),
+          saved_at: String(row.saved_at || "")
+        });
+      });
+      return deduped.slice(0, LLM_SAVED_KEYS_LIMIT);
+    }
+    function maskLLMKey(apiKey) {
+      const key = String(apiKey || "");
+      if (key.length <= 10) return key ? "saved key" : "";
+      return `${key.slice(0, 6)}...${key.slice(-4)}`;
+    }
+    function upsertSavedLLMKey(saved, payload) {
+      const apiKey = String(payload.llm_api_key || "").trim();
+      const rows = savedLLMKeys(saved);
+      if (!apiKey) return rows;
+      const provider = payload.llm_provider || "zhipu";
+      const next = {
+        provider,
+        model: payload.llm_model || "",
+        api_key: apiKey,
+        base_url: payload.llm_base_url || "",
+        saved_at: new Date().toISOString()
+      };
+      return [next, ...rows.filter(row => !(row.provider === provider && row.api_key === apiKey))].slice(0, LLM_SAVED_KEYS_LIMIT);
+    }
+    function renderSavedLLMKeyOptions(selectedKey = "") {
+      const select = $("llmSavedKeySelect");
+      if (!select) return;
+      const rows = savedLLMKeys();
+      select.innerHTML = "";
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = rows.length ? "选择已保存 Key" : "暂无已保存 Key";
+      select.appendChild(empty);
+      rows.forEach((row, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = `${row.provider || "llm"} ${maskLLMKey(row.api_key)}`;
+        if (selectedKey && row.api_key === selectedKey) option.selected = true;
+        select.appendChild(option);
+      });
+    }
+    function applySavedLLMKey(index) {
+      if (index === "") return;
+      const row = savedLLMKeys()[Number(index)];
+      if (!row) return;
+      $("llmEnabled").checked = true;
+      $("llmProvider").value = row.provider || "zhipu";
+      $("llmModel").value = row.model || (row.provider === "zhipu" ? DEFAULT_ZHIPU_MODEL : "");
+      $("llmBaseUrl").value = row.base_url || "";
+      $("llmApiKey").value = row.api_key || "";
+      syncLLMSettings();
+      $("llmSavedKeySelect").value = String(index);
+      $("llmConfigStatus").textContent = "已从保存的 Key 填充";
+      status("已填充保存的 API Key", "success");
+    }
+    function clearSavedLLMKeys() {
+      const saved = readSavedLLMConfig() || {};
+      saved.llm_api_key = "";
+      saved.llm_saved_keys = [];
+      localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify(saved));
+      $("llmApiKey").value = "";
+      renderSavedLLMKeyOptions();
+      $("llmConfigStatus").textContent = "已清空本浏览器保存的 Key";
+      status("已清空保存的 API Key", "success");
+    }
     function hydrateLLMKeyFromStorage() {
       if (!$("llmEnabled").checked || $("llmApiKey").value.trim()) return;
       const saved = readSavedLLMConfig();
-      if (!saved || !saved.llm_api_key) return;
-      if (saved.llm_provider && saved.llm_provider !== $("llmProvider").value) return;
-      $("llmApiKey").value = saved.llm_api_key;
+      const row = savedLLMKeys(saved).find(item => item.provider === $("llmProvider").value) || savedLLMKeys(saved)[0];
+      if (!row || !row.api_key) return;
+      $("llmApiKey").value = row.api_key;
     }
     function ensureLLMReady() {
       if (!$("llmEnabled").checked) return true;
@@ -860,6 +961,7 @@ INDEX_HTML = r"""<!doctype html>
         $("llmTimeout").value = saved.llm_timeout_seconds || "30";
         $("llmApiKey").value = saved.llm_api_key || "";
         $("llmConfigStatus").textContent = saved.llm_api_key ? "已载入本浏览器配置（含 Key）" : "已载入本浏览器配置（未保存 Key）";
+        renderSavedLLMKeyOptions(saved.llm_api_key || "");
       } catch {
         $("llmConfigStatus").textContent = "本地配置读取失败";
       }
@@ -1845,6 +1947,8 @@ INDEX_HTML = r"""<!doctype html>
     $("attachments").onchange = maybeRefreshGeneratedId;
     $("llmEnabled").onchange = syncLLMSettings;
     $("llmProvider").onchange = () => { if ($("llmProvider").value === "disabled") $("llmEnabled").checked = false; syncLLMSettings(); };
+    $("llmSavedKeySelect").onchange = () => applySavedLLMKey($("llmSavedKeySelect").value);
+    $("llmClearSavedKeys").onclick = () => clearSavedLLMKeys();
     document.querySelectorAll(".tabs button").forEach(btn => btn.onclick = () => loadTab(btn.dataset.tab).catch(e => show({error:e.message})));
     restoreLLMConfig();
     ensureChallengeId(false);
