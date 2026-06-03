@@ -18,6 +18,13 @@ ForgeFlag is a scoped multi-agent assistant for CTF and authorized security comp
 Implemented so far:
 
 - Manager dispatch loop.
+- Declarative subagent roster:
+  - `forgeflag.agent_roster` defines `ForgeFlagManager` plus 9 professional subagent identities
+  - roles cover triage, LLM route planning, Web, Crypto, Binary, Forensics, Traffic, Evidence Judge, and Browser Player QA
+  - `forgeflag agents` lists the active roster; `forgeflag agents --write-default` writes `.forgeflag/agent-roster.json`
+  - run summaries include an `agent_roster` section with coordinator, selected category, solver queue, and participating identities
+  - Web UI exposes `/api/agents` and the Agent tab shows configured and per-run identities
+  - documented in `docs/agent-roster.md`
 - SQLite shared notebook.
 - Observer-distilled shared observations.
 - Automatic CTF write-ups for accepted flags.
@@ -120,7 +127,7 @@ Implemented so far:
 - Local Web UI:
   - challenge creation and attachment upload
   - category workspace filters for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra queues
-  - per-run LLM provider/model/API key controls, browser-local non-secret config saving, optional local key remembering, and `/api/llm/test`
+  - per-run LLM provider/model/API key controls, browser-local non-secret config saving, and `/api/llm/test`
   - entered LLM keys are used for run/test requests and are never stored in SQLite
   - run, auto-loaded findings, observations, artifact summaries, Write-up, tools, and catalog views
   - Summary, Findings, Observations, Artifacts, Write-up, Tools, and Catalog render as readable cards with collapsible debug JSON
@@ -192,7 +199,7 @@ Current local setup after migration:
   - Docker wrappers: `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`
   - hashcat is installed, but current OrbStack runtime does not expose an OpenCL/CUDA device, so cracking smoke skips hashcat device execution
   - `ToolRunner` automatically reads `.forgeflag/docker.env` when explicit Docker tool environment variables are unset, so direct CLI/Web runs show the same Docker fallback inventory as `scripts/forgeflag-control`
-- Tests passed: 205 tests OK
+- Tests passed: 213 tests OK
 - Browser-player benchmark passed: 3/3 Web UI flows OK
 
 Useful commands:
@@ -203,6 +210,8 @@ cd /Users/5haw0/Documents/ForgeFlag
 scripts/forgeflag-tool-smoke
 scripts/forgeflag-tool-smoke --include-active-network
 .venv/bin/forgeflag --db .forgeflag/notebook.sqlite tools
+.venv/bin/forgeflag --db .forgeflag/notebook.sqlite agents
+.venv/bin/forgeflag --db .forgeflag/notebook.sqlite agents --write-default
 .venv/bin/forgeflag catalog
 .venv/bin/forgeflag catalog --category traffic
 .venv/bin/python -m unittest discover -s tests

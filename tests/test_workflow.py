@@ -510,6 +510,28 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(trace[1].evidence["flag_candidates"], ["flag{trace_path}"])
         self.assertTrue(trace[1].evidence["made_progress"])
 
+    def test_manager_summary_includes_subagent_roster_for_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="agent-roster-run",
+                    category=ChallengeCategory.WEB,
+                    description="flag{agent_roster_run}",
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("agent-roster-run")
+
+        roster = summary["agent_roster"]
+        self.assertEqual(roster["coordinator"]["id"], "forgeflag-manager")
+        names = {agent["name"] for agent in roster["agents"]}
+        self.assertIn("ChallengeTriageAgent", names)
+        self.assertIn("WebExploitAgent", names)
+        self.assertIn("EvidenceJudgeAgent", names)
+        self.assertNotIn("LLMRoutePlannerAgent", names)
+        self.assertNotIn("BrowserPlayerQAAgent", names)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -277,6 +277,19 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("SolveTrace", html)
         self.assertIn("function renderActionQueue", html)
         self.assertIn("function renderPostRunCritic", html)
+        self.assertIn("/api/agents", html)
+        self.assertIn("Agent 身份配置", html)
+        self.assertIn("function renderAgentRoster", html)
+
+    def test_agents_endpoint_exposes_subagent_roster(self) -> None:
+        handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
+
+        payload = handler_cls.handle_agents()
+
+        self.assertEqual(payload["coordinator"]["id"], "forgeflag-manager")
+        self.assertIn("WebExploitAgent", {row["name"] for row in payload["agents"]})
+        self.assertIn("TrafficAgent", {row["name"] for row in payload["agents"]})
+        self.assertIn("BrowserPlayerQAAgent", {row["name"] for row in payload["agents"]})
 
     def test_project_catalog_endpoint_lists_recommended_projects(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
@@ -322,10 +335,12 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn('id="llmApiKey"', html)
         self.assertIn('id="llmSaveConfig"', html)
         self.assertIn('id="llmTestBtn"', html)
-        self.assertIn('id="llmRememberKey"', html)
+        self.assertNotIn('id="llmRememberKey"', html)
         self.assertIn('id="llmConfigStatus"', html)
         self.assertIn('<option value="zhipu">智谱 GLM</option>', html)
         self.assertIn("大模型分析", html)
+        self.assertIn("API Key 仅用于本次请求", html)
+        self.assertNotIn("配置已保存到本浏览器（含 Key）", html)
 
     def test_run_challenge_payload_can_enable_llm_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

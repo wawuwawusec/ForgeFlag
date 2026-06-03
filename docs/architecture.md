@@ -14,11 +14,21 @@ Tools return structured results with evidence and artifacts. Solvers should neve
 
 The agent layer is split into a manager and specialist solvers. Each solver owns its own local reasoning state and writes only structured notes to the shared notebook.
 
+ForgeFlag also has a declarative subagent roster in `forgeflag.agent_roster`. The roster gives professional identities and operating contracts to the manager, LLM planner, category specialists, evidence judge, and browser-player QA role without replacing the existing solver interface.
+
 ## Core Components
 
 ### Manager
 
 The manager dispatches a challenge to solvers based on category and tags, then asks the verifier to inspect flag candidates. During a run, it can also consume `llm_solver_plan` observations and insert suggested solvers into the remaining queue without letting the LLM execute tools directly.
+
+Each run summary includes an `agent_roster` section showing the coordinator, selected category, solver queue, and enabled subagent identities that apply to the challenge.
+
+### Subagent Roster
+
+The default roster contains `ChallengeTriageAgent`, `LLMRoutePlannerAgent`, `WebExploitAgent`, `CryptoMathAgent`, `BinaryAgent`, `ForensicsAgent`, `TrafficAgent`, `EvidenceJudgeAgent`, and `BrowserPlayerQAAgent`. It can be listed with `forgeflag agents` and persisted to `.forgeflag/agent-roster.json` with `forgeflag agents --write-default`.
+
+The roster is configuration, not a secret store. API keys stay in runtime LLM config or Web request payloads and are not written to the roster file.
 
 ### Shared Notebook
 

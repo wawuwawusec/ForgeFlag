@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from forgeflag.agent_roster import agent_roster_path_for_db, load_agent_roster
 from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
 from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.llm import build_llm_provider
@@ -53,6 +54,9 @@ def create_handler(db_path: str | Path):
                 return
             if path == "/api/project-catalog":
                 self._send_json(self.handle_project_catalog())
+                return
+            if path == "/api/agents":
+                self._send_json(self.handle_agents())
                 return
             challenge_id, suffix = _challenge_route(path)
             if challenge_id and suffix == "findings":
@@ -292,6 +296,10 @@ def create_handler(db_path: str | Path):
         @classmethod
         def handle_project_catalog(cls) -> list[dict[str, Any]]:
             return recommended_projects()
+
+        @classmethod
+        def handle_agents(cls) -> dict[str, Any]:
+            return load_agent_roster(agent_roster_path_for_db(cls.db_path)).to_public_dict()
 
         def _read_json(self) -> dict[str, Any]:
             length = int(self.headers.get("content-length") or "0")
@@ -600,8 +608,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="llm-actions">
             <button class="secondary" id="llmSaveConfig">保存配置</button>
             <button class="secondary" id="llmTestBtn">测试大模型</button>
-            <label class="inline-check"><input id="llmRememberKey" type="checkbox"> 记住 API Key</label>
-            <span class="llm-status" id="llmConfigStatus">配置未保存</span>
+            <span class="llm-status" id="llmConfigStatus">配置未保存，API Key 仅用于本次请求</span>
           </div>
         </div>
       </div>
@@ -711,12 +718,10 @@ INDEX_HTML = r"""<!doctype html>
         llm_provider: payload.llm_provider,
         llm_model: payload.llm_model,
         llm_base_url: payload.llm_base_url,
-        llm_timeout_seconds: payload.llm_timeout_seconds,
-        remember_key: $("llmRememberKey").checked,
-        llm_api_key: $("llmRememberKey").checked ? payload.llm_api_key : ""
+        llm_timeout_seconds: payload.llm_timeout_seconds
       };
       localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify(saved));
-      $("llmConfigStatus").textContent = saved.remember_key ? "配置已保存到本浏览器（含 Key）" : "配置已保存到本浏览器（不含 Key）";
+      $("llmConfigStatus").textContent = "配置已保存到本浏览器（不含 Key）";
       flashButton("llmSaveConfig", "success");
       status("大模型配置已保存", "success");
     }
@@ -730,9 +735,13 @@ INDEX_HTML = r"""<!doctype html>
         $("llmModel").value = saved.llm_model || "";
         $("llmBaseUrl").value = saved.llm_base_url || "";
         $("llmTimeout").value = saved.llm_timeout_seconds || "30";
-        $("llmRememberKey").checked = !!saved.remember_key;
-        $("llmApiKey").value = saved.remember_key ? (saved.llm_api_key || "") : "";
-        $("llmConfigStatus").textContent = saved.remember_key ? "已载入本浏览器配置（含 Key）" : "已载入本浏览器配置（不含 Key）";
+        $("llmApiKey").value = "";
+        if (saved.llm_api_key || saved.remember_key) {
+          delete saved.llm_api_key;
+          delete saved.remember_key;
+          localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify(saved));
+        }
+        $("llmConfigStatus").textContent = "已载入本浏览器配置（不含 Key）";
       } catch {
         $("llmConfigStatus").textContent = "本地配置读取失败";
       }
@@ -1002,6 +1011,8 @@ INDEX_HTML = r"""<!doctype html>
       const toolSummaries = observations.filter(obs => obs.kind === "tool_summary");
       const traceSteps = collectTraceSteps(report, observations);
       const shortestPath = collectShortestPath(report);
+      const roster = data.roster || {};
+      const runRoster = data.summary && data.summary.agent_roster ? data.summary.agent_roster : {};
       return `
         <div class="result-card">
           <div class="card-head">
@@ -1013,12 +1024,15 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           ${flagChips(flags)}
           <div class="kv-grid">
+            <div class="kv"><span>Configured Agents</span><strong>${asList(roster.agents).length}</strong></div>
+            <div class="kv"><span>Run Agents</span><strong>${asList(runRoster.agents).length}</strong></div>
             <div class="kv"><span>LLM Plans</span><strong>${llmPlans.length}</strong></div>
             <div class="kv"><span>Action Queues</span><strong>${actionQueues.length}</strong></div>
             <div class="kv"><span>Critics</span><strong>${postRunCritics.length}</strong></div>
             <div class="kv"><span>Tool Summaries</span><strong>${toolSummaries.length}</strong></div>
           </div>
         </div>
+        ${renderAgentRoster(roster, runRoster)}
         <div class="result-card">
           <div class="card-head"><div class="card-title"><h3>LLM 规划</h3><div class="meta">模型给出的假设、工具建议和下一步。</div></div></div>
           ${llmPlans.length ? llmPlans.map(renderLLMPlan).join("") : `<div class="empty-state">本轮没有记录 LLM 规划。启用“大模型分析”后运行题目会显示在这里。</div>`}
@@ -1047,6 +1061,32 @@ INDEX_HTML = r"""<!doctype html>
           <div class="card-head"><div class="card-title"><h3>最短发现路径</h3><div class="meta">找到 flag 后自动沉淀的复盘路径。</div></div></div>
           ${shortestPath.length ? `<ol class="steps">${shortestPath.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : `<div class="empty-state">还没有可用的最短路径。Verifier 接受 flag 后会生成。</div>`}
           ${rawJson(data)}
+        </div>`;
+    }
+    function renderAgentRoster(roster, runRoster) {
+      const configured = asList(roster && roster.agents);
+      const active = asList(runRoster && runRoster.agents);
+      const coordinator = (runRoster && runRoster.coordinator) || (roster && roster.coordinator) || {};
+      const activeIds = new Set(active.map(agent => agent.id));
+      const rows = configured.length ? configured : active;
+      return `
+        <div class="result-card">
+          <div class="card-head">
+            <div class="card-title"><h3>Agent 身份配置</h3><div class="meta">总控、常驻 subagent 和本轮实际参与身份。</div></div>
+            <span class="badge muted">${escapeHtml(coordinator.name || coordinator.id || "ForgeFlagManager")}</span>
+          </div>
+          <div class="kv">
+            <span>Coordinator</span>
+            <strong>${escapeHtml(coordinator.name || "ForgeFlagManager")}</strong>
+            <div class="meta">${escapeHtml(coordinator.mission || "Coordinate scoped CTF solving and evidence-backed verification.")}</div>
+          </div>
+          ${rows.length ? rows.map(agent => `
+            <div class="kv">
+              <span>${activeIds.has(agent.id) ? "本轮参与" : (agent.enabled === false ? "已停用" : "常驻待命")}</span>
+              <strong>${escapeHtml(agent.name || agent.id || "Agent")}</strong>
+              <div class="meta">${escapeHtml(agent.mission || "")}</div>
+              <div class="meta">solvers: ${escapeHtml(asList(agent.solvers).join(", ") || "-")} · tools: ${escapeHtml(asList(agent.tools).join(", ") || "-")}</div>
+            </div>`).join("") : `<div class="empty-state">暂无 Agent roster。运行 forgeflag agents --write-default 可以生成项目配置。</div>`}
         </div>`;
     }
     function collectLLMPlans(findings, observations) {
@@ -1418,15 +1458,16 @@ INDEX_HTML = r"""<!doctype html>
     }
     async function loadAgentView() {
       const challenge = encodeURIComponent(state.selected);
-      const [summary, report, findings, observations] = await Promise.all([
+      const [summary, report, findings, observations, roster] = await Promise.all([
         api(`/api/challenges/${challenge}/summary`),
         api(`/api/challenges/${challenge}/report`),
         api(`/api/challenges/${challenge}/findings`),
-        api(`/api/challenges/${challenge}/observations`)
+        api(`/api/challenges/${challenge}/observations`),
+        api("/api/agents")
       ]);
       state.lastSummary = summary;
       state.summaries[state.selected] = summary;
-      return { challenge_id: state.selected, summary, report, findings, observations };
+      return { challenge_id: state.selected, summary, report, findings, observations, roster };
     }
     $("saveBtn").onclick = () => withButtonFeedback("saveBtn", "保存中...", "题目已保存", saveChallenge).catch(e => show({error:e.message}));
     $("refreshBtn").onclick = () => withButtonFeedback("refreshBtn", "刷新中...", "列表已刷新", refresh).catch(e => show({error:e.message}));

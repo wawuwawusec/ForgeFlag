@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from forgeflag.agent_roster import AgentRoster, load_agent_roster, agent_roster_path_for_db
 from forgeflag.domain import ChallengeCategory, Observation, RunConfig
 from forgeflag.harness import Harness
 from forgeflag.ida import IDAAdapter, build_ida_adapter
@@ -34,11 +35,13 @@ class Manager:
         config: RunConfig | None = None,
         solvers: list[Solver] | None = None,
         ida_adapter: IDAAdapter | None = None,
+        agent_roster: AgentRoster | None = None,
     ) -> None:
         self.notebook = notebook
         self.config = config or RunConfig()
         self.ida_adapter = ida_adapter or build_ida_adapter(self.config.ida_mcp_config)
         self.solvers = solvers or self._default_solvers()
+        self.agent_roster = agent_roster or load_agent_roster(agent_roster_path_for_db(notebook.path))
         self.verifier = Verifier()
         self.observer = Observer()
         self.report_builder = ReportBuilder()
@@ -127,10 +130,18 @@ class Manager:
         findings = self.notebook.findings_for(challenge_id)
         verification = self.verifier.verify(findings, tuple(flag_candidates))
         status = "flag_found" if verification.accepted else "completed"
+        roster_solver_names = [solver.name for solver in selected]
+        roster_solver_names.append("Verifier")
+        if verification.accepted:
+            roster_solver_names.append("ReportBuilder")
         summary = {
             "challenge_id": challenge_id,
             "status": status,
             "solvers": solver_results,
+            "agent_roster": self.agent_roster.to_run_summary(
+                challenge.category,
+                tuple(roster_solver_names),
+            ),
             "accepted_flags": list(verification.accepted),
             "rejected_flags": list(verification.rejected),
             "observations": len(self.notebook.observations_for(challenge_id)),

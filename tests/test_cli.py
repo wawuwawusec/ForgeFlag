@@ -214,6 +214,18 @@ class CliTest(unittest.TestCase):
         self.assertTrue(all("traffic" in row["categories"] for row in payload))
         self.assertIn("Wireshark", {row["name"] for row in payload})
 
+    def test_agents_command_lists_subagent_roster(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = main(["agents"])
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["coordinator"]["id"], "forgeflag-manager")
+        self.assertIn("ChallengeTriageAgent", {row["name"] for row in payload["agents"]})
+        self.assertIn("BrowserPlayerQAAgent", {row["name"] for row in payload["agents"]})
+        self.assertIn("EvidenceJudgeAgent", {row["name"] for row in payload["agents"]})
+
 
 if __name__ == "__main__":
     unittest.main()

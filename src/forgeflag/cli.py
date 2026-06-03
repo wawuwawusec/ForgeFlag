@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from forgeflag.agent_roster import agent_roster_path_for_db, load_agent_roster, write_default_agent_roster
 from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
 from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.manager import Manager
@@ -54,6 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     artifacts.add_argument("challenge_id")
 
     subparsers.add_parser("tools", help="List configured CTF tool wrappers and local availability")
+    agents = subparsers.add_parser("agents", help="List ForgeFlag subagent identities and responsibilities")
+    agents.add_argument("--write-default", action="store_true", help="Write the default roster to .forgeflag/agent-roster.json")
     catalog = subparsers.add_parser("catalog", help="List recommended CTF projects and integration candidates")
     catalog.add_argument("--category", choices=[c.value for c in ChallengeCategory])
 
@@ -179,6 +182,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "tools":
         print(json.dumps(ToolRunner(ScopePolicy()).inventory(), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "agents":
+        path = agent_roster_path_for_db(args.db)
+        roster = write_default_agent_roster(path) if args.write_default else load_agent_roster(path)
+        print(json.dumps(roster.to_public_dict(), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "catalog":

@@ -65,6 +65,8 @@
 
 ## Milestone 7: Competition Operations
 
+- Declarative subagent roster with visible role contracts.
+- Role-aware benchmark reporting.
 - Scoreboard integration.
 - Flag submission queue.
 - Multi-challenge parallel scheduler.
