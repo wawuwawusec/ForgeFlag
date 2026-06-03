@@ -45,14 +45,38 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
             ],
         }
 
-        summary = module.summarize_playwright_report(report)
+        benchmark_cases = [
+            {
+                "challenge_id": "player-web-visible",
+                "category": "web",
+                "expected_agents": ["ChallengeTriageAgent", "WebExploitAgent", "EvidenceJudgeAgent"],
+            },
+            {
+                "challenge_id": "player-crypto-base32",
+                "category": "crypto",
+                "expected_agents": ["ChallengeTriageAgent", "CryptoMathAgent", "EvidenceJudgeAgent"],
+            },
+            {
+                "challenge_id": "player-traffic-http",
+                "category": "traffic",
+                "expected_agents": ["ChallengeTriageAgent", "TrafficAgent", "ForensicsAgent", "EvidenceJudgeAgent"],
+            },
+        ]
+
+        summary = module.summarize_playwright_report(report, benchmark_cases)
         rendered = module.format_playwright_summary(summary)
 
         self.assertEqual(summary["passed"], 2)
         self.assertEqual(summary["total"], 3)
+        self.assertEqual(summary["categories"]["web"]["passed"], 1)
+        self.assertEqual(summary["categories"]["traffic"]["passed"], 0)
         self.assertIn("ForgeFlag browser player benchmark: 2/3 passed", rendered)
-        self.assertIn("PASS player-web-visible", rendered)
-        self.assertIn("FAIL player-traffic-http", rendered)
+        self.assertIn("Category results:", rendered)
+        self.assertIn("web: 1/1", rendered)
+        self.assertIn("traffic: 0/1", rendered)
+        self.assertIn("PASS [web] player-web-visible", rendered)
+        self.assertIn("agents=ChallengeTriageAgent,WebExploitAgent,EvidenceJudgeAgent", rendered)
+        self.assertIn("FAIL [traffic] player-traffic-http", rendered)
 
 
 def _load_script_module():

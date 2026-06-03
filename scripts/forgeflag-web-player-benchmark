@@ -243,24 +243,53 @@ def run_playwright(
         except json.JSONDecodeError:
             print(completed.stdout)
         else:
-            print(format_playwright_summary(summarize_playwright_report(report)))
+            print(format_playwright_summary(summarize_playwright_report(report, cases)))
     if completed.stderr:
         print(completed.stderr, file=sys.stderr)
     return completed.returncode
 
 
-def summarize_playwright_report(report: dict[str, object]) -> dict[str, object]:
+def summarize_playwright_report(
+    report: dict[str, object],
+    benchmark_cases: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     specs = _collect_playwright_specs(report.get("suites", []))
+    case_metadata = {
+        str(case.get("challenge_id") or ""): {
+            "category": str(case.get("category") or "unknown"),
+            "expected_agents": [str(agent) for agent in case.get("expected_agents", [])]
+            if isinstance(case.get("expected_agents"), list)
+            else [],
+        }
+        for case in (benchmark_cases or [])
+        if case.get("challenge_id")
+    }
     cases = []
+    categories: dict[str, dict[str, int]] = {}
     for spec in specs:
         title = str(spec.get("title") or "unnamed")
         passed = bool(spec.get("ok"))
-        cases.append({"title": title, "status": "PASS" if passed else "FAIL"})
+        metadata = case_metadata.get(title, {})
+        category = str(metadata.get("category") or "unknown")
+        expected_agents = metadata.get("expected_agents") if isinstance(metadata.get("expected_agents"), list) else []
+        row = categories.setdefault(category, {"passed": 0, "total": 0})
+        row["total"] += 1
+        if passed:
+            row["passed"] += 1
+        cases.append(
+            {
+                "title": title,
+                "status": "PASS" if passed else "FAIL",
+                "category": category,
+                "expected_agents": expected_agents,
+            }
+        )
     passed_count = sum(1 for case in cases if case["status"] == "PASS")
     return {
         "passed": passed_count,
         "total": len(cases),
         "duration_ms": int((report.get("stats") or {}).get("duration") or 0) if isinstance(report.get("stats"), dict) else 0,
+        "categories": categories,
         "cases": cases,
     }
 
@@ -272,11 +301,24 @@ def format_playwright_summary(summary: dict[str, object]) -> str:
     lines = [f"ForgeFlag browser player benchmark: {passed}/{total} passed"]
     if duration_ms:
         lines.append(f"Duration: {duration_ms / 1000:.1f}s")
+    categories = summary.get("categories")
+    if isinstance(categories, dict) and categories:
+        lines.append("Category results:")
+        for category in sorted(categories):
+            row = categories.get(category)
+            if not isinstance(row, dict):
+                continue
+            lines.append(f"- {category}: {row.get('passed', 0)}/{row.get('total', 0)}")
     lines.append("Case results:")
     for case in summary.get("cases", []):
         if not isinstance(case, dict):
             continue
-        lines.append(f"- {case.get('status', 'FAIL')} {case.get('title', 'unnamed')}")
+        category = str(case.get("category") or "unknown")
+        agents = case.get("expected_agents")
+        agent_suffix = ""
+        if isinstance(agents, list) and agents:
+            agent_suffix = f" agents={','.join(str(agent) for agent in agents)}"
+        lines.append(f"- {case.get('status', 'FAIL')} [{category}] {case.get('title', 'unnamed')}{agent_suffix}")
     return "\n".join(lines)
 
 
