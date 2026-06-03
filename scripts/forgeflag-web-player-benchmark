@@ -35,13 +35,15 @@ def main() -> int:
     parser.add_argument("--headed", action="store_true", help="Show the browser while running Playwright")
     parser.add_argument("--keep", action="store_true", help="Keep generated benchmark challenges in the notebook")
     parser.add_argument("--json", action="store_true", help="Print raw Playwright JSON instead of the compact scorecard")
+    parser.add_argument("--llm", action="store_true", help="Run LLM-assisted variants of the benchmark cases")
+    parser.add_argument("--both", action="store_true", help="Run deterministic and LLM-assisted variants for comparison")
     parser.add_argument("--case", action="append", default=[], help="Run only the named case id; may be repeated")
     args = parser.parse_args()
 
     WORKDIR.mkdir(parents=True, exist_ok=True)
     fixtures = build_fixtures()
-    cases = browser_player_cases(fixtures)
-    selected = [case for case in cases if not args.case or case["challenge_id"] in set(args.case)]
+    cases = apply_run_mode(browser_player_cases(fixtures), llm=args.llm, both=args.both)
+    selected = [case for case in cases if not args.case or _case_selected(case, set(args.case))]
 
     if args.list or not args.run:
         print(json.dumps({"agent": "browser_player", "scores": SCORES, "cases": [_case_listing(case) for case in cases]}, indent=2, ensure_ascii=False))
@@ -188,9 +190,36 @@ def browser_player_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
     ]
 
 
+def apply_run_mode(cases: list[dict[str, object]], llm: bool, both: bool) -> list[dict[str, object]]:
+    deterministic = [_case_variant(case, run_profile="deterministic", llm_enabled=False) for case in cases]
+    llm_cases = [_case_variant(case, run_profile="llm", llm_enabled=True) for case in cases]
+    if both:
+        return [item for pair in zip(deterministic, llm_cases) for item in pair]
+    if llm:
+        return llm_cases
+    return deterministic
+
+
+def _case_variant(case: dict[str, object], run_profile: str, llm_enabled: bool) -> dict[str, object]:
+    base_id = str(case["challenge_id"])
+    variant = dict(case)
+    variant["base_challenge_id"] = base_id
+    variant["run_profile"] = run_profile
+    variant["llm_enabled"] = llm_enabled
+    if run_profile == "llm":
+        variant["challenge_id"] = f"{base_id}-llm"
+    return variant
+
+
+def _case_selected(case: dict[str, object], requested: set[str]) -> bool:
+    return str(case.get("challenge_id")) in requested or str(case.get("base_challenge_id")) in requested
+
+
 def _case_listing(case: dict[str, object]) -> dict[str, object]:
     return {
         "challenge_id": case["challenge_id"],
+        "base_challenge_id": case.get("base_challenge_id", case["challenge_id"]),
+        "run_profile": case.get("run_profile", "deterministic"),
         "category": case["category"],
         "title": case["title"],
         "expected_flag": case["expected_flag"],
@@ -257,6 +286,7 @@ def summarize_playwright_report(
     case_metadata = {
         str(case.get("challenge_id") or ""): {
             "category": str(case.get("category") or "unknown"),
+            "run_profile": str(case.get("run_profile") or "deterministic"),
             "expected_agents": [str(agent) for agent in case.get("expected_agents", [])]
             if isinstance(case.get("expected_agents"), list)
             else [],
@@ -271,6 +301,7 @@ def summarize_playwright_report(
         passed = bool(spec.get("ok"))
         metadata = case_metadata.get(title, {})
         category = str(metadata.get("category") or "unknown")
+        run_profile = str(metadata.get("run_profile") or "deterministic")
         expected_agents = metadata.get("expected_agents") if isinstance(metadata.get("expected_agents"), list) else []
         row = categories.setdefault(category, {"passed": 0, "total": 0})
         row["total"] += 1
@@ -281,6 +312,7 @@ def summarize_playwright_report(
                 "title": title,
                 "status": "PASS" if passed else "FAIL",
                 "category": category,
+                "run_profile": run_profile,
                 "expected_agents": expected_agents,
             }
         )
@@ -314,11 +346,12 @@ def format_playwright_summary(summary: dict[str, object]) -> str:
         if not isinstance(case, dict):
             continue
         category = str(case.get("category") or "unknown")
+        run_profile = str(case.get("run_profile") or "deterministic")
         agents = case.get("expected_agents")
         agent_suffix = ""
         if isinstance(agents, list) and agents:
             agent_suffix = f" agents={','.join(str(agent) for agent in agents)}"
-        lines.append(f"- {case.get('status', 'FAIL')} [{category}] {case.get('title', 'unnamed')}{agent_suffix}")
+        lines.append(f"- {case.get('status', 'FAIL')} [{category}/{run_profile}] {case.get('title', 'unnamed')}{agent_suffix}")
     return "\n".join(lines)
 
 

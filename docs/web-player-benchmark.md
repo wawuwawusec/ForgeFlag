@@ -43,7 +43,7 @@ Category results:
 - forensics: 1/1
 ...
 Case results:
-- PASS [web] player-web-visible agents=ChallengeTriageAgent,WebExploitAgent,EvidenceJudgeAgent
+- PASS [web/deterministic] player-web-visible agents=ChallengeTriageAgent,WebExploitAgent,EvidenceJudgeAgent
 ...
 ```
 
@@ -52,6 +52,20 @@ Use `--json` when you need the raw Playwright reporter output for debugging:
 ```bash
 scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --json
 ```
+
+Generate LLM-assisted variants when a provider is configured:
+
+```bash
+scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --llm
+```
+
+Generate deterministic and LLM-assisted variants side by side:
+
+```bash
+scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --both
+```
+
+`--both --list` is safe for planning because it only lists the doubled case set and does not call the LLM provider.
 
 Run one case and keep it in the notebook for manual inspection:
 

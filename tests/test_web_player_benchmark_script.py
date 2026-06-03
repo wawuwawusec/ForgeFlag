@@ -74,9 +74,33 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
         self.assertIn("Category results:", rendered)
         self.assertIn("web: 1/1", rendered)
         self.assertIn("traffic: 0/1", rendered)
-        self.assertIn("PASS [web] player-web-visible", rendered)
+        self.assertIn("PASS [web/deterministic] player-web-visible", rendered)
         self.assertIn("agents=ChallengeTriageAgent,WebExploitAgent,EvidenceJudgeAgent", rendered)
-        self.assertIn("FAIL [traffic] player-traffic-http", rendered)
+        self.assertIn("FAIL [traffic/deterministic] player-traffic-http", rendered)
+
+    def test_run_mode_can_create_llm_and_comparison_variants(self) -> None:
+        module = _load_script_module()
+        base_cases = [
+            {
+                "challenge_id": "player-web-visible",
+                "category": "web",
+                "llm_enabled": False,
+                "expected_agents": ["ChallengeTriageAgent", "WebExploitAgent", "EvidenceJudgeAgent"],
+            }
+        ]
+
+        deterministic = module.apply_run_mode(base_cases, llm=False, both=False)
+        llm_only = module.apply_run_mode(base_cases, llm=True, both=False)
+        comparison = module.apply_run_mode(base_cases, llm=False, both=True)
+
+        self.assertEqual(deterministic[0]["challenge_id"], "player-web-visible")
+        self.assertEqual(deterministic[0]["run_profile"], "deterministic")
+        self.assertFalse(deterministic[0]["llm_enabled"])
+        self.assertEqual(llm_only[0]["challenge_id"], "player-web-visible-llm")
+        self.assertEqual(llm_only[0]["run_profile"], "llm")
+        self.assertTrue(llm_only[0]["llm_enabled"])
+        self.assertEqual([case["run_profile"] for case in comparison], ["deterministic", "llm"])
+        self.assertEqual([case["challenge_id"] for case in comparison], ["player-web-visible", "player-web-visible-llm"])
 
 
 def _load_script_module():
