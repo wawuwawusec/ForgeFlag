@@ -189,6 +189,9 @@ def _dedupe_steps(steps: list[dict[str, Any]], keys: tuple[str, ...]) -> list[di
 
 
 def _approach_summary(path_steps: list[dict[str, Any]], findings: list[Finding]) -> str:
+    reverse_strings = _first_reverse_strings_step(path_steps)
+    if reverse_strings:
+        return "关键点是二进制明文字符串泄露：先确认附件类型，再用 strings 提取可打印字符串，直接发现 flag。"
     random_xor = _first_nested(path_steps, "python_random_xor")
     if random_xor:
         return "关键点是弱随机种子：题目用小范围 seed 初始化 Python random，再生成 XOR key；遍历 seed 后即可还原明文。"
@@ -253,6 +256,15 @@ def _evidence_items(path_steps: list[dict[str, Any]], observation_steps: list[di
 
 
 def _human_evidence_items(step: dict[str, Any], evidence: dict[str, Any]) -> list[dict[str, str]]:
+    reverse_strings = _reverse_strings_evidence(evidence)
+    if reverse_strings:
+        items = [
+            ("附件", reverse_strings.get("artifact_name")),
+            ("文件类型", reverse_strings.get("file_stdout")),
+            ("strings 命中", reverse_strings.get("strings_stdout")),
+            ("确认 flag", ", ".join(_string_list(evidence.get("flag_candidates")))),
+        ]
+        return [{"label": label, "value": str(value).strip()} for label, value in items if value not in (None, "")]
     random_xor = evidence.get("python_random_xor")
     if isinstance(random_xor, dict):
         items = [
@@ -295,6 +307,17 @@ def _reproduction_steps(
     replay_steps: list[str],
     attachments: list[str],
 ) -> list[str]:
+    reverse_strings = _first_reverse_strings_step(path_steps)
+    if reverse_strings:
+        filename = reverse_strings.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
+        file_output = reverse_strings.get("file_stdout")
+        flag = _first_string(reverse_strings.get("flags")) or "flag 候选"
+        return [
+            f"进入附件所在目录，确认目标文件为 {filename}。",
+            f"执行 `file {filename}`，输出显示：{file_output}。" if file_output else f"执行 `file {filename}` 确认文件类型。",
+            f"执行 `strings -n 4 {filename}` 提取可打印字符串。",
+            f"在 strings 输出中看到 `{flag}`，提交该 flag。",
+        ]
     random_xor = _first_nested(path_steps, "python_random_xor")
     if random_xor:
         filename = _basename(attachments[0]) if attachments else "题目附件"
@@ -424,6 +447,60 @@ def _first_image_idat_payload(steps: list[dict[str, Any]]) -> dict[str, Any]:
             if isinstance(payload, dict):
                 return payload
     return {}
+
+
+def _first_reverse_strings_step(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    for step in steps:
+        if step.get("solver") not in {"ReverseSolver", "PwnSolver"}:
+            continue
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        strings = _reverse_strings_evidence(evidence)
+        if strings:
+            return strings
+    return {}
+
+
+def _reverse_strings_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    tool_samples = evidence.get("tool_samples")
+    if not isinstance(tool_samples, dict):
+        return {}
+    strings_extract = tool_samples.get("strings_extract")
+    if not isinstance(strings_extract, dict):
+        return {}
+    strings_stdout = str(strings_extract.get("stdout") or "").strip()
+    flags = _string_list(evidence.get("flag_candidates"))
+    if not strings_stdout or not flags:
+        return {}
+    artifact = evidence.get("artifact")
+    artifact_path = str(artifact) if artifact else ""
+    artifact_name = _basename(artifact_path) if artifact_path else None
+    file_identify = tool_samples.get("file_identify")
+    file_stdout = ""
+    if isinstance(file_identify, dict):
+        file_stdout = _normalize_file_output(file_identify.get("stdout"), artifact_name)
+    return {
+        "artifact_name": artifact_name,
+        "file_stdout": file_stdout,
+        "flags": flags,
+        "strings_stdout": _short_command_output(strings_stdout),
+    }
+
+
+def _normalize_file_output(value: object, artifact_name: str | None) -> str:
+    text = _short_command_output(value)
+    if ":" not in text:
+        return text
+    prefix, suffix = text.split(":", 1)
+    if artifact_name and prefix.endswith(artifact_name):
+        return suffix.strip()
+    return text
+
+
+def _short_command_output(value: object, limit: int = 180) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 def _image_stego_evidence_items(image_stego: dict[str, Any]) -> list[dict[str, str]]:

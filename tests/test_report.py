@@ -303,6 +303,57 @@ class ReportBuilderTest(unittest.TestCase):
         )
         self.assertNotIn("可逆编码/转换 转换", report["writeup"]["markdown"])
 
+    def test_writeup_describes_reverse_strings_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="reverse-strings",
+                solver="ReverseSolver",
+                finding="Analyzed reverse binary artifact",
+                evidence={
+                    "artifact": "/tmp/reverse_0",
+                    "flag_candidates": ["flag{reverse_strings}"],
+                    "tool_samples": {
+                        "file_identify": {
+                            "stdout": "/tmp/reverse_0: Mach-O 64-bit executable arm64\n",
+                            "stderr": "",
+                        },
+                        "strings_extract": {
+                            "stdout": "flag{reverse_strings}\n",
+                            "stderr": "",
+                        },
+                    },
+                },
+                confidence=0.78,
+                hypothesis="Local reverse triage surfaced a flag-like token that should be verified.",
+                next_action="Send candidates to Verifier and preserve local tool outputs as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="reverse-strings",
+            category=ChallengeCategory.REVERSE,
+            attachment_paths=("/tmp/reverse_0",),
+        )
+
+        report = ReportBuilder().build("reverse-strings", ("flag{reverse_strings}",), findings, [], challenge=challenge)
+
+        sections = {section["title"]: section for section in report["writeup"]["sections"]}
+        self.assertIn("明文字符串泄露", sections["解题思路"]["body"])
+        self.assertEqual(
+            sections["复现步骤"]["steps"],
+            [
+                "进入附件所在目录，确认目标文件为 reverse_0。",
+                "执行 `file reverse_0`，输出显示：Mach-O 64-bit executable arm64。",
+                "执行 `strings -n 4 reverse_0` 提取可打印字符串。",
+                "在 strings 输出中看到 `flag{reverse_strings}`，提交该 flag。",
+            ],
+        )
+        evidence = {item["label"]: item["value"] for item in sections["关键证据"]["items"]}
+        self.assertEqual(evidence["附件"], "reverse_0")
+        self.assertEqual(evidence["文件类型"], "Mach-O 64-bit executable arm64")
+        self.assertEqual(evidence["strings 命中"], "flag{reverse_strings}")
+        self.assertIn("strings -n 4 reverse_0", report["writeup"]["markdown"])
+        self.assertNotIn("tool_samples", report["writeup"]["markdown"])
+
     def test_writeup_describes_extra_png_idat_reproduction_steps(self) -> None:
         findings = [
             Finding(
