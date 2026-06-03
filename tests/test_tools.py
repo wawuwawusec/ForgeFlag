@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import socketserver
 import subprocess
@@ -78,6 +79,38 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertFalse(ropper["host_available"])
         self.assertTrue(ropper["docker_available"])
         self.assertEqual(ropper["source"], "docker")
+
+    def test_inventory_loads_project_docker_env_when_environment_is_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            state = root / ".forgeflag"
+            state.mkdir()
+            (state / "docker.env").write_text(
+                "FORGEFLAG_TOOL_DOCKER_IMAGE=forgeflag-ctf:test\n"
+                f"FORGEFLAG_TOOL_DOCKER_MOUNT={root}\n",
+                encoding="utf-8",
+            )
+
+            def fake_which(command: str) -> str | None:
+                if command == "docker":
+                    return "/usr/local/bin/docker"
+                return None
+
+            completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"[]", stderr=b"")
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.dict("os.environ", {}, clear=True):
+                    with patch("forgeflag.tools.runner.shutil.which", side_effect=fake_which):
+                        with patch("forgeflag.tools.runner.subprocess.run", return_value=completed):
+                            inventory = ToolRunner(ScopePolicy()).inventory()
+            finally:
+                os.chdir(previous_cwd)
+
+        rsactftool = next(row for row in inventory if row["name"] == "RsaCtfTool")
+        self.assertTrue(rsactftool["available"])
+        self.assertTrue(rsactftool["docker_available"])
+        self.assertEqual(rsactftool["source"], "docker")
 
     def test_run_uses_docker_fallback_for_mount_paths(self) -> None:
         mount = Path("/tmp/forgeflag")

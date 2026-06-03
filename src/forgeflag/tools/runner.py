@@ -61,8 +61,14 @@ class ToolRunner:
     def __init__(self, scope: ScopePolicy, cwd: str | Path | None = None) -> None:
         self.scope = scope
         self.cwd = Path(cwd) if cwd else None
-        self.docker_image = os.environ.get("FORGEFLAG_TOOL_DOCKER_IMAGE", "").strip()
-        self.docker_mount = Path(os.environ.get("FORGEFLAG_TOOL_DOCKER_MOUNT") or Path.cwd()).expanduser().resolve()
+        local_env = _load_project_tool_env(self.cwd or Path.cwd())
+        self.docker_image = (
+            os.environ.get("FORGEFLAG_TOOL_DOCKER_IMAGE")
+            or local_env.get("FORGEFLAG_TOOL_DOCKER_IMAGE")
+            or ""
+        ).strip()
+        docker_mount = os.environ.get("FORGEFLAG_TOOL_DOCKER_MOUNT") or local_env.get("FORGEFLAG_TOOL_DOCKER_MOUNT")
+        self.docker_mount = Path(docker_mount or Path.cwd()).expanduser().resolve()
 
     def inventory(self) -> list[dict[str, object]]:
         rows = []
@@ -224,6 +230,32 @@ def _decode_limited(data: bytes, max_bytes: int) -> tuple[str, bool]:
     truncated = len(data) > max_bytes
     clipped = data[:max_bytes]
     return clipped.decode("utf-8", errors="replace"), truncated
+
+
+def _load_project_tool_env(start: Path) -> dict[str, str]:
+    for directory in (start.expanduser().resolve(), *start.expanduser().resolve().parents):
+        env_path = directory / ".forgeflag" / "docker.env"
+        if env_path.is_file():
+            return _read_simple_env(env_path)
+    return {}
+
+
+def _read_simple_env(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in {"FORGEFLAG_TOOL_DOCKER_IMAGE", "FORGEFLAG_TOOL_DOCKER_MOUNT"}:
+            continue
+        try:
+            parts = shlex.split(value, posix=True)
+        except ValueError:
+            continue
+        values[key] = parts[0] if parts else ""
+    return values
 
 
 def _command_available(executable: str) -> bool:

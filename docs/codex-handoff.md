@@ -185,7 +185,8 @@ Current local setup after migration:
   - host wrappers: `file`, `strings`, `binwalk`, `exiftool`, `tshark`, `nmap_tcp_basic`
   - Docker wrappers: `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`
   - hashcat is installed, but current OrbStack runtime does not expose an OpenCL/CUDA device, so cracking smoke skips hashcat device execution
-- Tests passed: 181 tests OK
+  - `ToolRunner` automatically reads `.forgeflag/docker.env` when explicit Docker tool environment variables are unset, so direct CLI/Web runs show the same Docker fallback inventory as `scripts/forgeflag-control`
+- Tests passed: 203 tests OK
 
 Useful commands:
 
