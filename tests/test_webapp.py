@@ -377,6 +377,7 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("renderWebSourceEvidence", html)
         self.assertIn("renderToolSampleEvidence", html)
         self.assertIn("renderTransformRecipeEvidence", html)
+        self.assertIn("renderPwnExploitEvidence", html)
         self.assertIn("renderArchiveImageEvidence", html)
         self.assertIn("renderJpegStegoEvidence", html)
         self.assertIn("rsa_recovery", html)
@@ -392,6 +393,7 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("image_stego", html)
         self.assertIn("lsb_candidates", html)
         self.assertIn("jpeg_stego_tools", html)
+        self.assertIn("Pwn 利用路线", html)
         self.assertIn("steghide_info", html)
         self.assertIn("stegseek_crack", html)
 

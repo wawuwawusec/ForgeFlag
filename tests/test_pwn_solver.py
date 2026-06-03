@@ -208,6 +208,77 @@ class PwnSolverTest(unittest.TestCase):
         self.assertIn("ret2win", finding.hypothesis)
         self.assertIn("cyclic", finding.next_action)
 
+    def test_pwn_solver_infers_cctf_pwn3_format_string_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "2016-CCTF-pwn3"
+            binary.write_bytes(b"\x7fELF fake")
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            challenge = Challenge(
+                challenge_id="pwn3",
+                category=ChallengeCategory.PWN,
+                attachment_paths=(str(binary),),
+            )
+            notebook.add_challenge(challenge)
+
+            with (
+                patch(
+                    "forgeflag.solvers.pwn.ctf.file_identify",
+                    return_value=ToolResult(tool="file", target=None, status="success", raw={"stdout": "ELF 32-bit LSB executable, Intel 80386"}),
+                ),
+                patch(
+                    "forgeflag.solvers.pwn.ctf.strings_extract",
+                    return_value=ToolResult(
+                        tool="strings",
+                        target=None,
+                        status="success",
+                        raw={
+                            "stdout": (
+                                "please enter the name of the file you want to upload:\n"
+                                "then, enter the content:\n"
+                                "enter the file name you want to get:\n"
+                                "%40s\nflag\ntoo young, too simple\nftp>\n"
+                                "Connected to ftp.hacker.server\n"
+                                "Name (ftp.hacker.server:Rainism):\n"
+                                "sysbdmin\n"
+                                "printf\nstrcpy\nfread\n"
+                                "put_file\nget_file\nget_input\n"
+                            )
+                        },
+                    ),
+                ),
+                patch(
+                    "forgeflag.solvers.pwn.ctf.checksec_binary",
+                    return_value=ToolResult(
+                        tool="checksec",
+                        target=None,
+                        status="success",
+                        raw={"stderr": "Arch: i386-32-little\nNo canary found\nNX enabled\nNo PIE (0x8048000)\n"},
+                    ),
+                ),
+                patch(
+                    "forgeflag.solvers.pwn.ctf.ropgadget_scan",
+                    return_value=ToolResult(tool="ROPgadget", target=None, status="success", raw={"stdout": "Unique gadgets found: 113"}),
+                ),
+                patch(
+                    "forgeflag.solvers.pwn.ctf.ropper_scan",
+                    return_value=ToolResult(tool="ropper", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                result = PwnSolver().solve(
+                    SolverContext(challenge=challenge, notebook=notebook, scope=ScopePolicy())
+                )
+                finding = notebook.findings_for("pwn3")[0]
+
+        exploit_plan = finding.evidence["exploit_plan"]
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(finding.evidence["workflow_guess"], "ftp_heap_format_string")
+        self.assertEqual(exploit_plan["workflow"], "ftp_heap_format_string")
+        self.assertEqual(exploit_plan["login_input"], "rxraclhm")
+        self.assertEqual(exploit_plan["format_offset"], 7)
+        self.assertIn("printf@got", exploit_plan["overwrite_target"])
+        self.assertIn("/bin/sh", exploit_plan["trigger"])
+        self.assertIn("format string", finding.hypothesis)
+
 
 if __name__ == "__main__":
     unittest.main()

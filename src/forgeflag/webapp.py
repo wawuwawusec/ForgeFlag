@@ -1041,6 +1041,7 @@ INDEX_HTML = r"""<!doctype html>
         const antswordRecovery = renderAntSwordEvidence(evidence);
         const archiveImage = renderArchiveImageEvidence(evidence);
         const jpegStego = renderJpegStegoEvidence(evidence);
+        const pwnExploit = renderPwnExploitEvidence(evidence);
         return `
           <div class="result-card">
             <div class="card-head">
@@ -1061,6 +1062,7 @@ INDEX_HTML = r"""<!doctype html>
             ${antswordRecovery}
             ${archiveImage}
             ${jpegStego}
+            ${pwnExploit}
             ${Array.isArray(candidates) && candidates.length ? `<div><strong>关键候选：</strong><div class="flag-list">${candidates.slice(0, 6).map(item => `<span class="flag-chip">${escapeHtml(item.value || item)}</span>`).join("")}</div></div>` : ""}
             ${rawJson(finding)}
           </div>`;
@@ -1176,6 +1178,27 @@ INDEX_HTML = r"""<!doctype html>
           ${positions.length ? `<div class="meta">${positions.length} 个 cut 位置</div>` : ""}
         </div>
       </div></div>`;
+    }
+    function renderPwnExploitEvidence(evidence) {
+      const plan = evidence.exploit_plan || null;
+      if (!plan || !plan.workflow) return "";
+      const tools = asList(plan.tool_hints);
+      const rows = [
+        ["workflow", plan.workflow],
+        ["login", plan.login_input],
+        ["offset", plan.format_offset],
+        ["leak", plan.leak],
+        ["overwrite", plan.overwrite_target],
+        ["trigger", plan.trigger],
+      ].filter(([, value]) => value !== undefined && value !== null && String(value).length);
+      return `<div><strong>Pwn 利用路线：</strong><div class="kv-grid">${rows.map(([key, value]) => `
+        <div class="kv">
+          <span>${escapeHtml(key)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>`).join("")}</div>
+        ${plan.payload_template ? `<div class="meta">${escapeHtml(plan.payload_template)}</div>` : ""}
+        ${tools.length ? `<div class="flag-list">${tools.map(tool => `<span class="flag-chip">${escapeHtml(tool)}</span>`).join("")}</div>` : ""}
+      </div>`;
     }
     function renderArchiveImageEvidence(evidence) {
       const archive = evidence.archive || null;

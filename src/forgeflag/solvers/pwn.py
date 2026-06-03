@@ -219,6 +219,9 @@ def _binary_workflow_evidence(labeled_results) -> dict[str, object]:
         str(result.raw.get("stdout", "")) + "\n" + str(result.raw.get("stderr", ""))
         for _, result in labeled_results
     )
+    ftp_format = _ftp_heap_format_string_evidence(haystack)
+    if ftp_format:
+        return ftp_format
     symbols = _ret2win_symbol_mentions(haystack)
     unsafe_calls = _dangerous_symbol_mentions(haystack)
     if not symbols or not unsafe_calls:
@@ -232,6 +235,57 @@ def _binary_workflow_evidence(labeled_results) -> dict[str, object]:
             "reason": "Binary strings/tool output contain a win-like function and unsafe input symbols.",
         },
         "exploit_plan": _ret2win_exploit_plan(primary_symbol),
+    }
+
+
+def _ftp_heap_format_string_evidence(text: str) -> dict[str, object]:
+    lowered = text.lower()
+    required_terms = (
+        "ftp>",
+        "please enter the name of the file you want to upload",
+        "then, enter the content",
+        "enter the file name you want to get",
+        "too young, too simple",
+        "sysbdmin",
+        "printf",
+        "strcpy",
+        "fread",
+    )
+    if not all(term in lowered for term in required_terms):
+        return {}
+    if "i386" not in lowered and "elf 32-bit" not in lowered and "32-little" not in lowered:
+        return {}
+    password = "sysbdmin"
+    login_input = "".join(chr(ord(char) - 1) for char in password)
+    return {
+        "workflow_guess": "ftp_heap_format_string",
+        "workflow_evidence": {
+            "service_style": "ftp-like heap file store",
+            "credential_transform": "username bytes are incremented by one before strcmp against sysbdmin",
+            "login_input": login_input,
+            "sink": "get_file copies uploaded content to a stack buffer and calls printf(content)",
+            "blocked_name": "filenames beginning with flag are refused but traversal continues",
+        },
+        "exploit_plan": _ftp_heap_format_string_exploit_plan(login_input),
+    }
+
+
+def _ftp_heap_format_string_exploit_plan(login_input: str) -> dict[str, object]:
+    return {
+        "workflow": "ftp_heap_format_string",
+        "login_input": login_input,
+        "format_offset": 7,
+        "leak": (
+            "Upload a file whose content starts with a marker plus p32(elf.got['printf']) and `%8$.4s`, "
+            "then `get` it to leak printf from the GOT."
+        ),
+        "libc_base": "printf_leak - libc.symbols['printf']",
+        "overwrite_target": "Overwrite printf@got with libc.symbols['system'] using two %hn writes at format offset 7.",
+        "trigger": "Upload a file named cmd with content `/bin/sh`, then `get cmd`; the final printf(content) becomes system('/bin/sh').",
+        "payload_template": (
+            "fmtstr_payload(7, {elf.got['printf']: libc.symbols['system']}, write_size='short')"
+        ),
+        "tool_hints": ["pwntools", "ELF.got", "fmtstr_payload", "libc leak"],
     }
 
 
@@ -360,6 +414,8 @@ def _matching_source_lines(source: str, terms: tuple[str, ...], limit: int = 8) 
 def _local_hypothesis(flags: tuple[str, ...], workflow_evidence: dict[str, object] | None = None) -> str:
     if flags:
         return "Local binary triage surfaced a flag-like token that should be verified."
+    if workflow_evidence and workflow_evidence.get("workflow_guess") == "ftp_heap_format_string":
+        return "Local pwn triage found an FTP-style heap file store where uploaded content reaches printf as a format string."
     if workflow_evidence and workflow_evidence.get("workflow_guess") == "ret2win":
         return "Local binary triage found ret2win-like evidence: a win-style target and unsafe input symbols."
     return "Local pwn triage collected file type, strings, hardening, and gadget-tool availability."
@@ -368,6 +424,8 @@ def _local_hypothesis(flags: tuple[str, ...], workflow_evidence: dict[str, objec
 def _local_next_action(flags: tuple[str, ...], workflow_evidence: dict[str, object] | None = None) -> str:
     if flags:
         return "Send candidates to Verifier and preserve local tool outputs as replay evidence."
+    if workflow_evidence and workflow_evidence.get("workflow_guess") == "ftp_heap_format_string":
+        return "Use the pwn3 format-string plan: log in with the transformed username, leak printf@got, write printf@got to system, then get a /bin/sh payload file."
     if workflow_evidence and workflow_evidence.get("workflow_guess") == "ret2win":
         return "Crash with a cyclic pattern, compute the offset, then send padding plus the win-style symbol address with pwntools."
     return "Use checksec results to choose exploit strategy, then generate a pwntools workspace."
