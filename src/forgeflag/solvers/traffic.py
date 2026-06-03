@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import hashlib
 from pathlib import Path
 import re
@@ -116,28 +117,42 @@ class TrafficSolver:
             "\n".join([str(item.get("text_preview", "")), *[str(flag) for flag in item.get("flags", [])]])
             for item in http_object_exports
         )
-        flags = extract_flags(
-            "\n".join([combined_output, *decoded_http_artifacts, *decoded_dns_hints, stream_payload_text, exported_object_text])
+        antsword_recovery = _recover_antsword_cut_flags(http_object_exports)
+        antsword_flags = tuple(antsword_recovery.get("flag_candidates", ())) if antsword_recovery else ()
+        candidate_text = "\n".join(
+            [combined_output, *decoded_http_artifacts, *decoded_dns_hints, stream_payload_text, exported_object_text]
+        )
+        flags = tuple(
+            dict.fromkeys(
+                [
+                    *extract_flags(candidate_text),
+                    *antsword_flags,
+                ]
+            )
         )
         flag_candidates.extend(flags)
+
+        evidence = {
+            "artifact": {"name": Path(pcap_path).name, "path": pcap_path},
+            "tool_statuses": {label: result.status for label, result in labeled_results},
+            "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
+            "http_requests": _interesting_lines(str(dict(labeled_results)["tshark_http_requests"].raw.get("stdout", ""))),
+            "decoded_http_artifacts": decoded_http_artifacts[:20],
+            "http_object_exports": http_object_exports,
+            "dns_summary": dns_summary,
+            "tcp_streams": tcp_streams,
+            "tcp_stream_payloads": tcp_stream_payloads,
+            "protocol_streams": protocol_streams,
+            "flag_candidates": list(flags),
+        }
+        if antsword_recovery:
+            evidence["antsword_recovery"] = antsword_recovery
 
         finding = Finding(
             challenge_id=challenge_id,
             solver=self.name,
             finding="Analyzed packet capture traffic",
-            evidence={
-                "artifact": {"name": Path(pcap_path).name, "path": pcap_path},
-                "tool_statuses": {label: result.status for label, result in labeled_results},
-                "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
-                "http_requests": _interesting_lines(str(dict(labeled_results)["tshark_http_requests"].raw.get("stdout", ""))),
-                "decoded_http_artifacts": decoded_http_artifacts[:20],
-                "http_object_exports": http_object_exports,
-                "dns_summary": dns_summary,
-                "tcp_streams": tcp_streams,
-                "tcp_stream_payloads": tcp_stream_payloads,
-                "protocol_streams": protocol_streams,
-                "flag_candidates": list(flags),
-            },
+            evidence=evidence,
             hypothesis=_traffic_hypothesis(flags),
             confidence=0.82 if flags else 0.62,
             next_action=_next_action(flags),
@@ -279,6 +294,117 @@ def _exported_object_summary(path: Path) -> dict[str, object]:
         "text_preview": preview,
         "flags": list(extract_flags(preview)),
     }
+
+
+def _recover_antsword_cut_flags(http_object_exports: list[dict[str, object]]) -> dict[str, object] | None:
+    objects = _export_text_objects(http_object_exports)
+    for command_object in objects:
+        reversed_text = command_object["text"][::-1]
+        positions = [int(value) for value in re.findall(r"cut\s+-c\s+(\d+)\s+/flag", reversed_text)]
+        if len(positions) < 8:
+            continue
+        for output_object in objects:
+            if output_object["name"] == command_object["name"]:
+                continue
+            recovery = _recover_antsword_output(
+                positions=positions,
+                output_text=output_object["text"],
+                command_object=command_object["name"],
+                output_object=output_object["name"],
+            )
+            if recovery:
+                return recovery
+    return None
+
+
+def _export_text_objects(http_object_exports: list[dict[str, object]]) -> list[dict[str, str]]:
+    objects: list[dict[str, str]] = []
+    for item in http_object_exports:
+        name = str(item.get("name") or item.get("path") or "http_object")
+        path = Path(str(item.get("path") or ""))
+        text = ""
+        if path.is_file():
+            text = path.read_bytes().decode("utf-8", errors="replace")
+        if not text:
+            text = str(item.get("text_preview") or "")
+        if text:
+            objects.append({"name": name, "text": text})
+    return objects
+
+
+def _recover_antsword_output(
+    *,
+    positions: list[int],
+    output_text: str,
+    command_object: str,
+    output_object: str,
+) -> dict[str, object] | None:
+    for raw_chars in _antsword_output_char_sequences(output_text, expected_length=len(positions)):
+        for transform_name, decoded_chars in (
+            ("rot13", [_rot13_char(char) for char in raw_chars]),
+            ("raw", raw_chars),
+        ):
+            flag_text = _chars_by_cut_positions(positions, decoded_chars)
+            flags = list(extract_flags(flag_text))
+            if not flags:
+                continue
+            return {
+                "method": f"antsword_{transform_name}_reverse_cut",
+                "command_object": command_object,
+                "output_object": output_object,
+                "positions": positions[:80],
+                "decoded_chars": "".join(decoded_chars),
+                "reconstructed_text": flag_text,
+                "flag_candidates": flags,
+                "reproduction": [
+                    f"reverse {command_object} and extract cut -c N /flag positions",
+                    f"read one-character command output from {output_object}",
+                    f"apply {transform_name} to output characters and place each character at its cut position",
+                ],
+            }
+    return None
+
+
+def _antsword_output_char_sequences(output_text: str, expected_length: int) -> list[list[str]]:
+    lines = [line.strip() for line in output_text.splitlines() if line.strip()]
+    single_chars = [line for line in lines if len(line) == 1]
+    candidates: list[list[str]] = [single_chars]
+    for line in lines:
+        if len(line) <= 1:
+            continue
+        candidates.extend(
+            [
+                [line[-1], *single_chars],
+                [*single_chars, line[0]],
+                [line[-1], *single_chars, line[0]],
+            ]
+        )
+    deduped: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for chars in candidates:
+        if len(chars) != expected_length or not all(len(char) == 1 for char in chars):
+            continue
+        key = tuple(chars)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(chars)
+    return deduped
+
+
+def _chars_by_cut_positions(positions: list[int], chars: list[str]) -> str:
+    if not positions or len(positions) != len(chars):
+        return ""
+    output = ["?"] * max(positions)
+    for position, char in zip(positions, chars):
+        if position <= 0:
+            return ""
+        output[position - 1] = char
+    return "".join(output)
+
+
+def _rot13_char(char: str) -> str:
+    return codecs.decode(char, "rot_13")
 
 
 def _decoded_http_artifacts(output: str) -> list[str]:

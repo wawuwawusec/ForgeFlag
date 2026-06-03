@@ -273,6 +273,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("host/docker", html)
         self.assertIn("function renderToolGroups", html)
         self.assertIn("tool-group", html)
+        self.assertIn("function renderAntSwordEvidence", html)
+        self.assertIn("AntSword 流量恢复", html)
         self.assertIn("查看调试 JSON", html)
         self.assertIn("function loadLatestSummary", html)
         self.assertIn("/summary", html)

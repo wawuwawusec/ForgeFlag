@@ -1038,6 +1038,7 @@ INDEX_HTML = r"""<!doctype html>
         const webSource = renderWebSourceEvidence(evidence);
         const toolSamples = renderToolSampleEvidence(evidence);
         const transformRecipes = renderTransformRecipeEvidence(evidence);
+        const antswordRecovery = renderAntSwordEvidence(evidence);
         const archiveImage = renderArchiveImageEvidence(evidence);
         return `
           <div class="result-card">
@@ -1056,6 +1057,7 @@ INDEX_HTML = r"""<!doctype html>
             ${webSource}
             ${toolSamples}
             ${transformRecipes}
+            ${antswordRecovery}
             ${archiveImage}
             ${Array.isArray(candidates) && candidates.length ? `<div><strong>关键候选：</strong><div class="flag-list">${candidates.slice(0, 6).map(item => `<span class="flag-chip">${escapeHtml(item.value || item)}</span>`).join("")}</div></div>` : ""}
             ${rawJson(finding)}
@@ -1149,6 +1151,29 @@ INDEX_HTML = r"""<!doctype html>
           <strong>${escapeHtml(value)}</strong>
         </div>`;
       }).join("")}</div></div>`;
+    }
+    function renderAntSwordEvidence(evidence) {
+      const recovery = evidence.antsword_recovery || null;
+      if (!recovery) return "";
+      const flags = asList(recovery.flag_candidates);
+      const positions = asList(recovery.positions);
+      return `<div><strong>AntSword 流量恢复：</strong><div class="kv-grid">
+        <div class="kv">
+          <span>命令对象</span>
+          <strong>${escapeHtml(recovery.command_object || "unknown")}</strong>
+          <div class="meta">反转后提取 cut -c N /flag</div>
+        </div>
+        <div class="kv">
+          <span>输出对象</span>
+          <strong>${escapeHtml(recovery.output_object || "unknown")}</strong>
+          <div class="meta">${escapeHtml(recovery.method || "antsword recovery")}</div>
+        </div>
+        <div class="kv">
+          <span>还原结果</span>
+          <strong>${escapeHtml(flags[0] || recovery.reconstructed_text || "candidate")}</strong>
+          ${positions.length ? `<div class="meta">${positions.length} 个 cut 位置</div>` : ""}
+        </div>
+      </div></div>`;
     }
     function renderArchiveImageEvidence(evidence) {
       const archive = evidence.archive || null;

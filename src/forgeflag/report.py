@@ -169,6 +169,9 @@ def _dedupe_steps(steps: list[dict[str, Any]], keys: tuple[str, ...]) -> list[di
 
 
 def _approach_summary(path_steps: list[dict[str, Any]], findings: list[Finding]) -> str:
+    antsword_recovery = _first_antsword_recovery(path_steps)
+    if antsword_recovery:
+        return "关键点是 AntSword/JSP webshell 流量：HTTP object 中一处记录了反向的 `cut -c N /flag` 命令，另一处记录了经过 ROT13 的逐字符回显；按位置重排即可还原 flag。"
     reverse_strings = _first_reverse_strings_step(path_steps)
     if reverse_strings:
         return "关键点是二进制明文字符串泄露：先确认附件类型，再用 strings 提取可打印字符串，直接发现 flag。"
@@ -445,6 +448,22 @@ def _reproduction_steps(
             steps.append(f"服务回显内容包含：{transcript}。")
         steps.append(f"从 transcript 中提取 {flag}，提交该 flag。")
         return steps
+    antsword_recovery = _first_antsword_recovery(path_steps, accepted_flag=accepted_flag)
+    if antsword_recovery:
+        filename = antsword_recovery.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
+        command_object = antsword_recovery.get("command_object") or "命令对象"
+        output_object = antsword_recovery.get("output_object") or "输出对象"
+        flag = antsword_recovery.get("flag") or accepted_flag or "flag 候选"
+        method = antsword_recovery.get("method") or ""
+        transform = "ROT13" if "rot13" in method.lower() else "原始字符"
+        return [
+            f"打开附件 {filename}，确认它是 HTTP/JSP webshell 相关 pcap/pcapng。",
+            f"用 Wireshark 或 `tshark --export-objects http,<目录> -r {filename}` 导出 HTTP object。",
+            f"查看 {command_object}，将内容反转后提取所有 `cut -c N /flag`，记录每次读取的字符位置 N。",
+            f"查看 {output_object}，提取每行单字符回显；对这些字符做 {transform} 解码。",
+            "按第 3 步的位置顺序把第 4 步得到的字符放回对应下标，拼出完整 flag。",
+            f"得到 {flag}，提交该 flag。",
+        ]
     traffic_pcap = _first_traffic_pcap_recovery(path_steps, accepted_flag=accepted_flag)
     if traffic_pcap:
         filename = traffic_pcap.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
@@ -628,6 +647,28 @@ def _first_traffic_pcap_recovery(steps: list[dict[str, Any]], accepted_flag: str
                     "flag": accepted_flag or (flags[0] if flags else preview),
                     "export_name": str(export.get("name") or ""),
                 }
+    return {}
+
+
+def _first_antsword_recovery(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, str]:
+    for step in steps:
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        recovery = evidence.get("antsword_recovery")
+        if not isinstance(recovery, dict):
+            continue
+        flags = _string_list(recovery.get("flag_candidates"))
+        reconstructed = str(recovery.get("reconstructed_text") or "")
+        if accepted_flag and accepted_flag not in flags and accepted_flag not in reconstructed:
+            continue
+        return {
+            "artifact_name": _evidence_artifact_name(evidence),
+            "method": str(recovery.get("method") or ""),
+            "command_object": str(recovery.get("command_object") or ""),
+            "output_object": str(recovery.get("output_object") or ""),
+            "flag": accepted_flag or (flags[0] if flags else _first_flag_like(reconstructed)),
+        }
     return {}
 
 

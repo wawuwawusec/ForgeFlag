@@ -528,6 +528,44 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("tcp.stream eq 0", markdown)
         self.assertIn("flag{expanded_traffic_http_0}", markdown)
 
+    def test_writeup_describes_antsword_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="antsword-writeup",
+                solver="TrafficSolver",
+                finding="Analyzed packet capture traffic",
+                evidence={
+                    "artifact": {"name": "antsword.pcapng"},
+                    "flag_candidates": ["flag{antsword_recovered}"],
+                    "antsword_recovery": {
+                        "method": "antsword_rot13_reverse_cut",
+                        "command_object": "ms(18).jsp",
+                        "output_object": "ms(14).jsp",
+                        "positions": [1, 2, 3],
+                        "reconstructed_text": "flag{antsword_recovered}",
+                        "flag_candidates": ["flag{antsword_recovered}"],
+                    },
+                },
+                confidence=0.82,
+                next_action="Send candidates to Verifier and preserve the packet capture as reproduction evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="antsword-writeup",
+            category=ChallengeCategory.TRAFFIC,
+            attachment_paths=("/tmp/antsword.pcapng",),
+        )
+
+        report = ReportBuilder().build("antsword-writeup", ("flag{antsword_recovered}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("导出 HTTP object", markdown)
+        self.assertIn("ms(18).jsp", markdown)
+        self.assertIn("cut -c", markdown)
+        self.assertIn("ms(14).jsp", markdown)
+        self.assertIn("ROT13", markdown)
+        self.assertIn("flag{antsword_recovered}", markdown)
+
     def test_writeup_describes_dns_exfil_reproduction_steps(self) -> None:
         findings = [
             Finding(

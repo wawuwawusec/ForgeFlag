@@ -462,6 +462,192 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["http_object_exports"][0]["name"], "loot.txt")
         self.assertIn("flag{http_object_export}", finding.evidence["http_object_exports"][0]["flags"])
 
+    def test_traffic_solver_recovers_antsword_rot13_reverse_cut_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "antsword.pcapng"
+            attachment.write_bytes(b"pcapng fixture placeholder")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-antsword",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+            http_stdout = "\n".join(
+                [
+                    "1|0|POST|ctf.local|/FileuploadServlet|Mozilla",
+                    "2|1|POST|ctf.local|/upload/ms.jsp|AntSword",
+                ]
+            )
+            positions = [
+                10,
+                9,
+                1,
+                2,
+                33,
+                32,
+                39,
+                6,
+                14,
+                38,
+                27,
+                7,
+                25,
+                3,
+                15,
+                20,
+                31,
+                18,
+                24,
+                29,
+                16,
+                23,
+                11,
+                30,
+                42,
+                37,
+                41,
+                36,
+                12,
+                21,
+                34,
+                4,
+                13,
+                19,
+                5,
+                8,
+                26,
+                28,
+                22,
+                35,
+                17,
+                40,
+            ]
+            command_log = ("\n".join(f"cut -c {position} /flag" for position in positions) + "2b701bd4a893")[::-1]
+            output_log = "\n".join(
+                [
+                    "7b68ec1230p",
+                    "r",
+                    "s",
+                    "y",
+                    "6",
+                    "p",
+                    "p",
+                    "r",
+                    "-",
+                    "1",
+                    "q",
+                    "n",
+                    "8",
+                    "n",
+                    "q",
+                    "4",
+                    "2",
+                    "r",
+                    "-",
+                    "-",
+                    "2",
+                    "0",
+                    "s",
+                    "p",
+                    "}",
+                    "7",
+                    "s",
+                    "p",
+                    "2",
+                    "1",
+                    "9",
+                    "t",
+                    "o",
+                    "-",
+                    "{",
+                    "r",
+                    "5",
+                    "7",
+                    "o",
+                    "r",
+                    "6",
+                    "6",
+                    "ror91spo0",
+                    "/gbzpng",
+                    "4477155q",
+                ]
+            )
+
+            def export_objects(path: str, output_dir: str, scope=None) -> ToolResult:
+                del path, scope
+                export_dir = Path(output_dir)
+                export_dir.mkdir(parents=True, exist_ok=True)
+                (export_dir / "FileuploadServlet").write_text(
+                    'new U(this.getClass().getClassLoader()).g(base64Decode(request.getParameter("study")))',
+                    encoding="utf-8",
+                )
+                (export_dir / "ms(14).jsp").write_text(output_log, encoding="utf-8")
+                (export_dir / "ms(18).jsp").write_text(command_log, encoding="utf-8")
+                return ToolResult(
+                    tool="tshark",
+                    target=None,
+                    status="success",
+                    artifacts=[
+                        str(export_dir / "FileuploadServlet"),
+                        str(export_dir / "ms(14).jsp"),
+                        str(export_dir / "ms(18).jsp"),
+                    ],
+                    raw={"stdout": ""},
+                )
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "HTTP AntSword"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "http frames"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(
+                        tool="tshark",
+                        target=None,
+                        status="success",
+                        raw={"stdout": "2|1|10.0.0.2|4444|10.0.0.3|80|HTTP|POST /upload/ms.jsp HTTP/1.1"},
+                    ),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": http_stdout}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch("forgeflag.solvers.traffic.ctf.tshark_http_object_export", side_effect=export_objects),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-antsword")
+                finding = next(f for f in notebook.findings_for("traffic-antsword") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{eaeecf2b-d26e-41b0-85d7-c2c69ec71c6f}"])
+        self.assertEqual(
+            finding.evidence["antsword_recovery"]["flag_candidates"],
+            ["flag{eaeecf2b-d26e-41b0-85d7-c2c69ec71c6f}"],
+        )
+
     def test_traffic_solver_skips_non_pcap_attachments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
