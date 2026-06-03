@@ -37,6 +37,34 @@ class AgentRosterTest(unittest.TestCase):
 
         self.assertEqual(loaded.to_dict(), default_agent_roster().to_dict())
 
+    def test_default_roster_defines_rate_limit_safe_subagent_policy(self) -> None:
+        roster = default_agent_roster()
+
+        policy = roster.subagent_work_policy
+
+        self.assertEqual(policy.mode, "conservative")
+        self.assertEqual(policy.max_parallel, 1)
+        self.assertEqual(policy.cooldown_seconds, 120)
+        self.assertEqual(policy.failure_circuit_breaker, 1)
+        self.assertTrue(policy.prefer_local_verification)
+        self.assertIn("429 Too Many Requests", policy.blocked_after)
+        self.assertIn("subagent_work_policy", roster.to_public_dict())
+
+    def test_custom_subagent_policy_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent-roster.json"
+            payload = default_agent_roster().to_dict()
+            payload["subagent_work_policy"]["mode"] = "local_only"
+            payload["subagent_work_policy"]["max_parallel"] = 0
+            payload["subagent_work_policy"]["cooldown_seconds"] = 300
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            loaded = load_agent_roster(path)
+
+        self.assertEqual(loaded.subagent_work_policy.mode, "local_only")
+        self.assertEqual(loaded.subagent_work_policy.max_parallel, 0)
+        self.assertEqual(loaded.subagent_work_policy.cooldown_seconds, 300)
+
     def test_custom_roster_can_disable_agent_without_losing_identity_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "agent-roster.json"

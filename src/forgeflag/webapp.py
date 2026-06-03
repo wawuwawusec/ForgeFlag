@@ -1067,6 +1067,7 @@ INDEX_HTML = r"""<!doctype html>
       const configured = asList(roster && roster.agents);
       const active = asList(runRoster && runRoster.agents);
       const coordinator = (runRoster && runRoster.coordinator) || (roster && roster.coordinator) || {};
+      const policy = (roster && roster.subagent_work_policy) || (runRoster && runRoster.subagent_work_policy) || {};
       const activeIds = new Set(active.map(agent => agent.id));
       const rows = configured.length ? configured : active;
       return `
@@ -1079,6 +1080,11 @@ INDEX_HTML = r"""<!doctype html>
             <span>Coordinator</span>
             <strong>${escapeHtml(coordinator.name || "ForgeFlagManager")}</strong>
             <div class="meta">${escapeHtml(coordinator.mission || "Coordinate scoped CTF solving and evidence-backed verification.")}</div>
+          </div>
+          <div class="kv-grid">
+            <div class="kv"><span>Subagent 工作机制</span><strong>${escapeHtml(policy.mode || "conservative")}</strong><div class="meta">默认本地验证优先，避免把同一问题拆成过多并发请求。</div></div>
+            <div class="kv"><span>并发上限</span><strong>${escapeHtml(policy.max_parallel ?? 1)}</strong><div class="meta">超过上限时按顺序处理。</div></div>
+            <div class="kv"><span>429 熔断</span><strong>${escapeHtml(policy.failure_circuit_breaker ?? 1)} 次</strong><div class="meta">命中限流后冷却 ${escapeHtml(policy.cooldown_seconds ?? 120)} 秒，改用本地测试和 Web benchmark。</div></div>
           </div>
           ${rows.length ? rows.map(agent => `
             <div class="kv">

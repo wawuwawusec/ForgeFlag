@@ -30,6 +30,8 @@ The default roster contains `ChallengeTriageAgent`, `LLMRoutePlannerAgent`, `Web
 
 Enabled agents contribute their declared solver names in roster order. Disabled agents remove their managed solvers from the queue, while custom injected solvers that are not named by the roster pass through for tests and future extensions.
 
+The roster also carries a conservative `subagent_work_policy`: one subagent-style investigation at a time, local verification preferred, and a single 429/rate-limit/quota signal trips a cooldown circuit breaker. This keeps ForgeFlag useful under provider limits instead of retrying into quota failures.
+
 The roster is configuration, not a secret store. API keys stay in runtime LLM config or Web request payloads and are not written to the roster file.
 
 ### Shared Notebook

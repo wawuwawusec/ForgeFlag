@@ -23,8 +23,9 @@ Implemented so far:
   - roles cover triage, LLM route planning, Web, Crypto, Binary, Forensics, Traffic, Evidence Judge, and Browser Player QA
   - `forgeflag agents` lists the active roster; `forgeflag agents --write-default` writes `.forgeflag/agent-roster.json`
   - enabled agents contribute their declared solver names in roster order; disabled agents remove their managed solvers from the queue
+  - `subagent_work_policy` defaults to conservative/local-first operation: `max_parallel=1`, `cooldown_seconds=120`, and one 429/rate-limit/quota signal trips the circuit breaker
   - run summaries include an `agent_roster` section with coordinator, selected category, solver queue, and participating identities
-  - Web UI exposes `/api/agents` and the Agent tab shows configured and per-run identities
+  - Web UI exposes `/api/agents` and the Agent tab shows configured identities, per-run identities, and the current subagent work policy
   - documented in `docs/agent-roster.md`
 - SQLite shared notebook.
 - Observer-distilled shared observations.
@@ -230,6 +231,14 @@ scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run
 .venv/bin/forgeflag --db .forgeflag/notebook.sqlite artifacts <challenge_id>
 .venv/bin/forgeflag observations <challenge_id>
 .venv/bin/forgeflag report <challenge_id>
+```
+
+If a Codex/subagent run hits `429 Too Many Requests`, rate-limit, or quota pressure, stop spawning subagents for that task. Continue with local verification first:
+
+```bash
+.venv/bin/python -m unittest discover -s tests
+scripts/forgeflag-tool-smoke
+scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run
 ```
 
 Optional LLM run:

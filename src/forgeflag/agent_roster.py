@@ -58,10 +58,54 @@ class AgentIdentity:
 
 
 @dataclass(frozen=True)
+class SubagentWorkPolicy:
+    mode: str = "conservative"
+    max_parallel: int = 1
+    cooldown_seconds: int = 120
+    failure_circuit_breaker: int = 1
+    prefer_local_verification: bool = True
+    allowed_uses: tuple[str, ...] = (
+        "independent code review after deterministic tests pass",
+        "read-only architecture exploration with no shared file edits",
+        "disjoint implementation task with explicit file ownership",
+    )
+    blocked_after: tuple[str, ...] = (
+        "429 Too Many Requests",
+        "rate limit",
+        "quota",
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "max_parallel": self.max_parallel,
+            "cooldown_seconds": self.cooldown_seconds,
+            "failure_circuit_breaker": self.failure_circuit_breaker,
+            "prefer_local_verification": self.prefer_local_verification,
+            "allowed_uses": list(self.allowed_uses),
+            "blocked_after": list(self.blocked_after),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> SubagentWorkPolicy:
+        default = default_subagent_work_policy()
+        return cls(
+            mode=str(payload.get("mode") or default.mode),
+            max_parallel=_int_value(payload.get("max_parallel"), default.max_parallel),
+            cooldown_seconds=_int_value(payload.get("cooldown_seconds"), default.cooldown_seconds),
+            failure_circuit_breaker=_int_value(payload.get("failure_circuit_breaker"), default.failure_circuit_breaker),
+            prefer_local_verification=_bool_value(payload.get("prefer_local_verification"), default.prefer_local_verification),
+            allowed_uses=tuple(_string_list(payload.get("allowed_uses")) or default.allowed_uses),
+            blocked_after=tuple(_string_list(payload.get("blocked_after")) or default.blocked_after),
+        )
+
+
+@dataclass(frozen=True)
 class AgentRoster:
     version: int
     coordinator: AgentIdentity
     agents: tuple[AgentIdentity, ...] = field(default_factory=tuple)
+    subagent_work_policy: SubagentWorkPolicy = field(default_factory=lambda: default_subagent_work_policy())
     warnings: tuple[str, ...] = ()
 
     def active_agents_for(self, category: ChallengeCategory) -> tuple[AgentIdentity, ...]:
@@ -90,6 +134,7 @@ class AgentRoster:
             "version": self.version,
             "coordinator": self.coordinator.to_dict(),
             "agents": [agent.to_dict() for agent in self.agents],
+            "subagent_work_policy": self.subagent_work_policy.to_dict(),
             "warnings": list(self.warnings),
         }
 
@@ -109,6 +154,11 @@ class AgentRoster:
             "category": category.value,
             "solver_queue": list(solver_names),
             "agents": [agent.to_dict() for agent in active],
+            "subagent_work_policy": {
+                "mode": self.subagent_work_policy.mode,
+                "max_parallel": self.subagent_work_policy.max_parallel,
+                "prefer_local_verification": self.subagent_work_policy.prefer_local_verification,
+            },
         }
 
     @classmethod
@@ -126,10 +176,17 @@ class AgentRoster:
         )
         if "agents" not in payload:
             agents = default_agent_roster().agents
+        policy_raw = payload.get("subagent_work_policy")
+        policy = (
+            SubagentWorkPolicy.from_dict(policy_raw)
+            if isinstance(policy_raw, dict)
+            else default_subagent_work_policy()
+        )
         return cls(
             version=_int_value(payload.get("version"), 1),
             coordinator=coordinator,
             agents=agents,
+            subagent_work_policy=policy,
             warnings=tuple(_string_list(payload.get("warnings"))),
         )
 
@@ -155,6 +212,7 @@ def load_agent_roster(path: str | Path | None = None) -> AgentRoster:
             version=fallback.version,
             coordinator=fallback.coordinator,
             agents=fallback.agents,
+            subagent_work_policy=fallback.subagent_work_policy,
             warnings=(f"{roster_path.name} could not be loaded: {exc}",),
         )
 
@@ -262,7 +320,11 @@ def default_agent_roster() -> AgentRoster:
             playbooks=("scripts/forgeflag-web-player-benchmark", "docs/web-player-benchmark.md"),
         ),
     )
-    return AgentRoster(version=1, coordinator=coordinator, agents=agents)
+    return AgentRoster(version=1, coordinator=coordinator, agents=agents, subagent_work_policy=default_subagent_work_policy())
+
+
+def default_subagent_work_policy() -> SubagentWorkPolicy:
+    return SubagentWorkPolicy()
 
 
 def _string_list(value: object) -> list[str]:
@@ -276,6 +338,20 @@ def _int_value(value: object, default: int) -> int:
         return int(str(value))
     except (TypeError, ValueError):
         return default
+
+
+def _bool_value(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    if value is None:
+        return default
+    return bool(value)
 
 
 def _dedupe(values: list[str]) -> list[str]:

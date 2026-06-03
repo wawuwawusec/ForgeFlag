@@ -19,6 +19,7 @@ SCORES = {
     "category_correct": "The challenge was submitted with the intended category through the Web UI.",
     "human_ui_flow": "The player used visible Web controls: create/update, run, Summary, and Write-up.",
     "writeup_reproducible": "The Write-up tab contains solving idea and reproduction steps after success.",
+    "agent_route_correct": "The Agent tab shows the expected ForgeFlag subagent identities for the solved category.",
     "no_ui_error": "The page did not surface an error state during the flow.",
 }
 
@@ -83,6 +84,7 @@ def browser_player_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "expected_flag": "flag{player_web_visible}",
             "active_probe": False,
             "llm_enabled": False,
+            "expected_agents": ["ChallengeTriageAgent", "WebExploitAgent", "EvidenceJudgeAgent"],
             "via": "web_ui",
         },
         {
@@ -95,6 +97,7 @@ def browser_player_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "expected_flag": "flag{player_crypto_base32}",
             "active_probe": False,
             "llm_enabled": False,
+            "expected_agents": ["ChallengeTriageAgent", "CryptoMathAgent", "EvidenceJudgeAgent"],
             "via": "web_ui",
         },
         {
@@ -107,6 +110,7 @@ def browser_player_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "expected_flag": "flag{player_misc_binary}",
             "active_probe": False,
             "llm_enabled": False,
+            "expected_agents": ["ChallengeTriageAgent", "CryptoMathAgent", "ForensicsAgent", "EvidenceJudgeAgent"],
             "via": "web_ui",
         },
     ]
@@ -120,6 +124,7 @@ def _case_listing(case: dict[str, object]) -> dict[str, object]:
         "expected_flag": case["expected_flag"],
         "llm_enabled": case["llm_enabled"],
         "via": case["via"],
+        "expected_agents": list(case["expected_agents"]),  # type: ignore[arg-type]
         "attachments": [Path(path).name for path in case["attachments"]],  # type: ignore[arg-type]
     }
 
@@ -206,6 +211,11 @@ def _playwright_spec(base_url: str, cases: list[dict[str, object]], keep: bool) 
               await expect(page.locator('#output')).toContainText('解题思路');
               await expect(page.locator('#output')).toContainText('复现步骤');
               await expect(page.locator('#output')).toContainText(ctfCase.expected_flag);
+              await page.getByRole('button', {{ name: 'Agent' }}).click();
+              await expect(page.locator('#output')).toContainText('Agent 身份配置');
+              for (const agentName of ctfCase.expected_agents) {{
+                await expect(page.locator('#output')).toContainText(agentName);
+              }}
 
               if (!keep) {{
                 page.on('dialog', dialog => dialog.accept());

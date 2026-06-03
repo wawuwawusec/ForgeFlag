@@ -279,6 +279,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("function renderPostRunCritic", html)
         self.assertIn("/api/agents", html)
         self.assertIn("Agent 身份配置", html)
+        self.assertIn("Subagent 工作机制", html)
+        self.assertIn("429 熔断", html)
         self.assertIn("function renderAgentRoster", html)
 
     def test_agents_endpoint_exposes_subagent_roster(self) -> None:
@@ -287,6 +289,8 @@ class WebAppApiTest(unittest.TestCase):
         payload = handler_cls.handle_agents()
 
         self.assertEqual(payload["coordinator"]["id"], "forgeflag-manager")
+        self.assertEqual(payload["subagent_work_policy"]["mode"], "conservative")
+        self.assertEqual(payload["subagent_work_policy"]["max_parallel"], 1)
         self.assertIn("WebExploitAgent", {row["name"] for row in payload["agents"]})
         self.assertIn("TrafficAgent", {row["name"] for row in payload["agents"]})
         self.assertIn("BrowserPlayerQAAgent", {row["name"] for row in payload["agents"]})

@@ -26,6 +26,27 @@ The generated config lives at:
 
 The file is safe to edit and does not store LLM API keys.
 
+## Rate-limit-safe Work Policy
+
+The roster also carries a machine-readable `subagent_work_policy`. The default policy is intentionally conservative:
+
+- `mode: conservative`
+- `max_parallel: 1`
+- `cooldown_seconds: 120`
+- `failure_circuit_breaker: 1`
+- `prefer_local_verification: true`
+- `blocked_after`: `429 Too Many Requests`, `rate limit`, `quota`
+
+In practice this means ForgeFlag should use one subagent-style investigation at a time, stop immediately after a rate-limit signal, and switch to local verification: unit tests, deterministic solvers, tool smoke checks, and `scripts/forgeflag-web-player-benchmark`.
+
+Recommended subagent uses are narrow:
+
+- independent code review after deterministic tests pass
+- read-only architecture exploration with no shared file edits
+- disjoint implementation work with explicit file ownership
+
+Avoid parallel benchmark runners, repeated reviewer retries, or multiple agents calling the same LLM provider during quota pressure.
+
 ## Runtime Effect
 
 The roster now influences the solver queue:
@@ -58,6 +79,7 @@ For example, disabling `WebExploitAgent` removes `WebSolver` from Web challenge 
 The Agent tab shows:
 
 - configured subagent identities from `/api/agents`
+- the active `subagent_work_policy`, including serial execution and 429 circuit breaker settings
 - agents that participated in the latest run summary
 - LLM planning cards
 - action queue changes
@@ -70,6 +92,8 @@ This keeps the answerer view focused on who did what and which evidence supports
 
 ## Operating Rules
 
+- Default subagent work is local-first and serial. Keep `max_parallel` at `1` unless quota headroom is known and the task has clean file ownership boundaries.
+- A single `429 Too Many Requests`, rate-limit, or quota error trips the circuit breaker. Do not start retry loops; wait for cooldown and continue with local checks.
 - LLM agents plan and critique; they do not directly execute arbitrary tools or submit unsupported flags.
 - Active network probing remains gated by allowlisted hosts and `active_probe`.
 - IDA MCP and heavy tool integrations stay disabled/read-only by default unless explicitly configured.

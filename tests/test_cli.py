@@ -222,6 +222,8 @@ class CliTest(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["coordinator"]["id"], "forgeflag-manager")
+        self.assertEqual(payload["subagent_work_policy"]["max_parallel"], 1)
+        self.assertTrue(payload["subagent_work_policy"]["prefer_local_verification"])
         self.assertIn("ChallengeTriageAgent", {row["name"] for row in payload["agents"]})
         self.assertIn("BrowserPlayerQAAgent", {row["name"] for row in payload["agents"]})
         self.assertIn("EvidenceJudgeAgent", {row["name"] for row in payload["agents"]})
