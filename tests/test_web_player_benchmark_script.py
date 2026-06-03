@@ -92,18 +92,30 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
 
     def test_run_mode_can_create_llm_and_comparison_variants(self) -> None:
         module = _load_script_module()
+        llm_settings = module.llm_settings_from_env(
+            {
+                "FORGEFLAG_LLM_PROVIDER": "zhipu",
+                "FORGEFLAG_LLM_MODEL": "glm-5.1",
+                "ZAI_API_KEY": "sensitive-token",
+                "FORGEFLAG_LLM_BASE_URL": "https://open.bigmodel.cn/api/paas/v4",
+            }
+        )
         base_cases = [
             {
                 "challenge_id": "player-web-visible",
                 "category": "web",
+                "title": "Browser Player Web visible flag",
+                "expected_flag": "flag{player_web_visible}",
                 "llm_enabled": False,
                 "expected_agents": ["ChallengeTriageAgent", "WebExploitAgent", "EvidenceJudgeAgent"],
+                "attachments": [],
+                "via": "web_ui",
             }
         ]
 
-        deterministic = module.apply_run_mode(base_cases, llm=False, both=False)
-        llm_only = module.apply_run_mode(base_cases, llm=True, both=False)
-        comparison = module.apply_run_mode(base_cases, llm=False, both=True)
+        deterministic = module.apply_run_mode(base_cases, llm=False, both=False, llm_settings=llm_settings)
+        llm_only = module.apply_run_mode(base_cases, llm=True, both=False, llm_settings=llm_settings)
+        comparison = module.apply_run_mode(base_cases, llm=False, both=True, llm_settings=llm_settings)
 
         self.assertEqual(deterministic[0]["challenge_id"], "player-web-visible")
         self.assertEqual(deterministic[0]["run_profile"], "deterministic")
@@ -111,8 +123,14 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
         self.assertEqual(llm_only[0]["challenge_id"], "player-web-visible-llm")
         self.assertEqual(llm_only[0]["run_profile"], "llm")
         self.assertTrue(llm_only[0]["llm_enabled"])
+        self.assertTrue(llm_only[0]["llm_configured"])
+        self.assertEqual(llm_only[0]["llm_settings"]["api_key"], "sensitive-token")
         self.assertEqual([case["run_profile"] for case in comparison], ["deterministic", "llm"])
         self.assertEqual([case["challenge_id"] for case in comparison], ["player-web-visible", "player-web-visible-llm"])
+        listed = module._case_listing(llm_only[0])
+        self.assertTrue(listed["llm_configured"])
+        self.assertNotIn("api_key", listed)
+        self.assertNotIn("sensitive-token", json.dumps(listed))
 
 
 def _load_script_module():

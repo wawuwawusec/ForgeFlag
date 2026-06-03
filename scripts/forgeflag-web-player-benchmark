@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import socket
 import shutil
 import struct
@@ -42,7 +43,8 @@ def main() -> int:
 
     WORKDIR.mkdir(parents=True, exist_ok=True)
     fixtures = build_fixtures()
-    cases = apply_run_mode(browser_player_cases(fixtures), llm=args.llm, both=args.both)
+    llm_settings = llm_settings_from_env(os.environ)
+    cases = apply_run_mode(browser_player_cases(fixtures), llm=args.llm, both=args.both, llm_settings=llm_settings)
     selected = [case for case in cases if not args.case or _case_selected(case, set(args.case))]
 
     if args.list or not args.run:
@@ -190,9 +192,40 @@ def browser_player_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
     ]
 
 
-def apply_run_mode(cases: list[dict[str, object]], llm: bool, both: bool) -> list[dict[str, object]]:
+def llm_settings_from_env(env: dict[str, str]) -> dict[str, object]:
+    provider = (env.get("FORGEFLAG_LLM_PROVIDER") or "zhipu").strip().lower() or "zhipu"
+    model = env.get("FORGEFLAG_LLM_MODEL") or ("glm-5.1" if provider == "zhipu" else "")
+    api_key = (
+        env.get("FORGEFLAG_LLM_API_KEY")
+        or env.get("ZAI_API_KEY")
+        or env.get("ZHIPU_API_KEY")
+        or env.get("ZHIPUAI_API_KEY")
+        or env.get("BIGMODEL_API_KEY")
+        or env.get("OPENAI_API_KEY")
+        or ""
+    )
+    base_url = env.get("FORGEFLAG_LLM_BASE_URL") or (
+        "https://open.bigmodel.cn/api/paas/v4" if provider == "zhipu" else "https://api.openai.com/v1"
+    )
+    timeout = env.get("FORGEFLAG_LLM_TIMEOUT_SECONDS") or "30"
+    return {
+        "provider": provider,
+        "model": model,
+        "api_key": api_key,
+        "base_url": base_url,
+        "timeout_seconds": timeout,
+        "configured": bool(provider and model and api_key),
+    }
+
+
+def apply_run_mode(
+    cases: list[dict[str, object]],
+    llm: bool,
+    both: bool,
+    llm_settings: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
     deterministic = [_case_variant(case, run_profile="deterministic", llm_enabled=False) for case in cases]
-    llm_cases = [_case_variant(case, run_profile="llm", llm_enabled=True) for case in cases]
+    llm_cases = [_case_variant(case, run_profile="llm", llm_enabled=True, llm_settings=llm_settings or {}) for case in cases]
     if both:
         return [item for pair in zip(deterministic, llm_cases) for item in pair]
     if llm:
@@ -200,12 +233,22 @@ def apply_run_mode(cases: list[dict[str, object]], llm: bool, both: bool) -> lis
     return deterministic
 
 
-def _case_variant(case: dict[str, object], run_profile: str, llm_enabled: bool) -> dict[str, object]:
+def _case_variant(
+    case: dict[str, object],
+    run_profile: str,
+    llm_enabled: bool,
+    llm_settings: dict[str, object] | None = None,
+) -> dict[str, object]:
     base_id = str(case["challenge_id"])
     variant = dict(case)
     variant["base_challenge_id"] = base_id
     variant["run_profile"] = run_profile
     variant["llm_enabled"] = llm_enabled
+    if llm_enabled:
+        variant["llm_settings"] = dict(llm_settings or {})
+        variant["llm_configured"] = bool((llm_settings or {}).get("configured"))
+    else:
+        variant["llm_configured"] = False
     if run_profile == "llm":
         variant["challenge_id"] = f"{base_id}-llm"
     return variant
@@ -224,6 +267,7 @@ def _case_listing(case: dict[str, object]) -> dict[str, object]:
         "title": case["title"],
         "expected_flag": case["expected_flag"],
         "llm_enabled": case["llm_enabled"],
+        "llm_configured": bool(case.get("llm_configured")),
         "via": case["via"],
         "expected_agents": list(case["expected_agents"]),  # type: ignore[arg-type]
         "attachments": [Path(path).name for path in case["attachments"]],  # type: ignore[arg-type]
@@ -428,6 +472,22 @@ def _playwright_spec(base_url: str, cases: list[dict[str, object]], keep: bool) 
 
               if (ctfCase.llm_enabled) {{
                 await page.locator('#llmEnabled').check();
+                const llmSettings = ctfCase.llm_settings || {{}};
+                if (llmSettings.provider) {{
+                  await page.locator('#llmProvider').selectOption(llmSettings.provider);
+                }}
+                if (llmSettings.model) {{
+                  await page.locator('#llmModel').fill(llmSettings.model);
+                }}
+                if (llmSettings.base_url) {{
+                  await page.locator('#llmBaseUrl').fill(llmSettings.base_url);
+                }}
+                if (llmSettings.timeout_seconds) {{
+                  await page.locator('#llmTimeout').fill(String(llmSettings.timeout_seconds));
+                }}
+                if (llmSettings.api_key) {{
+                  await page.locator('#llmApiKey').fill(llmSettings.api_key);
+                }}
               }} else {{
                 await page.locator('#llmEnabled').uncheck();
               }}

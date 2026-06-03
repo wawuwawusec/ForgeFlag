@@ -62,6 +62,9 @@ scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --json
 Generate LLM-assisted variants when a provider is configured:
 
 ```bash
+export FORGEFLAG_LLM_PROVIDER=zhipu
+export FORGEFLAG_LLM_MODEL=glm-5.1
+export ZAI_API_KEY="..."
 scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --llm
 ```
 
@@ -72,6 +75,8 @@ scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --both
 ```
 
 `--both --list` is safe for planning because it only lists the doubled case set and does not call the LLM provider.
+
+LLM-assisted browser runs read `FORGEFLAG_LLM_PROVIDER`, `FORGEFLAG_LLM_MODEL`, `FORGEFLAG_LLM_BASE_URL`, `FORGEFLAG_LLM_TIMEOUT_SECONDS`, and the usual API key variables such as `FORGEFLAG_LLM_API_KEY` or `ZAI_API_KEY`. The key is filled into the local Web form for the run request but is not printed by `--list` or the scorecard.
 
 Run one case and keep it in the notebook for manual inspection:
 
