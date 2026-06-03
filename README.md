@@ -99,7 +99,7 @@ export FORGEFLAG_LLM_RETRY_MAX_SECONDS=20
 export FORGEFLAG_LLM_COOLDOWN_SECONDS=120
 ```
 
-The Web UI also has a per-run "大模型分析" switch. Select `智谱 GLM`, enter a GLM model such as `glm-5.1`, and paste the API key. The UI can save provider/model/base URL/timeout to browser local storage and includes a connection test button. API keys are used only for the current run/test request and ForgeFlag never writes the token to SQLite.
+The Web UI also has a per-run "大模型分析" switch. Select `智谱 GLM`, enter a GLM model such as `glm-5.1`, and paste the API key. The UI can save provider/model/API key/base URL/timeout to browser local storage and includes a connection test button. API keys are restored from the current browser before LLM runs/tests, but ForgeFlag never writes the token to SQLite.
 
 IDA MCP reverse-engineering support is also optional. When enabled, `ReverseSolver` and `PwnSolver` call a read-only IDA MCP server for registered binary attachments and store function, string, and disassembly/decompiler pivot evidence in the notebook:
 

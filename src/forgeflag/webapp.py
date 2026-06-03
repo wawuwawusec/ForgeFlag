@@ -827,6 +827,28 @@ INDEX_HTML = r"""<!doctype html>
       if (saved.llm_provider && saved.llm_provider !== $("llmProvider").value) return;
       $("llmApiKey").value = saved.llm_api_key;
     }
+    function ensureLLMReady() {
+      if (!$("llmEnabled").checked) return true;
+      syncLLMSettings();
+      const payload = llmPayload();
+      if (payload.llm_provider === "disabled") {
+        $("llmConfigStatus").textContent = "请先选择大模型 Provider";
+        status("请先选择大模型 Provider", "error");
+        return false;
+      }
+      if (!payload.llm_model) {
+        $("llmConfigStatus").textContent = "请先填写大模型版本";
+        status("请先填写大模型版本", "error");
+        return false;
+      }
+      if (!payload.llm_api_key) {
+        $("llmConfigStatus").textContent = "请先填写并保存大模型 API Key";
+        status("请先填写并保存大模型 API Key", "error");
+        flashButton("llmSaveConfig", "error");
+        return false;
+      }
+      return true;
+    }
     function restoreLLMConfig() {
       const saved = readSavedLLMConfig();
       if (!saved) return syncLLMSettings();
@@ -1699,6 +1721,7 @@ INDEX_HTML = r"""<!doctype html>
         status("请先选择一道题目", "error");
         return false;
       }
+      if (!ensureLLMReady()) return false;
       setRunState(true, `运行中：${state.selected}`, "busy");
       show({ challenge_id: state.selected, status: "running", solvers: [], accepted_flags: [], rejected_flags: [], observations: 0 }, "summary");
       const payload = {
@@ -1769,6 +1792,7 @@ INDEX_HTML = r"""<!doctype html>
     async function testLLM() {
       if (!$("llmEnabled").checked) $("llmEnabled").checked = true;
       syncLLMSettings();
+      if (!ensureLLMReady()) return {status:"blocked", reason:"missing_llm_config"};
       $("llmConfigStatus").textContent = "正在测试...";
       status("正在测试大模型连接...", "busy");
       const res = await api("/api/llm/test", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(llmPayload()) });

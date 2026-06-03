@@ -370,6 +370,10 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn('$("llmApiKey").value = saved.llm_api_key || "";', html)
         self.assertIn("配置已保存到本浏览器（含 Key）", html)
         self.assertNotIn("delete saved.llm_api_key", html)
+        self.assertIn("function ensureLLMReady", html)
+        self.assertIn("if (!ensureLLMReady()) return false;", html)
+        self.assertIn("if (!ensureLLMReady()) return {status:\"blocked\", reason:\"missing_llm_config\"};", html)
+        self.assertIn("请先填写并保存大模型 API Key", html)
 
     def test_index_renders_classical_crypto_evidence_summary(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
