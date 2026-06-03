@@ -172,6 +172,10 @@ def _approach_summary(path_steps: list[dict[str, Any]], findings: list[Finding])
     antsword_recovery = _first_antsword_recovery(path_steps)
     if antsword_recovery:
         return "关键点是 AntSword/JSP webshell 流量：HTTP object 中一处记录了反向的 `cut -c N /flag` 命令，另一处记录了经过 ROT13 的逐字符回显；按位置重排即可还原 flag。"
+    image_lsb = _first_image_lsb_recovery(path_steps)
+    if image_lsb:
+        recipe = image_lsb.get("recipe") or "LSB"
+        return f"关键点是 PNG LSB 隐写：按 {recipe} 提取低位比特流，必要时再做文本解码，即可得到 flag。"
     reverse_strings = _first_reverse_strings_step(path_steps)
     if reverse_strings:
         return "关键点是二进制明文字符串泄露：先确认附件类型，再用 strings 提取可打印字符串，直接发现 flag。"
@@ -374,6 +378,25 @@ def _reproduction_steps(
             _transform_reproduction_step(method),
             f"得到候选 {value}，交给 verifier 验证通过。",
         ]
+    image_lsb = _first_image_lsb_recovery(path_steps, accepted_flag=accepted_flag)
+    if image_lsb:
+        filename = image_lsb.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
+        recipe = image_lsb.get("recipe") or "b1,rgb,xy"
+        channel_order = str(image_lsb.get("channel_order") or "rgb").upper()
+        bit_plane = image_lsb.get("bit_plane") or 1
+        bit_order = image_lsb.get("bit_order") or "msb"
+        decoders = _string_list(image_lsb.get("decoders"))
+        flag = image_lsb.get("flag") or accepted_flag or "flag 候选"
+        steps = [
+            f"执行 `file {filename}` 确认附件是 PNG 图片。",
+            f"按 recipe `{recipe}` 提取最低位：逐像素按行读取 {channel_order} 通道的第 {bit_plane} 个低位，并按 {bit_order} 字节顺序组装文本。",
+        ]
+        if decoders:
+            steps.append(f"对提取文本执行 {' -> '.join(decoders)} 解码，得到 {flag}。")
+        else:
+            steps.append(f"提取出的文本中直接出现 {flag}。")
+        steps.append(f"提交 {flag}，verifier 验证通过。")
+        return steps
     image_idat = _first_image_idat_payload(path_steps)
     if image_idat:
         filename = _basename(attachments[0]) if attachments else "题目附件"
@@ -809,6 +832,43 @@ def _first_image_idat_payload(steps: list[dict[str, Any]]) -> dict[str, Any]:
     return {}
 
 
+def _first_image_lsb_recovery(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, Any]:
+    fallback: dict[str, Any] = {}
+    for step in steps:
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        image_stego = evidence.get("image_stego")
+        if not isinstance(image_stego, dict):
+            continue
+        artifact_name = _evidence_artifact_name(evidence)
+        flags = _string_list(evidence.get("flag_candidates"))
+        for candidate in image_stego.get("lsb_candidates", []):
+            if not isinstance(candidate, dict):
+                continue
+            candidate_flags = _string_list(candidate.get("flag_like_strings"))
+            text = str(candidate.get("text_preview") or "")
+            flag = accepted_flag or (candidate_flags[0] if candidate_flags else (flags[0] if flags else _first_flag_like(text)))
+            recovery = {
+                "artifact_name": artifact_name,
+                "recipe": str(candidate.get("recipe") or ""),
+                "bit_plane": candidate.get("bit_plane"),
+                "channel_order": str(candidate.get("channel_order") or ""),
+                "bit_order": str(candidate.get("bit_order") or ""),
+                "coordinate_order": str(candidate.get("coordinate_order") or "xy"),
+                "decoders": candidate.get("decoders"),
+                "text_preview": text,
+                "flag": flag,
+            }
+            if accepted_flag and (accepted_flag in candidate_flags or accepted_flag in flags or accepted_flag in text):
+                return recovery
+            if candidate_flags and not fallback:
+                fallback = recovery
+            elif not fallback:
+                fallback = recovery
+    return fallback
+
+
 def _first_archive_recovery(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, str]:
     for step in steps:
         evidence = step.get("evidence")
@@ -919,6 +979,20 @@ def _short_command_output(value: object, limit: int = 180) -> str:
 
 
 def _image_stego_evidence_items(image_stego: dict[str, Any]) -> list[dict[str, str]]:
+    lsb_candidates = image_stego.get("lsb_candidates")
+    if isinstance(lsb_candidates, list) and lsb_candidates:
+        first = next((candidate for candidate in lsb_candidates if isinstance(candidate, dict)), None)
+        if first:
+            return [
+                {
+                    "label": "PNG LSB",
+                    "value": str(first.get("recipe") or "low-bit-plane"),
+                },
+                {
+                    "label": "提取文本",
+                    "value": str(first.get("text_preview") or _first_string(first.get("flag_like_strings")) or ""),
+                },
+            ]
     payloads = image_stego.get("idat_payloads")
     if isinstance(payloads, list) and payloads:
         first = next((payload for payload in payloads if isinstance(payload, dict)), None)

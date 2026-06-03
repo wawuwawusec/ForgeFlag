@@ -707,6 +707,57 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertEqual(list(sections), ["解题思路", "复现步骤"])
         self.assertNotIn("关键证据", report["writeup"]["markdown"])
 
+    def test_writeup_describes_png_lsb_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="png-lsb-writeup",
+                solver="MiscSolver",
+                finding="Analyzed misc image artifact",
+                evidence={
+                    "artifact": {"name": "lsb.png", "path": "/tmp/lsb.png"},
+                    "flag_candidates": ["flag{png_lsb}"],
+                    "image_stego": {
+                        "format": "png",
+                        "lsb_candidates": [
+                            {
+                                "recipe": "b1,rgb,msb,xy",
+                                "bit_plane": 1,
+                                "channel_order": "rgb",
+                                "bit_order": "msb",
+                                "coordinate_order": "xy",
+                                "decoders": ["html_unescape"],
+                                "text_preview": "flag{png_lsb}",
+                                "flag_like_strings": ["flag{png_lsb}"],
+                            }
+                        ],
+                    },
+                },
+                confidence=0.78,
+                hypothesis="Image stego evidence contains a flag-like token.",
+                next_action="Send image-derived flag candidates to Verifier and preserve the image evidence path.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="png-lsb-writeup",
+            category=ChallengeCategory.MISC,
+            attachment_paths=("/tmp/lsb.png",),
+        )
+
+        report = ReportBuilder().build("png-lsb-writeup", ("flag{png_lsb}",), findings, [], challenge=challenge)
+
+        sections = {section["title"]: section for section in report["writeup"]["sections"]}
+        self.assertEqual(
+            sections["复现步骤"]["steps"],
+            [
+                "执行 `file lsb.png` 确认附件是 PNG 图片。",
+                "按 recipe `b1,rgb,msb,xy` 提取最低位：逐像素按行读取 RGB 通道的第 1 个低位，并按 msb 字节顺序组装文本。",
+                "对提取文本执行 html_unescape 解码，得到 flag{png_lsb}。",
+                "提交 flag{png_lsb}，verifier 验证通过。",
+            ],
+        )
+        self.assertIn("PNG LSB", sections["解题思路"]["body"])
+        self.assertNotIn("关键证据", report["writeup"]["markdown"])
+
     def test_writeup_describes_archive_preview_reproduction_steps(self) -> None:
         findings = [
             Finding(

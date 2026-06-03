@@ -401,6 +401,10 @@ def _image_text(image_stego: dict[str, object] | None) -> str:
         if isinstance(item, dict):
             values.append(str(item.get("text_preview", "")))
             values.extend(str(flag) for flag in item.get("flag_like_strings", []) if isinstance(flag, str))
+    for item in image_stego.get("lsb_candidates", []):
+        if isinstance(item, dict):
+            values.append(str(item.get("text_preview", "")))
+            values.extend(str(flag) for flag in item.get("flag_like_strings", []) if isinstance(flag, str))
     trailing = image_stego.get("trailing_data")
     if isinstance(trailing, dict):
         values.append(str(trailing.get("ascii_preview", "")))

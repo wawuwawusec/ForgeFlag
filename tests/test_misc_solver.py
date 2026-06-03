@@ -9,7 +9,12 @@ from forgeflag.domain import Challenge, ChallengeCategory, RunConfig
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.tools import ctf
-from tests.png_fixtures import png_with_extra_compressed_idat, png_with_text_and_trailing_data, png_with_wrong_declared_height
+from tests.png_fixtures import (
+    png_with_extra_compressed_idat,
+    png_with_rgb_lsb_payload,
+    png_with_text_and_trailing_data,
+    png_with_wrong_declared_height,
+)
 
 
 class MiscSolverTest(unittest.TestCase):
@@ -79,6 +84,28 @@ class MiscSolverTest(unittest.TestCase):
         self.assertEqual(summary["status"], "flag_found")
         self.assertEqual(summary["accepted_flags"], ["flag{extra_idat_stream}"])
         self.assertIn("idat_payloads", finding.evidence["image_stego"])
+
+    def test_misc_solver_recovers_rgb_lsb_png_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "lsb.png"
+            attachment.write_bytes(png_with_rgb_lsb_payload("&#x66;&#x6c;&#x61;&#x67;&#x7b;png_lsb&#x7d;"))
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="png-lsb-misc",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("png-lsb-misc")
+            finding = next(f for f in notebook.findings_for("png-lsb-misc") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{png_lsb}"])
+        self.assertIn("lsb_candidates", finding.evidence["image_stego"])
+        self.assertEqual(finding.evidence["image_stego"]["lsb_candidates"][0]["recipe"], "b1,rgb,lsb,xy")
 
     def test_misc_solver_recovers_steghide_flag_from_jpeg_with_hint_passphrase(self) -> None:
         original_extract = getattr(ctf, "steghide_extract", None)

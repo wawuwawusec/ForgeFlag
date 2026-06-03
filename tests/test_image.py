@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from forgeflag.image import analyze_image_stego_hints
-from tests.png_fixtures import png_with_extra_compressed_idat, png_with_text_and_trailing_data
+from tests.png_fixtures import png_with_extra_compressed_idat, png_with_rgb_lsb_payload, png_with_text_and_trailing_data
 
 
 class ImageAnalysisTest(unittest.TestCase):
@@ -97,6 +97,21 @@ class ImageAnalysisTest(unittest.TestCase):
         assert summary is not None
         self.assertIn("idat_payloads", summary)
         self.assertIn("flag{truncated_idat_stream}", summary["idat_payloads"][0]["text_preview"])
+
+    def test_png_stego_hints_extract_rgb_lsb_html_entity_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "lsb.png"
+            image.write_bytes(png_with_rgb_lsb_payload("&#x66;&#x6c;&#x61;&#x67;&#x7b;png_lsb&#x7d;"))
+
+            summary = analyze_image_stego_hints(image)
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertIn("lsb_candidates", summary)
+        candidate = summary["lsb_candidates"][0]
+        self.assertEqual(candidate["recipe"], "b1,rgb,lsb,xy")
+        self.assertIn("html_unescape", candidate["decoders"])
+        self.assertIn("flag{png_lsb}", candidate["flag_like_strings"])
 
 
 if __name__ == "__main__":

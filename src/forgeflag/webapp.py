@@ -1193,9 +1193,18 @@ INDEX_HTML = r"""<!doctype html>
       if (image) {
         const chunks = asList(image.chunks).map(chunk => `${chunk.type || "chunk"}:${chunk.size ?? "-"}`);
         const textChunks = asList(image.text_chunks).map(chunk => `${chunk.keyword || chunk.type || "text"}=${chunk.text_preview || ""}`);
+        const lsbCandidates = asList(image.lsb_candidates);
+        const lsbText = lsbCandidates.slice(0, 4).map(item => {
+          const flags = asList(item.flag_like_strings);
+          const decoders = asList(item.decoders);
+          const label = item.recipe || "LSB";
+          const value = flags[0] || item.text_preview || "";
+          return `${label}${decoders.length ? " -> " + decoders.join(" -> ") : ""}: ${value}`;
+        });
         parts.push(`<div><strong>image_stego 证据：</strong>
           <div class="meta">format=${escapeHtml(image.format || "image")}${chunks.length ? ` · chunks=${chunks.slice(0, 8).map(escapeHtml).join(", ")}` : ""}</div>
           ${textChunks.length ? `<div class="flag-list">${textChunks.slice(0, 5).map(item => `<span class="flag-chip">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+          ${lsbText.length ? `<div class="flag-list">${lsbText.map(item => `<span class="flag-chip">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
         </div>`);
       }
       return parts.join("");

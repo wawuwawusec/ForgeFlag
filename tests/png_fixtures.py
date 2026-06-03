@@ -64,3 +64,32 @@ def png_with_extra_compressed_idat(secret: str, *, truncated_length: bool = Fals
         + extra_chunk
         + chunk(b"IEND", b"")
     )
+
+
+def png_with_rgb_lsb_payload(payload: str, *, width: int = 64, height: int = 8) -> bytes:
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", binascii.crc32(kind + body) & 0xFFFFFFFF)
+
+    data = bytearray(bytes([254, 254, 254, 255]) * width * height)
+    bits = []
+    for byte in payload.encode("ascii") + b"\x00":
+        bits.extend((byte >> bit) & 1 for bit in range(8))
+    if len(bits) > width * height * 3:
+        raise ValueError("payload does not fit in RGB LSB capacity")
+    for offset, bit in enumerate(bits):
+        pixel = offset // 3
+        channel = offset % 3
+        index = pixel * 4 + channel
+        data[index] = (data[index] & 0xFE) | bit
+
+    rows = []
+    row_size = width * 4
+    for y in range(height):
+        rows.append(b"\x00" + bytes(data[y * row_size : (y + 1) * row_size]))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(b"".join(rows)))
+        + chunk(b"IEND", b"")
+    )

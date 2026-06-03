@@ -390,6 +390,7 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("routes_by_attachment", html)
         self.assertIn("tool_samples", html)
         self.assertIn("image_stego", html)
+        self.assertIn("lsb_candidates", html)
         self.assertIn("jpeg_stego_tools", html)
         self.assertIn("steghide_info", html)
         self.assertIn("stegseek_crack", html)
