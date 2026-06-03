@@ -100,6 +100,16 @@ def build_fixtures() -> dict[str, Path]:
     write_text("crypto_morse.txt", "..-. .-.. .- --. / -.-. .-. -.-- .--. - --- / -- --- .-. ... .")
     write_text("crypto_decimal.txt", " ".join(str(byte) for byte in b"flag{expanded_decimal}"))
     write_text("crypto_octal.txt", " ".join(format(byte, "o") for byte in b"flag{expanded_octal}"))
+    single_xor_plaintext = b"flag{expanded_single_xor}"
+    write_text("crypto_single_xor.txt", "single byte xor ciphertext = " + bytes(byte ^ 0x37 for byte in single_xor_plaintext).hex())
+    repeating_xor_plaintext = b"flag{expanded_repeating_xor}"
+    repeating_xor_key = b"ice"
+    write_text(
+        "crypto_repeating_xor.txt",
+        "key = ice\nct = "
+        + bytes(byte ^ repeating_xor_key[index % len(repeating_xor_key)] for index, byte in enumerate(repeating_xor_plaintext)).hex(),
+    )
+    write_text("crypto_vigenere.txt", "vigenere key = lemon\nvigenere ciphertext = qpmu{ritmbqph_hwtprqfr}\n")
     p, q, e = 2**127 - 1, 2**89 - 1, 65537
     n = p * q
     message = int.from_bytes(b"flag{expanded_rsa}", "big")
@@ -215,6 +225,9 @@ def expanded_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
         ("crypto_morse.txt", "flag{crypto_morse}", ["morse_decode"]),
         ("crypto_decimal.txt", "flag{expanded_decimal}", ["decimal_ascii_decode"]),
         ("crypto_octal.txt", "flag{expanded_octal}", ["octal_ascii_decode"]),
+        ("crypto_single_xor.txt", "flag{expanded_single_xor}", ["single_byte_xor"]),
+        ("crypto_repeating_xor.txt", "flag{expanded_repeating_xor}", ["repeating_key_xor"]),
+        ("crypto_vigenere.txt", "flag{expanded_vigenere}", ["vigenere"]),
         ("crypto_rsa.txt", "flag{expanded_rsa}", ["known_factors"]),
     ]:
         add(case(f"crypto-{Path(name).stem}", "crypto", "expanded", f"Crypto {name}", attachments=[fixtures[name]], expected_flag=expected, required_evidence=evidence, source_url=SOURCES["hacktricks_crypto"]))

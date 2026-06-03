@@ -19,6 +19,10 @@ class ExpandedCorpusScriptTest(unittest.TestCase):
         counts = Counter(case["category"] for case in cases)
         for category in ("web", "crypto", "forensics", "traffic", "reverse", "pwn", "misc"):
             self.assertGreaterEqual(counts[category], 10, category)
+        challenge_ids = {case["challenge_id"] for case in cases}
+        self.assertIn("expanded-crypto-crypto_single_xor", challenge_ids)
+        self.assertIn("expanded-crypto-crypto_repeating_xor", challenge_ids)
+        self.assertIn("expanded-crypto-crypto_vigenere", challenge_ids)
         self.assertGreaterEqual(len({case["source_url"] for case in cases}), 8)
         self.assertTrue(all(case["required_evidence"] for case in cases))
         self.assertTrue(any(case["expected_flag"] for case in cases))

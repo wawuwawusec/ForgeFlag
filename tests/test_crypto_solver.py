@@ -109,6 +109,45 @@ print(enc)
         self.assertEqual(finding.finding, "Recovered Python random XOR flag candidates")
         self.assertEqual(finding.evidence["python_random_xor"]["seed"], 3277)
 
+    def test_crypto_solver_recovers_common_xor_and_vigenere_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plaintext = b"flag{solver_single_xor}"
+            single_byte_ct = bytes(byte ^ 0x42 for byte in plaintext).hex()
+            repeating_plaintext = b"flag{solver_repeating_xor}"
+            repeating_key = b"ice"
+            repeating_ct = bytes(
+                byte ^ repeating_key[index % len(repeating_key)]
+                for index, byte in enumerate(repeating_plaintext)
+            ).hex()
+            attachment = root / "xor-vigenere.txt"
+            attachment.write_text(
+                f"single byte xor ciphertext = {single_byte_ct}\n"
+                f"key = ice\nct = {repeating_ct}\n"
+                "vigenere key = lemon\nvigenere ciphertext = qpmu{itkqbrci}\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-xor-vigenere",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-xor-vigenere")
+            finding = next(f for f in notebook.findings_for("crypto-xor-vigenere") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertIn("flag{solver_single_xor}", summary["accepted_flags"])
+        self.assertIn("flag{solver_repeating_xor}", summary["accepted_flags"])
+        self.assertIn("flag{vigenere}", summary["accepted_flags"])
+        self.assertEqual(finding.finding, "Recovered classical crypto flag candidates")
+        self.assertIn("single_byte_xor", finding.evidence)
+        self.assertIn("repeating_key_xor", finding.evidence)
+        self.assertIn("vigenere", finding.evidence)
+
     def test_crypto_solver_records_hash_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")

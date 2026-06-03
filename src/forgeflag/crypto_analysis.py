@@ -13,6 +13,11 @@ PRIVATE_KEY_MARKERS = ("-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KE
 PY_RANDOM_RANDINT_PATTERN = re.compile(r"random\.randint\(\s*([0-9*+\-\s]+)\s*,\s*([0-9*+\-\s]+)\s*\)")
 PY_RANDOM_BITS_PATTERN = re.compile(r"random\.getrandbits\(\s*(\d{1,5})\s*\)")
 LARGE_DECIMAL_PATTERN = re.compile(r"\b\d{8,}\b")
+HEX_CIPHERTEXT_PATTERN = re.compile(
+    r"(?im)^\s*(?:ciphertext|cipher|ct|enc|encrypted|single byte xor ciphertext)\s*[:=]\s*([0-9a-f]{8,})\s*$"
+)
+KEY_PATTERN = re.compile(r"(?im)^\s*(?:key|xor_key|vigenere key)\s*[:=]\s*['\"]?([A-Za-z0-9_{}-]{1,64})['\"]?\s*$")
+VIGENERE_PATTERN = re.compile(r"(?im)^\s*(?:vigenere\s+)?(?:ciphertext|cipher|ct)\s*[:=]\s*([A-Za-z{}_-]{8,})\s*$")
 
 
 def rsa_summary_from_text(text: str) -> dict[str, object]:
@@ -106,6 +111,82 @@ def recover_python_random_xor_flags_from_text(text: str) -> dict[str, object]:
     return {"method": "python_random_xor", "flags": [], "seed": None, "key_bits": key_bits, "plaintext_preview": ""}
 
 
+def recover_single_byte_xor_flags_from_text(text: str) -> dict[str, object]:
+    if "xor" not in text.lower():
+        return {"method": "single_byte_xor", "flags": [], "key": None, "plaintext_preview": ""}
+    best: dict[str, object] = {"method": "single_byte_xor", "flags": [], "key": None, "plaintext_preview": ""}
+    for ciphertext in _hex_ciphertexts(text):
+        data = bytes.fromhex(ciphertext)
+        for key in range(256):
+            plaintext = bytes(byte ^ key for byte in data)
+            preview = plaintext.decode("utf-8", errors="ignore")
+            flags = list(extract_flags(preview))
+            if flags:
+                return {
+                    "method": "single_byte_xor",
+                    "flags": flags,
+                    "key": f"0x{key:02x}",
+                    "ciphertext": ciphertext,
+                    "plaintext_preview": preview[:500],
+                }
+            score = _englishish_score(preview)
+            if score > int(best.get("score", 0)):
+                best = {
+                    "method": "single_byte_xor",
+                    "flags": [],
+                    "key": f"0x{key:02x}",
+                    "ciphertext": ciphertext,
+                    "plaintext_preview": preview[:500],
+                    "score": score,
+                }
+    best.pop("score", None)
+    return best
+
+
+def recover_repeating_key_xor_flags_from_text(text: str) -> dict[str, object]:
+    keys = _declared_keys(text)
+    if not keys:
+        return {"method": "repeating_key_xor", "flags": [], "key": None, "plaintext_preview": ""}
+    for ciphertext in _hex_ciphertexts(text):
+        data = bytes.fromhex(ciphertext)
+        for key_text in keys:
+            key = key_text.encode("utf-8")
+            if not key:
+                continue
+            plaintext = bytes(byte ^ key[index % len(key)] for index, byte in enumerate(data))
+            preview = plaintext.decode("utf-8", errors="ignore")
+            flags = list(extract_flags(preview))
+            if flags:
+                return {
+                    "method": "repeating_key_xor",
+                    "flags": flags,
+                    "key": key_text,
+                    "ciphertext": ciphertext,
+                    "plaintext_preview": preview[:500],
+                }
+    return {"method": "repeating_key_xor", "flags": [], "key": keys[0], "plaintext_preview": ""}
+
+
+def recover_vigenere_flags_from_text(text: str) -> dict[str, object]:
+    keys = _declared_keys(text)
+    if not keys:
+        return {"method": "vigenere", "flags": [], "key": None, "plaintext_preview": ""}
+    ciphertexts = [match.group(1).strip() for match in VIGENERE_PATTERN.finditer(text)]
+    for ciphertext in ciphertexts:
+        for key in keys:
+            plaintext = _vigenere_decrypt(ciphertext, key)
+            flags = list(extract_flags(plaintext))
+            if flags:
+                return {
+                    "method": "vigenere",
+                    "flags": flags,
+                    "key": key,
+                    "ciphertext": ciphertext,
+                    "plaintext_preview": plaintext[:500],
+                }
+    return {"method": "vigenere", "flags": [], "key": keys[0], "plaintext_preview": ""}
+
+
 def _rsa_hints(parameters: dict[str, str], has_public_key: bool, has_private_key: bool) -> list[str]:
     hints: list[str] = []
     if {"n", "e", "c"}.issubset(parameters):
@@ -182,6 +263,55 @@ def _large_decimal_values(text: str) -> list[int]:
         if value not in values:
             values.append(value)
     return values[:20]
+
+
+def _hex_ciphertexts(text: str) -> list[str]:
+    values: list[str] = []
+    for match in HEX_CIPHERTEXT_PATTERN.finditer(text):
+        value = match.group(1).strip().lower()
+        if len(value) % 2 == 0 and value not in values:
+            values.append(value)
+    return values[:20]
+
+
+def _declared_keys(text: str) -> list[str]:
+    keys: list[str] = []
+    for match in KEY_PATTERN.finditer(text):
+        key = match.group(1).strip()
+        if key and key.lower() not in {"none", "unknown"} and key not in keys:
+            keys.append(key)
+    return keys[:10]
+
+
+def _vigenere_decrypt(ciphertext: str, key: str) -> str:
+    if not key:
+        return ciphertext
+    key_offsets = [ord(char.lower()) - ord("a") for char in key if char.isalpha()]
+    if not key_offsets:
+        return ciphertext
+    plaintext: list[str] = []
+    key_index = 0
+    for char in ciphertext:
+        if "a" <= char <= "z":
+            shift = key_offsets[key_index % len(key_offsets)]
+            plaintext.append(chr((ord(char) - ord("a") - shift) % 26 + ord("a")))
+            key_index += 1
+        elif "A" <= char <= "Z":
+            shift = key_offsets[key_index % len(key_offsets)]
+            plaintext.append(chr((ord(char) - ord("A") - shift) % 26 + ord("A")))
+            key_index += 1
+        else:
+            plaintext.append(char)
+    return "".join(plaintext)
+
+
+def _englishish_score(text: str) -> int:
+    if not text:
+        return 0
+    common = " etaoinshrdluflag{}_-"
+    printable = sum(1 for char in text if char.isprintable() or char.isspace())
+    common_chars = sum(1 for char in text.lower() if char in common)
+    return printable + common_chars
 
 
 def _safe_int_expr(value: str) -> int | None:

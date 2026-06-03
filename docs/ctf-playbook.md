@@ -175,6 +175,7 @@ ForgeFlag coverage today:
 
 - Transform chaining handles common reversible encodings.
 - Transform chaining now includes Caesar all-rotation search, Morse, and decimal/octal ASCII in addition to hex, Base32/Base64, binary ASCII, ROT13, URL, and HTML entity decoding.
+- CryptoSolver recovers single-byte XOR, supplied-key repeating XOR, and supplied-key Vigenere flags when ciphertext/key evidence is present.
 - RSA and hash triage are structured.
 - The corpus smoke includes Base32 decoding and verifies the generated CTF write-up.
 - PNG misc/stego triage should inspect abnormal extra IDAT chunks as possible independent zlib payloads; truncated length fields can still carry recoverable flag text.
@@ -283,12 +284,12 @@ scripts/forgeflag-control start
 scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --keep --strict
 ```
 
-The expanded benchmark generates safe local fixtures from public CTF writeup patterns instead of vendoring original challenge archives. It currently covers 70 cases: Web, Crypto, Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases. The current strict result is 70/70 through the Web API.
+The expanded benchmark generates safe local fixtures from public CTF writeup patterns instead of vendoring original challenge archives. It currently covers 73 cases: Web, Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases; Crypto has 13 cases. The current strict result is 73/73 through the Web API.
 
 ## Gaps To Add Next
 
 - Web: API option leakage, robots.txt discovery, simple form capture, and SSRF/path traversal evidence.
-- Crypto: Vigenere/substitution hints, XOR cribbing, and RSA solve-script generation.
+- Crypto: unknown-key Vigenere/substitution hints, XOR cribbing, and RSA solve-script generation.
 - Misc: small scripting puzzle harnesses and sandbox/pickle blackbox notes.
 - Forensics: zip-with-comment/password hint, PNG/JPEG visual preview, and disk image timeline fixtures.
 - Traffic: DNS label reconstruction across multiple packets, TXT extraction, HTTP object export, SMTP/FTP exfil, and stream reassembly.

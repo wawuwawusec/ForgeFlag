@@ -3,8 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from forgeflag.crypto_analysis import (
+    recover_repeating_key_xor_flags_from_text,
     recover_python_random_xor_flags_from_text,
     recover_rsa_flags_from_text,
+    recover_single_byte_xor_flags_from_text,
+    recover_vigenere_flags_from_text,
     rsa_summary_from_text,
 )
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
@@ -89,6 +92,26 @@ class CryptoSolver:
             context.notebook.add_finding(finding)
             return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
 
+        classical_recovery = _classical_crypto_recovery(text)
+        if classical_recovery["flags"]:
+            finding = Finding(
+                challenge_id=context.challenge.challenge_id,
+                solver=self.name,
+                finding="Recovered classical crypto flag candidates",
+                evidence=classical_recovery,
+                hypothesis="Classical XOR/Vigenere recovery produced flag-like plaintext from supplied ciphertext/key evidence.",
+                confidence=0.84,
+                next_action="Send recovered candidates to Verifier and preserve the ciphertext, key, and method evidence for replay.",
+            )
+            context.notebook.add_finding(finding)
+            return SolverResult(
+                self.name,
+                context.challenge.challenge_id,
+                "flag_candidate",
+                (finding,),
+                tuple(str(flag) for flag in classical_recovery["flags"]),
+            )
+
         candidates = transform_candidates(text)
         flags = extract_flags("\n".join(candidate.value for candidate in candidates))
         if candidates:
@@ -155,6 +178,21 @@ def _text_inputs(context: SolverContext) -> list[str]:
             continue
         values.append(raw.decode("utf-8", errors="ignore"))
     return [value for value in values if value.strip()]
+
+
+def _classical_crypto_recovery(text: str) -> dict[str, object]:
+    recoveries = {
+        "single_byte_xor": recover_single_byte_xor_flags_from_text(text),
+        "repeating_key_xor": recover_repeating_key_xor_flags_from_text(text),
+        "vigenere": recover_vigenere_flags_from_text(text),
+    }
+    flags: list[str] = []
+    for recovery in recoveries.values():
+        flags.extend(str(flag) for flag in recovery.get("flags", []))
+    return {
+        **recoveries,
+        "flags": list(dict.fromkeys(flags)),
+    }
 
 
 def _primitive_misuse_pattern(text: str) -> dict[str, object] | None:

@@ -58,6 +58,7 @@ Implemented so far:
   - `forgeflag.crypto_analysis.rsa_summary_from_text`
   - extracts common RSA parameters (`n`, `e`, `c`, `p`, `q`, `d`, `phi`) and PEM key markers
   - `CryptoSolver` records RSA hints and recommends RsaCtfTool/SageMath/Z3 follow-up
+  - `CryptoSolver` recovers common classical crypto flags for single-byte XOR, supplied-key repeating XOR, and supplied-key Vigenere
 - Hash/password triage:
   - `forgeflag.hash_analysis.hash_summary_from_text`
   - fingerprints common MD5/NTLM-length, SHA1, SHA256, bcrypt, and sha512crypt candidates
@@ -136,8 +137,8 @@ Implemented so far:
 - Web-run expanded CTF corpus benchmark:
   - `scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeups, forums, challenge indexes, and benchmark papers
-  - Covers 70 cases total: Web, Crypto, Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases
-  - Current strict result: 70/70 full score through the Web API
+  - Covers 73 cases total: Web, Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases; Crypto has 13 cases
+  - Current strict result: 73/73 full score through the Web API
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category

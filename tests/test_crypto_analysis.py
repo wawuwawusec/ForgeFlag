@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from forgeflag.crypto_analysis import recover_python_random_xor_flags_from_text, recover_rsa_flags_from_text, rsa_summary_from_text
+from forgeflag.crypto_analysis import (
+    recover_python_random_xor_flags_from_text,
+    recover_repeating_key_xor_flags_from_text,
+    recover_rsa_flags_from_text,
+    recover_single_byte_xor_flags_from_text,
+    recover_vigenere_flags_from_text,
+    rsa_summary_from_text,
+)
 
 
 class CryptoAnalysisTest(unittest.TestCase):
@@ -55,6 +62,34 @@ print(enc)
         self.assertEqual(result["flags"], ["flag{just_a_seed}"])
         self.assertEqual(result["seed"], 3277)
         self.assertEqual(result["key_bits"], 150)
+
+    def test_recover_single_byte_xor_flag_from_hex_ciphertext(self) -> None:
+        plaintext = b"flag{single_byte_xor}"
+        ciphertext = bytes(byte ^ 0x37 for byte in plaintext).hex()
+
+        result = recover_single_byte_xor_flags_from_text(f"single byte xor ciphertext = {ciphertext}\n")
+
+        self.assertEqual(result["flags"], ["flag{single_byte_xor}"])
+        self.assertEqual(result["key"], "0x37")
+        self.assertEqual(result["method"], "single_byte_xor")
+
+    def test_recover_repeating_key_xor_flag_when_key_is_given(self) -> None:
+        plaintext = b"flag{repeating_xor}"
+        key = b"ice"
+        ciphertext = bytes(byte ^ key[index % len(key)] for index, byte in enumerate(plaintext)).hex()
+
+        result = recover_repeating_key_xor_flags_from_text(f"key = ice\nct = {ciphertext}\n")
+
+        self.assertEqual(result["flags"], ["flag{repeating_xor}"])
+        self.assertEqual(result["key"], "ice")
+        self.assertEqual(result["method"], "repeating_key_xor")
+
+    def test_recover_vigenere_flag_when_key_is_given(self) -> None:
+        result = recover_vigenere_flags_from_text("key = lemon\nciphertext = qpmu{itkqbrci}\n")
+
+        self.assertEqual(result["flags"], ["flag{vigenere}"])
+        self.assertEqual(result["key"], "lemon")
+        self.assertEqual(result["method"], "vigenere")
 
 
 if __name__ == "__main__":
