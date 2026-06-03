@@ -153,7 +153,7 @@ Implemented so far:
 - Browser-player Web UI benchmark:
   - `scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run`
   - Uses Playwright to operate the visible Web UI like a human player: save challenge, upload attachments, run, inspect Summary, inspect Write-up, and delete cleanup challenges
-  - Current first-pass result: 3/3 cases passed through the browser for Web text, Crypto attachment upload, and Misc attachment upload
+  - Current first-pass result: 7/7 cases passed through the browser for Web, Crypto, Misc, Forensics, Traffic, Reverse, and Pwn
   - Setup is documented in `docs/web-player-benchmark.md`
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
@@ -202,8 +202,8 @@ Current local setup after migration:
   - Docker wrappers: `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`
   - hashcat is installed, but current OrbStack runtime does not expose an OpenCL/CUDA device, so cracking smoke skips hashcat device execution
   - `ToolRunner` automatically reads `.forgeflag/docker.env` when explicit Docker tool environment variables are unset, so direct CLI/Web runs show the same Docker fallback inventory as `scripts/forgeflag-control`
-- Tests passed: 216 tests OK
-- Browser-player benchmark passed: 3/3 Web UI flows OK
+- Tests passed: 221 tests OK
+- Browser-player benchmark passed: 7/7 Web UI flows OK
 
 Useful commands:
 

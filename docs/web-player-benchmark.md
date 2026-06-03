@@ -41,13 +41,17 @@ scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --case 
 
 ## Current Cases
 
-The first browser-player set is intentionally small and checks UI plumbing before hard challenge quality:
+The browser-player set checks UI plumbing and category-specific solving through the same controls a human uses:
 
 | Case | Category | Flow |
 | --- | --- | --- |
 | `player-web-visible` | Web | typed prompt with visible flag |
 | `player-crypto-base32` | Crypto | attachment upload plus Base32 decode |
 | `player-misc-binary` | Misc | attachment upload plus binary ASCII decode |
+| `player-forensics-strings` | Forensics | binary artifact upload plus strings triage |
+| `player-traffic-http` | Traffic | PCAP upload plus HTTP payload recovery |
+| `player-reverse-static` | Reverse | binary artifact upload plus static strings |
+| `player-pwn-strings` | Pwn | pwn artifact upload plus local strings/checksec triage |
 
 ## Scoring Intent
 
@@ -57,6 +61,7 @@ The benchmark checks:
 - `category_correct`: the challenge was submitted with the intended category through the Web UI.
 - `human_ui_flow`: the player used visible Web controls for save, run, Summary, and Write-up.
 - `writeup_reproducible`: the Write-up tab includes solving idea and reproduction steps.
+- `agent_route_correct`: the Agent tab shows the expected ForgeFlag subagent identities for the category.
 - `no_ui_error`: the page did not surface an error state during the browser flow.
 
 This is the starting point for a dedicated browser-player agent. Future expansions should add medium and hard fixtures per category, with LLM-enabled and deterministic-only variants, so ForgeFlag can be evaluated from the same interface a real CTF player uses.

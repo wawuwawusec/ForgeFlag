@@ -20,11 +20,11 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
         self.assertIn("writeup_reproducible", payload["scores"])
         self.assertIn("agent_route_correct", payload["scores"])
         cases = payload["cases"]
-        self.assertGreaterEqual(len(cases), 3)
+        self.assertGreaterEqual(len(cases), 7)
         self.assertTrue(all(case["via"] == "web_ui" for case in cases))
         self.assertTrue(all(case["expected_agents"] for case in cases))
-        self.assertTrue(any(case["category"] == "web" for case in cases))
-        self.assertTrue(any(case["category"] == "crypto" for case in cases))
+        categories = {case["category"] for case in cases}
+        self.assertTrue({"web", "crypto", "forensics", "traffic", "reverse", "pwn", "misc"}.issubset(categories))
         self.assertTrue(any(case["llm_enabled"] is False for case in cases))
 
 

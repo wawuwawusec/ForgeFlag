@@ -4,10 +4,13 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import socket
 import shutil
+import struct
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 
@@ -69,6 +72,22 @@ def build_fixtures() -> dict[str, Path]:
     misc.write_text(" ".join(f"{byte:08b}" for byte in b"flag{player_misc_binary}"), encoding="utf-8")
     fixtures["misc"] = misc
 
+    forensic = WORKDIR / "player-forensics-strings.bin"
+    forensic.write_bytes(b"\x00browser-player forensic artifact\x00flag{player_forensics_strings}\x00")
+    fixtures["forensics"] = forensic
+
+    traffic = WORKDIR / "player-traffic-http.pcap"
+    write_http_pcap(traffic, b"GET /flag HTTP/1.1\r\nHost: player.test\r\n\r\nflag{player_traffic_http}\n")
+    fixtures["traffic"] = traffic
+
+    reverse = WORKDIR / "player-reverse-static.bin"
+    reverse.write_bytes(b"\x7fELF browser-player reverse sample\x00flag{player_reverse_static}\x00")
+    fixtures["reverse"] = reverse
+
+    pwn = WORKDIR / "player-pwn-strings.bin"
+    pwn.write_bytes(b"\x7fELF browser-player pwn sample\x00puts\x00gets\x00flag{player_pwn_strings}\x00")
+    fixtures["pwn"] = pwn
+
     return fixtures
 
 
@@ -111,6 +130,58 @@ def browser_player_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "active_probe": False,
             "llm_enabled": False,
             "expected_agents": ["ChallengeTriageAgent", "CryptoMathAgent", "ForensicsAgent", "EvidenceJudgeAgent"],
+            "via": "web_ui",
+        },
+        {
+            "challenge_id": "player-forensics-strings",
+            "category": "forensics",
+            "title": "Browser Player Forensics strings",
+            "description": "Triage the uploaded forensic artifact and recover the printable flag.",
+            "target": "",
+            "attachments": [fixtures["forensics"]],
+            "expected_flag": "flag{player_forensics_strings}",
+            "active_probe": False,
+            "llm_enabled": False,
+            "expected_agents": ["ChallengeTriageAgent", "ForensicsAgent", "EvidenceJudgeAgent"],
+            "via": "web_ui",
+        },
+        {
+            "challenge_id": "player-traffic-http",
+            "category": "traffic",
+            "title": "Browser Player Traffic HTTP",
+            "description": "Analyze the uploaded PCAP and recover the HTTP payload flag.",
+            "target": "",
+            "attachments": [fixtures["traffic"]],
+            "expected_flag": "flag{player_traffic_http}",
+            "active_probe": False,
+            "llm_enabled": False,
+            "expected_agents": ["ChallengeTriageAgent", "TrafficAgent", "ForensicsAgent", "EvidenceJudgeAgent"],
+            "via": "web_ui",
+        },
+        {
+            "challenge_id": "player-reverse-static",
+            "category": "reverse",
+            "title": "Browser Player Reverse static string",
+            "description": "Inspect the uploaded reverse artifact for static flag strings.",
+            "target": "",
+            "attachments": [fixtures["reverse"]],
+            "expected_flag": "flag{player_reverse_static}",
+            "active_probe": False,
+            "llm_enabled": False,
+            "expected_agents": ["ChallengeTriageAgent", "BinaryAgent", "EvidenceJudgeAgent"],
+            "via": "web_ui",
+        },
+        {
+            "challenge_id": "player-pwn-strings",
+            "category": "pwn",
+            "title": "Browser Player Pwn strings",
+            "description": "Run local pwn triage and recover the flag-like token from strings output.",
+            "target": "",
+            "attachments": [fixtures["pwn"]],
+            "expected_flag": "flag{player_pwn_strings}",
+            "active_probe": False,
+            "llm_enabled": False,
+            "expected_agents": ["ChallengeTriageAgent", "BinaryAgent", "EvidenceJudgeAgent"],
             "via": "web_ui",
         },
     ]
@@ -227,6 +298,41 @@ def _playwright_spec(base_url: str, cases: list[dict[str, object]], keep: bool) 
         }});
         """
     ).strip() + "\n"
+
+
+def write_http_pcap(path: Path, payload: bytes) -> None:
+    packet = ethernet_frame(ipv4_packet(tcp_segment(payload)))
+    with path.open("wb") as handle:
+        handle.write(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
+        handle.write(struct.pack("<IIII", int(time.time()), 0, len(packet), len(packet)))
+        handle.write(packet)
+
+
+def ethernet_frame(payload: bytes) -> bytes:
+    return b"\xaa\xaa\xaa\xaa\xaa\xaa" + b"\xbb\xbb\xbb\xbb\xbb\xbb" + b"\x08\x00" + payload
+
+
+def ipv4_packet(payload: bytes) -> bytes:
+    src = socket.inet_aton("10.0.0.2")
+    dst = socket.inet_aton("10.0.0.3")
+    total_length = 20 + len(payload)
+    header = struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 6, 0, src, dst)
+    checksum = internet_checksum(header)
+    return struct.pack("!BBHHHBBH4s4s", 0x45, 0, total_length, 1, 0x4000, 64, 6, checksum, src, dst) + payload
+
+
+def tcp_segment(payload: bytes) -> bytes:
+    data_offset_and_flags = (5 << 12) | 0x18
+    return struct.pack("!HHIIHHHH", 4444, 80, 1, 1, data_offset_and_flags, 8192, 0, 0) + payload
+
+
+def internet_checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\x00"
+    total = sum(struct.unpack("!%dH" % (len(data) // 2), data))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
 
 
 if __name__ == "__main__":
