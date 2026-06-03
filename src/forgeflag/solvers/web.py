@@ -80,7 +80,12 @@ class WebSolver:
         tool_result = HttpProbeTool(context.scope).run(challenge.target)
         context.notebook.add_tool_result(challenge.challenge_id, tool_result)
         sample = str(tool_result.raw.get("sample", ""))
-        flags = extract_flags(sample)
+        response_headers = tool_result.raw.get("headers") if isinstance(tool_result.raw.get("headers"), dict) else {}
+        header_text = _response_metadata_text(response_headers)
+        set_cookie_names = tool_result.raw.get("set_cookie_names")
+        if not isinstance(set_cookie_names, list):
+            set_cookie_names = []
+        flags = tuple(dict.fromkeys((*extract_flags(sample), *extract_flags(header_text))))
         flag_candidates.extend(flags)
 
         html = summarize_html(sample)
@@ -93,6 +98,8 @@ class WebSolver:
                 "tool_status": tool_result.status,
                 "tool_evidence": tool_result.evidence,
                 "response_sample": sample[:500],
+                "response_headers": response_headers,
+                "set_cookie_names": set_cookie_names,
                 "chain_hints": _chain_hints(sample),
                 "html": html.as_evidence(),
                 "flag_candidates": list(flags),
@@ -146,6 +153,12 @@ class WebSolver:
             findings=tuple(findings),
             flag_candidates=tuple(dict.fromkeys(flag_candidates)),
         )
+
+
+def _response_metadata_text(headers: object) -> str:
+    if not isinstance(headers, dict):
+        return ""
+    return "\n".join(f"{name}: {value}" for name, value in headers.items())
 
 
 def _web_hypothesis(html: HtmlSummary, flags: tuple[str, ...]) -> str:

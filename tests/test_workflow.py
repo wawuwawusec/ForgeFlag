@@ -86,6 +86,21 @@ class PlainTextPortalHandler(BaseHTTPRequestHandler):
         return
 
 
+class HeaderCookieFlagHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        body = b"<!doctype html><title>Header Only</title><p>inspect response metadata</p>"
+        self.send_response(200)
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("X-Flag-Hint", "flag{header_cookie_web}")
+        self.send_header("Set-Cookie", "session=flag{header_cookie_web}; HttpOnly; Path=/")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
 class WorkflowTest(unittest.TestCase):
     def test_manager_records_recon_and_web_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,6 +207,38 @@ class WorkflowTest(unittest.TestCase):
         web_finding = next(f for f in findings if f.finding == "Analyzed scoped HTTP response structure")
         self.assertEqual(web_finding.evidence["html"]["title"], "ForgeFlag Test")
         self.assertEqual(web_finding.evidence["html"]["forms"][0]["method"], "post")
+
+    def test_web_solver_extracts_header_cookie_flags(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), HeaderCookieFlagHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            target = f"http://127.0.0.1:{server.server_port}/"
+            with tempfile.TemporaryDirectory() as tmp:
+                notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+                notebook.add_challenge(
+                    Challenge(
+                        challenge_id="web-header-cookie-flag",
+                        category=ChallengeCategory.WEB,
+                        target=target,
+                    )
+                )
+
+                summary = Manager(
+                    notebook,
+                    RunConfig(active_probe=True, allowed_hosts=("127.0.0.1",)),
+                ).run_challenge("web-header-cookie-flag")
+                findings = notebook.findings_for("web-header-cookie-flag")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{header_cookie_web}"])
+        web_finding = next(f for f in findings if f.finding == "Analyzed scoped HTTP response structure")
+        self.assertIn("X-Flag-Hint", web_finding.evidence["response_headers"])
+        self.assertEqual(web_finding.evidence["set_cookie_names"], ["session"])
+        self.assertIn("flag{header_cookie_web}", web_finding.evidence["flag_candidates"])
 
     def test_web_solver_follows_scoped_visible_links_for_flags(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), LinkedFlagHandler)

@@ -1312,6 +1312,7 @@ INDEX_HTML = r"""<!doctype html>
       const res = await api("/api/challenges", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(payload) });
       state.selected = payload.challenge_id;
       state.activeCategory = payload.category || state.activeCategory;
+      state.activeStatus = "all";
       show(res, "raw");
       await refresh();
       return res;

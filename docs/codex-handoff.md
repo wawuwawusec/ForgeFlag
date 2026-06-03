@@ -67,6 +67,7 @@ Implemented so far:
 - Scoped WebSolver workflow:
   - allowlist-gated HTTP probing
   - HTML title/link/form parsing
+  - bounded response header and `Set-Cookie` capture, with flag extraction from headers/cookies
   - source attachment route extraction for common Flask/FastAPI/Express/Django/Laravel-style route declarations
   - source-derived bug-class hints for API option leakage, JWT/session, SSRF, and path traversal sinks
   - low-budget `ffuf` route discovery only when active probing and allowed-host scope are enabled
@@ -137,8 +138,8 @@ Implemented so far:
 - Web-run expanded CTF corpus benchmark:
   - `scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeups, forums, challenge indexes, and benchmark papers
-  - Covers 73 cases total: Web, Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases; Crypto has 13 cases
-  - Current strict result: 73/73 full score through the Web API
+  - Covers 74 cases total: Web has 11 cases, Crypto has 13 cases, and Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases
+  - Current strict result: 74/74 full score through the Web API
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category
@@ -186,7 +187,7 @@ Current local setup after migration:
   - Docker wrappers: `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`
   - hashcat is installed, but current OrbStack runtime does not expose an OpenCL/CUDA device, so cracking smoke skips hashcat device execution
   - `ToolRunner` automatically reads `.forgeflag/docker.env` when explicit Docker tool environment variables are unset, so direct CLI/Web runs show the same Docker fallback inventory as `scripts/forgeflag-control`
-- Tests passed: 203 tests OK
+- Tests passed: 204 tests OK
 
 Useful commands:
 

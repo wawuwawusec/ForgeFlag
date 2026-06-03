@@ -36,11 +36,11 @@ scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --llm --keep
 
 ## Current Coverage
 
-The current expanded corpus has 73 cases:
+The current expanded corpus has 74 cases:
 
 | Category | Cases | Pattern Families |
 | --- | ---: | --- |
-| Web | 10 | visible flags, linked routes, script API routes, LFI chain hints, forms, hidden JS routes, source routes, JWT/session, SSRF, path traversal |
+| Web | 11 | visible flags, linked routes, script API routes, response header/cookie flags, LFI chain hints, forms, hidden JS routes, source routes, JWT/session, SSRF, path traversal |
 | Crypto | 13 | hex, Base32, Base64, binary ASCII, ROT13, Caesar, Morse, decimal ASCII, octal ASCII, single-byte XOR, repeating-key XOR with supplied key, Vigenere with supplied key, RSA known factors |
 | Forensics | 10 | strings, zip preview, PNG text, PNG trailing data, JPEG comment, encoded log content, binary artifact strings |
 | Traffic | 10 | HTTP payloads, DNS exfil labels, SMTP streams |
@@ -57,6 +57,6 @@ scripts/forgeflag-control restart
 scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --keep --strict
 ```
 
-Result: 73/73 cases reached full score through the Web API.
+Result: 74/74 cases reached full score through the Web API.
 
 The run also verified the Web UI state after upload: the local page at `http://127.0.0.1:8080/` showed the expanded benchmark challenges in the challenge list after the Web API run.
