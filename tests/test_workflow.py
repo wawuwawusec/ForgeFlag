@@ -567,6 +567,46 @@ class WorkflowTest(unittest.TestCase):
 
         self.assertEqual([row["solver"] for row in summary["solvers"]], ["ReconSolver"])
 
+    def test_manager_records_pwn_exploit_writeup_without_flag(self) -> None:
+        class FakePwn:
+            name = "PwnSolver"
+            supported_categories = {ChallengeCategory.PWN}
+
+            def solve(self, context: SolverContext) -> SolverResult:
+                finding = Finding(
+                    challenge_id=context.challenge.challenge_id,
+                    solver=self.name,
+                    finding="Found FTP heap format string shell path",
+                    evidence={
+                        "workflow_guess": "ftp_heap_format_string",
+                        "exploit_plan": {
+                            "workflow": "ftp_heap_format_string",
+                            "login_input": "rxraclhm",
+                            "format_offset": 7,
+                        },
+                    },
+                    confidence=0.86,
+                )
+                context.notebook.add_finding(finding)
+                return SolverResult(self.name, context.challenge.challenge_id, "ok", findings=(finding,))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="pwn-shell-only",
+                    category=ChallengeCategory.PWN,
+                    attachment_paths=("/tmp/2016-CCTF-pwn3",),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig(), solvers=[FakePwn()]).run_challenge("pwn-shell-only")
+
+        self.assertEqual(summary["accepted_flags"], [])
+        script = summary["replay_report"]["writeup"]["exploit_script"]["content"]
+        self.assertIn("LOGIN_INPUT = b\"rxraclhm\"", script)
+        self.assertIn("io.interactive()", script)
+
 
 if __name__ == "__main__":
     unittest.main()

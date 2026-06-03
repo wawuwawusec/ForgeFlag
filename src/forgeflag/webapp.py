@@ -544,6 +544,7 @@ INDEX_HTML = r"""<!doctype html>
     .writeup-section-body { margin: 0; line-height: 1.65; color: #2f3b43; }
     .writeup-section-body:empty { display: none; }
     .writeup-section .steps li { margin: 8px 0; line-height: 1.55; }
+    .writeup-code { margin: 12px 0 0; max-height: 520px; overflow: auto; border: 1px solid #d7e1e8; border-radius: 8px; background: #0f1720; color: #e8f1f8; padding: 14px; line-height: 1.45; font-size: 12px; }
     .tab-intro { border: 1px solid #cfe4dc; border-radius: 6px; background: #f2faf7; color: #24463d; padding: 10px 12px; font-size: 13px; }
     .tab-intro strong { display: block; margin-bottom: 3px; color: var(--ink); }
     .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; flex-wrap: wrap; }
@@ -1535,6 +1536,7 @@ INDEX_HTML = r"""<!doctype html>
     function renderWriteupReport(data) {
       const writeup = data.writeup || {};
       const sections = orderedWriteupSections(asList(writeup.sections));
+      const exploit = writeup.exploit_script || null;
       return `
         ${sections.map(section => `
           <div class="result-card writeup-section">
@@ -1546,6 +1548,16 @@ INDEX_HTML = r"""<!doctype html>
             <p class="writeup-section-body">${escapeHtml(section.body || "")}</p>
             ${asList(section.steps).length ? `<ol class="steps">${section.steps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}
           </div>`).join("")}
+        ${exploit && exploit.content ? `
+          <div class="result-card writeup-section">
+            <div class="card-head">
+              <div class="card-title">
+                <h3>Exploit 脚本</h3>
+                <div class="meta">${escapeHtml(exploit.filename || "exploit.py")}</div>
+              </div>
+            </div>
+            <pre class="writeup-code"><code>${escapeHtml(exploit.content)}</code></pre>
+          </div>` : ""}
         ${sections.length ? "" : `<div class="empty-state">还没有可展示的解题思路和复现步骤。</div>`}`;
     }
     function orderedWriteupSections(sections) {

@@ -264,6 +264,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("推荐集成的 CTF 项目目录", html)
         self.assertIn("解题思路", html)
         self.assertIn("复现步骤", html)
+        self.assertIn("Exploit 脚本", html)
+        self.assertIn("writeup-code", html)
         self.assertNotIn('const writeupSectionOrder = ["结论"', html)
         self.assertNotIn("Write-up Markdown", html)
         self.assertNotIn("关键证据", html)

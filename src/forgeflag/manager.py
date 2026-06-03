@@ -132,7 +132,8 @@ class Manager:
         status = "flag_found" if verification.accepted else "completed"
         roster_solver_names = [solver.name for solver in selected]
         roster_solver_names.append("Verifier")
-        if verification.accepted:
+        has_replay_material = bool(verification.accepted) or _has_pwn_exploit_plan(findings)
+        if has_replay_material:
             roster_solver_names.append("ReportBuilder")
         summary = {
             "challenge_id": challenge_id,
@@ -147,7 +148,7 @@ class Manager:
             "observations": len(self.notebook.observations_for(challenge_id)),
             "harness": harness.summary(),
         }
-        if verification.accepted:
+        if has_replay_material:
             summary["replay_report"] = self.report_builder.build(
                 challenge_id,
                 verification.accepted,
@@ -155,7 +156,7 @@ class Manager:
                 self.notebook.observations_for(challenge_id),
                 challenge=challenge,
             )
-        else:
+        if not verification.accepted:
             critic = self._post_run_critic(challenge, summary, findings)
             if critic is not None:
                 self.notebook.add_observation(critic)
@@ -307,5 +308,17 @@ def _ran_non_llm_solver(solver_rows: object) -> bool:
         if not isinstance(row, dict):
             continue
         if row.get("solver") != "LLMSolver" and row.get("status") != "skipped":
+            return True
+    return False
+
+
+def _has_pwn_exploit_plan(findings: object) -> bool:
+    if not isinstance(findings, list):
+        return False
+    for finding in findings:
+        if getattr(finding, "solver", "") != "PwnSolver":
+            continue
+        evidence = getattr(finding, "evidence", {})
+        if isinstance(evidence, dict) and isinstance(evidence.get("exploit_plan"), dict):
             return True
     return False
