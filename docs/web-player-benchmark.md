@@ -38,6 +38,8 @@ The default run output is a compact scorecard:
 ```text
 ForgeFlag browser player benchmark: 7/7 passed
 Duration: 10.1s
+Profile results:
+- deterministic: 7/7
 Category results:
 - crypto: 1/1
 - forensics: 1/1

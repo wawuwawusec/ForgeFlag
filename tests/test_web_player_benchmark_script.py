@@ -54,6 +54,7 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
             {
                 "challenge_id": "player-crypto-base32",
                 "category": "crypto",
+                "run_profile": "llm",
                 "expected_agents": ["ChallengeTriageAgent", "CryptoMathAgent", "EvidenceJudgeAgent"],
             },
             {
@@ -68,9 +69,14 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
 
         self.assertEqual(summary["passed"], 2)
         self.assertEqual(summary["total"], 3)
+        self.assertEqual(summary["profiles"]["deterministic"]["passed"], 1)
+        self.assertEqual(summary["profiles"]["llm"]["passed"], 1)
         self.assertEqual(summary["categories"]["web"]["passed"], 1)
         self.assertEqual(summary["categories"]["traffic"]["passed"], 0)
         self.assertIn("ForgeFlag browser player benchmark: 2/3 passed", rendered)
+        self.assertIn("Profile results:", rendered)
+        self.assertIn("deterministic: 1/2", rendered)
+        self.assertIn("llm: 1/1", rendered)
         self.assertIn("Category results:", rendered)
         self.assertIn("web: 1/1", rendered)
         self.assertIn("traffic: 0/1", rendered)

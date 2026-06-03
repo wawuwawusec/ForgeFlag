@@ -296,6 +296,7 @@ def summarize_playwright_report(
     }
     cases = []
     categories: dict[str, dict[str, int]] = {}
+    profiles: dict[str, dict[str, int]] = {}
     for spec in specs:
         title = str(spec.get("title") or "unnamed")
         passed = bool(spec.get("ok"))
@@ -303,10 +304,13 @@ def summarize_playwright_report(
         category = str(metadata.get("category") or "unknown")
         run_profile = str(metadata.get("run_profile") or "deterministic")
         expected_agents = metadata.get("expected_agents") if isinstance(metadata.get("expected_agents"), list) else []
-        row = categories.setdefault(category, {"passed": 0, "total": 0})
-        row["total"] += 1
+        category_row = categories.setdefault(category, {"passed": 0, "total": 0})
+        category_row["total"] += 1
+        profile_row = profiles.setdefault(run_profile, {"passed": 0, "total": 0})
+        profile_row["total"] += 1
         if passed:
-            row["passed"] += 1
+            category_row["passed"] += 1
+            profile_row["passed"] += 1
         cases.append(
             {
                 "title": title,
@@ -321,6 +325,7 @@ def summarize_playwright_report(
         "passed": passed_count,
         "total": len(cases),
         "duration_ms": int((report.get("stats") or {}).get("duration") or 0) if isinstance(report.get("stats"), dict) else 0,
+        "profiles": profiles,
         "categories": categories,
         "cases": cases,
     }
@@ -333,6 +338,14 @@ def format_playwright_summary(summary: dict[str, object]) -> str:
     lines = [f"ForgeFlag browser player benchmark: {passed}/{total} passed"]
     if duration_ms:
         lines.append(f"Duration: {duration_ms / 1000:.1f}s")
+    profiles = summary.get("profiles")
+    if isinstance(profiles, dict) and profiles:
+        lines.append("Profile results:")
+        for profile in sorted(profiles):
+            row = profiles.get(profile)
+            if not isinstance(row, dict):
+                continue
+            lines.append(f"- {profile}: {row.get('passed', 0)}/{row.get('total', 0)}")
     categories = summary.get("categories")
     if isinstance(categories, dict) and categories:
         lines.append("Category results:")
