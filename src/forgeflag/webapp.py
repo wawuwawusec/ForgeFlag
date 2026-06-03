@@ -440,10 +440,17 @@ INDEX_HTML = r"""<!doctype html>
     label { display: block; margin: 10px 0 4px; font-size: 13px; color: var(--muted); }
     input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; background: #fff; }
     textarea { min-height: 76px; resize: vertical; }
-    button { border: 1px solid #0f5d4c; background: var(--accent); color: white; border-radius: 6px; padding: 9px 12px; font: inherit; cursor: pointer; }
+    button { border: 1px solid #0f5d4c; background: var(--accent); color: white; border-radius: 6px; padding: 9px 12px; font: inherit; cursor: pointer; transition: transform .08s ease, box-shadow .12s ease, opacity .12s ease, background-color .12s ease; }
     button.secondary { background: white; color: var(--ink); border-color: var(--line); }
     button.warn { background: var(--warn); border-color: var(--warn); }
+    button:active { transform: translateY(1px); }
+    button:focus-visible { outline: 3px solid #9fd8c7; outline-offset: 2px; }
     button:disabled { opacity: .58; cursor: wait; }
+    button.is-busy { position: relative; padding-left: 32px; }
+    button.is-busy::before { content: ""; position: absolute; left: 11px; top: 50%; width: 12px; height: 12px; margin-top: -6px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 999px; animation: spin .75s linear infinite; }
+    button.just-done { box-shadow: 0 0 0 3px rgba(18,107,86,.18); }
+    button.just-error { box-shadow: 0 0 0 3px rgba(155,77,19,.22); }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .row { display: flex; gap: 8px; align-items: center; }
     .row > * { flex: 1; }
     .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
@@ -503,6 +510,14 @@ INDEX_HTML = r"""<!doctype html>
     details.raw summary { color: var(--muted); cursor: pointer; font-size: 13px; }
     pre.raw-json { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #111820; color: #e7eef4; border-radius: 6px; padding: 12px; max-height: 360px; overflow: auto; }
     .status { font-size: 13px; color: var(--muted); }
+    .status[data-tone="busy"] { color: #0f5d4c; }
+    .status[data-tone="success"] { color: #126b56; }
+    .status[data-tone="error"] { color: #9b2c13; }
+    .action-toast { position: fixed; right: 18px; top: 74px; z-index: 10; max-width: min(420px, calc(100vw - 36px)); border: 1px solid #cfe4dc; border-radius: 6px; background: #f2faf7; color: #24463d; padding: 10px 12px; font-size: 13px; box-shadow: 0 10px 24px rgba(23,32,38,.12); }
+    .action-toast[data-tone="busy"] { border-color: #b9d8cc; }
+    .action-toast[data-tone="success"] { border-color: #a8d5c5; background: #eefaf5; }
+    .action-toast[data-tone="error"] { border-color: #f1c5b7; background: #fff3ef; color: #7d2d18; }
+    .action-toast[hidden] { display: none; }
     @media (max-width: 860px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } .runtime-grid, .llm-settings, .kv-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -511,6 +526,7 @@ INDEX_HTML = r"""<!doctype html>
     <h1>ForgeFlag Console</h1>
     <div class="status" id="status">ready</div>
   </header>
+  <div class="action-toast" id="actionToast" role="status" aria-live="polite" hidden></div>
   <main>
     <aside>
       <h2>新建 / 更新题目</h2>
@@ -610,7 +626,57 @@ INDEX_HTML = r"""<!doctype html>
     const state = { selected: null, activeCategory: "all", activeStatus: "all", challenges: [], lastSummary: {}, summaries: {} };
     const writeupSectionOrder = ["结论", "解题思路", "复现步骤", "关键证据"];
     const $ = (id) => document.getElementById(id);
-    const status = (text) => $("status").textContent = text;
+    let toastTimer = null;
+    const status = (text, tone="info") => {
+      const headerStatus = $("status");
+      headerStatus.textContent = text;
+      headerStatus.dataset.tone = tone;
+      const toast = $("actionToast");
+      if (toast) {
+        toast.textContent = text;
+        toast.dataset.tone = tone;
+        toast.hidden = false;
+        clearTimeout(toastTimer);
+        if (tone !== "busy") {
+          toastTimer = setTimeout(() => { toast.hidden = true; }, tone === "error" ? 5200 : 2800);
+        }
+      }
+      return text;
+    };
+    function setButtonBusy(buttonOrId, busy, busyText) {
+      const button = typeof buttonOrId === "string" ? $(buttonOrId) : buttonOrId;
+      if (!button) return;
+      if (!button.dataset.idleLabel) button.dataset.idleLabel = button.textContent;
+      button.disabled = busy;
+      button.classList.toggle("is-busy", busy);
+      button.setAttribute("aria-busy", busy ? "true" : "false");
+      button.textContent = busy ? busyText : button.dataset.idleLabel;
+    }
+    function flashButton(buttonOrId, tone="success") {
+      const button = typeof buttonOrId === "string" ? $(buttonOrId) : buttonOrId;
+      if (!button) return;
+      const className = tone === "error" ? "just-error" : "just-done";
+      button.classList.add(className);
+      setTimeout(() => button.classList.remove(className), 900);
+    }
+    async function withButtonFeedback(buttonId, busyText, successText, action) {
+      setButtonBusy(buttonId, true, busyText);
+      status(busyText, "busy");
+      try {
+        const result = await action();
+        if (result !== false) {
+          flashButton(buttonId, "success");
+          if (successText) status(successText, "success");
+        }
+        return result;
+      } catch (error) {
+        flashButton(buttonId, "error");
+        status(error.message || "操作失败", "error");
+        throw error;
+      } finally {
+        setButtonBusy(buttonId, false);
+      }
+    }
     const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
     const rawJson = (data) => `<details class="raw"><summary>查看调试 JSON</summary><pre class="raw-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre></details>`;
     const asList = (value) => Array.isArray(value) ? value : [];
@@ -651,6 +717,8 @@ INDEX_HTML = r"""<!doctype html>
       };
       localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify(saved));
       $("llmConfigStatus").textContent = saved.remember_key ? "配置已保存到本浏览器（含 Key）" : "配置已保存到本浏览器（不含 Key）";
+      flashButton("llmSaveConfig", "success");
+      status("大模型配置已保存", "success");
     }
     function restoreLLMConfig() {
       const raw = localStorage.getItem(LLM_CONFIG_KEY);
@@ -1253,7 +1321,6 @@ INDEX_HTML = r"""<!doctype html>
       return [...known, ...rest];
     }
     async function saveChallenge() {
-      status("saving...");
       const payload = {
         challenge_id: $("challengeId").value.trim(),
         category: $("category").value,
@@ -1266,13 +1333,16 @@ INDEX_HTML = r"""<!doctype html>
       const res = await api("/api/challenges", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(payload) });
       state.selected = payload.challenge_id;
       state.activeCategory = payload.category || state.activeCategory;
-      status("saved");
       show(res, "raw");
       await refresh();
+      return res;
     }
     async function runSelected() {
-      if (!state.selected) return status("select a challenge first");
-      setRunState(true, `运行中：${state.selected}`);
+      if (!state.selected) {
+        status("请先选择一道题目", "error");
+        return false;
+      }
+      setRunState(true, `运行中：${state.selected}`, "busy");
       show({ challenge_id: state.selected, status: "running", solvers: [], accepted_flags: [], rejected_flags: [], observations: 0 }, "summary");
       const payload = {
         active_probe: $("activeProbe").checked,
@@ -1283,57 +1353,78 @@ INDEX_HTML = r"""<!doctype html>
         const res = await api(`/api/challenges/${encodeURIComponent(state.selected)}/run`, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(payload) });
         state.lastSummary = res;
         state.summaries[state.selected] = res;
-        status(`运行完成：${res.status || "done"}`);
+        status(`运行完成：${res.status || "done"}`, res.status === "flag_found" ? "success" : "info");
+        flashButton("runBtn", "success");
         show(res, "summary");
         await refresh();
         await loadTab("findings");
+        return res;
       } finally {
-        setRunState(false, $("status").textContent);
+        setRunState(false);
       }
     }
-    function setRunState(running, message) {
+    function setRunState(running, message, tone="info") {
       const button = $("runBtn");
-      button.disabled = running;
-      button.textContent = running ? "运行中..." : "运行选中题目";
-      if (message) status(message);
+      setButtonBusy(button, running, "运行中...");
+      if (message) status(message, tone);
     }
     async function deleteSelectedChallenge() {
-      if (!state.selected) return status("select a challenge first");
+      if (!state.selected) {
+        status("请先选择要删除的题目", "error");
+        return false;
+      }
       const challengeId = state.selected;
-      if (!confirm(`删除题目 ${challengeId} 及其运行记录？`)) return;
-      status(`删除中：${challengeId}`);
+      if (!confirm(`删除题目 ${challengeId} 及其运行记录？`)) {
+        status("已取消删除", "info");
+        return false;
+      }
+      setButtonBusy("deleteBtn", true, "删除中...");
+      status(`删除中：${challengeId}`, "busy");
       const res = await api(`/api/challenges/${encodeURIComponent(challengeId)}`, { method:"DELETE" });
       delete state.summaries[challengeId];
       state.selected = null;
       state.lastSummary = {};
-      status(`已删除：${challengeId}`);
+      status(`已删除：${challengeId}`, "success");
+      flashButton("deleteBtn", "success");
       await refresh();
       show(res, "raw");
+      setButtonBusy("deleteBtn", false);
+      return res;
     }
     async function clearChallenges() {
-      if (!confirm("清空全部题目、运行记录和 Web 上传附件？")) return;
-      status("清空中...");
+      if (!confirm("清空全部题目、运行记录和 Web 上传附件？")) {
+        status("已取消清空", "info");
+        return false;
+      }
+      setButtonBusy("clearBtn", true, "清空中...");
+      status("清空中...", "busy");
       const res = await api("/api/challenges", { method:"DELETE" });
       state.selected = null;
       state.lastSummary = {};
       state.summaries = {};
-      status("已清空全部题目");
+      status("已清空全部题目", "success");
+      flashButton("clearBtn", "success");
       await refresh();
       show(res, "raw");
+      setButtonBusy("clearBtn", false);
+      return res;
     }
     async function testLLM() {
       if (!$("llmEnabled").checked) $("llmEnabled").checked = true;
       syncLLMSettings();
       $("llmConfigStatus").textContent = "正在测试...";
+      status("正在测试大模型连接...", "busy");
       const res = await api("/api/llm/test", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(llmPayload()) });
       $("llmConfigStatus").textContent = `测试成功：${res.provider} ${res.model || ""}`;
+      status(`大模型测试成功：${res.provider} ${res.model || ""}`, "success");
       show(res, "raw");
+      return res;
     }
     async function loadTab(tab) {
       document.querySelectorAll(".tabs button").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tab));
       if (tab === "tools") return show(await api("/api/tools"), "tools");
       if (tab === "catalog") return show(await api("/api/project-catalog"), "catalog");
-      if (!state.selected) return status("select a challenge first");
+      if (!state.selected) return status("请先选择一道题目", "error");
       if (tab === "summary") return show(await loadLatestSummary(), "summary");
       if (tab === "agent") return show(await loadAgentView(), "agent");
       show(await api(`/api/challenges/${encodeURIComponent(state.selected)}/${tab}`), tab);
@@ -1357,13 +1448,13 @@ INDEX_HTML = r"""<!doctype html>
       state.summaries[state.selected] = summary;
       return { challenge_id: state.selected, summary, report, findings, observations };
     }
-    $("saveBtn").onclick = () => saveChallenge().catch(e => { status("error"); show({error:e.message}); });
-    $("refreshBtn").onclick = () => refresh().catch(e => show({error:e.message}));
-    $("deleteBtn").onclick = () => deleteSelectedChallenge().catch(e => { status("删除失败"); show({error:e.message}); });
-    $("clearBtn").onclick = () => clearChallenges().catch(e => { status("清空失败"); show({error:e.message}); });
-    $("runBtn").onclick = () => runSelected().catch(e => { setRunState(false, "运行失败"); show({error:e.message}); });
+    $("saveBtn").onclick = () => withButtonFeedback("saveBtn", "保存中...", "题目已保存", saveChallenge).catch(e => show({error:e.message}));
+    $("refreshBtn").onclick = () => withButtonFeedback("refreshBtn", "刷新中...", "列表已刷新", refresh).catch(e => show({error:e.message}));
+    $("deleteBtn").onclick = () => deleteSelectedChallenge().catch(e => { setButtonBusy("deleteBtn", false); status("删除失败", "error"); show({error:e.message}); });
+    $("clearBtn").onclick = () => clearChallenges().catch(e => { setButtonBusy("clearBtn", false); status("清空失败", "error"); show({error:e.message}); });
+    $("runBtn").onclick = () => runSelected().catch(e => { setRunState(false, "运行失败", "error"); show({error:e.message}); });
     $("llmSaveConfig").onclick = () => saveLLMConfig();
-    $("llmTestBtn").onclick = () => testLLM().catch(e => { $("llmConfigStatus").textContent = "测试失败"; show({error:e.message}); });
+    $("llmTestBtn").onclick = () => withButtonFeedback("llmTestBtn", "测试中...", "", testLLM).catch(e => { $("llmConfigStatus").textContent = "测试失败"; show({error:e.message}); });
     $("llmEnabled").onchange = syncLLMSettings;
     $("llmProvider").onchange = () => { if ($("llmProvider").value === "disabled") $("llmEnabled").checked = false; syncLLMSettings(); };
     document.querySelectorAll(".tabs button").forEach(btn => btn.onclick = () => loadTab(btn.dataset.tab).catch(e => show({error:e.message})));

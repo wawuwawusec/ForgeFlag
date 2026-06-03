@@ -214,6 +214,11 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("function deleteSelectedChallenge", html)
         self.assertIn("function clearChallenges", html)
         self.assertIn("function setRunState", html)
+        self.assertIn('id="actionToast"', html)
+        self.assertIn("function setButtonBusy", html)
+        self.assertIn("function flashButton", html)
+        self.assertIn("async function withButtonFeedback", html)
+        self.assertIn("button.is-busy", html)
 
     def test_index_renders_human_readable_result_tabs(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
