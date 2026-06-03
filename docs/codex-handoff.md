@@ -140,6 +140,11 @@ Implemented so far:
   - Generates safe local fixtures distilled from public CTF writeups, forums, challenge indexes, and benchmark papers
   - Covers 74 cases total: Web has 11 cases, Crypto has 13 cases, and Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases
   - Current strict result: 74/74 full score through the Web API
+- Browser-player Web UI benchmark:
+  - `scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run`
+  - Uses Playwright to operate the visible Web UI like a human player: save challenge, upload attachments, run, inspect Summary, inspect Write-up, and delete cleanup challenges
+  - Current first-pass result: 3/3 cases passed through the browser for Web text, Crypto attachment upload, and Misc attachment upload
+  - Setup is documented in `docs/web-player-benchmark.md`
 - CTF playbook notes:
   - `docs/ctf-playbook.md`
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category
@@ -187,7 +192,8 @@ Current local setup after migration:
   - Docker wrappers: `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`
   - hashcat is installed, but current OrbStack runtime does not expose an OpenCL/CUDA device, so cracking smoke skips hashcat device execution
   - `ToolRunner` automatically reads `.forgeflag/docker.env` when explicit Docker tool environment variables are unset, so direct CLI/Web runs show the same Docker fallback inventory as `scripts/forgeflag-control`
-- Tests passed: 204 tests OK
+- Tests passed: 205 tests OK
+- Browser-player benchmark passed: 3/3 Web UI flows OK
 
 Useful commands:
 
@@ -208,6 +214,8 @@ scripts/forgeflag-control smoke
 scripts/forgeflag-control docker-build
 scripts/forgeflag-control docker-smoke
 scripts/forgeflag-control stop
+scripts/forgeflag-web-player-benchmark --list
+scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run
 .venv/bin/forgeflag --db .forgeflag/notebook.sqlite web --host 127.0.0.1 --port 8080
 .venv/bin/forgeflag --db .forgeflag/notebook.sqlite artifacts <challenge_id>
 .venv/bin/forgeflag observations <challenge_id>

@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import shutil
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKDIR = ROOT / ".forgeflag" / "web-player-benchmark"
+
+SCORES = {
+    "flag_found": "Verifier accepted the expected flag.",
+    "category_correct": "The challenge was submitted with the intended category through the Web UI.",
+    "human_ui_flow": "The player used visible Web controls: create/update, run, Summary, and Write-up.",
+    "writeup_reproducible": "The Write-up tab contains solving idea and reproduction steps after success.",
+    "no_ui_error": "The page did not surface an error state during the flow.",
+}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run ForgeFlag as a browser-based CTF player against small fixtures.")
+    parser.add_argument("--url", default="http://127.0.0.1:8080", help="ForgeFlag Web UI base URL")
+    parser.add_argument("--list", action="store_true", help="List browser-player benchmark cases without running them")
+    parser.add_argument("--run", action="store_true", help="Run the benchmark through Playwright browser automation")
+    parser.add_argument("--headed", action="store_true", help="Show the browser while running Playwright")
+    parser.add_argument("--keep", action="store_true", help="Keep generated benchmark challenges in the notebook")
+    parser.add_argument("--case", action="append", default=[], help="Run only the named case id; may be repeated")
+    args = parser.parse_args()
+
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    fixtures = build_fixtures()
+    cases = browser_player_cases(fixtures)
+    selected = [case for case in cases if not args.case or case["challenge_id"] in set(args.case)]
+
+    if args.list or not args.run:
+        print(json.dumps({"agent": "browser_player", "scores": SCORES, "cases": [_case_listing(case) for case in cases]}, indent=2, ensure_ascii=False))
+        return 0
+
+    if not selected:
+        print("no matching browser-player cases", file=sys.stderr)
+        return 2
+    playwright_bin = _playwright_bin()
+    if playwright_bin is None:
+        print(
+            "Playwright runner is not installed. Run: "
+            "npm --prefix .forgeflag/web-player-benchmark install @playwright/test",
+            file=sys.stderr,
+        )
+        return 2
+
+    return run_playwright(args.url, selected, playwright_bin=playwright_bin, headed=args.headed, keep=args.keep)
+
+
+def build_fixtures() -> dict[str, Path]:
+    fixtures: dict[str, Path] = {}
+
+    crypto = WORKDIR / "player-crypto-base32.txt"
+    crypto.write_text(base64.b32encode(b"flag{player_crypto_base32}").decode("ascii").rstrip("="), encoding="utf-8")
+    fixtures["crypto"] = crypto
+
+    misc = WORKDIR / "player-misc-binary.txt"
+    misc.write_text(" ".join(f"{byte:08b}" for byte in b"flag{player_misc_binary}"), encoding="utf-8")
+    fixtures["misc"] = misc
+
+    return fixtures
+
+
+def browser_player_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
+    return [
+        {
+            "challenge_id": "player-web-visible",
+            "category": "web",
+            "title": "Browser Player Web visible flag",
+            "description": "A pasted Web warmup prompt containing flag{player_web_visible}.",
+            "target": "",
+            "attachments": [],
+            "expected_flag": "flag{player_web_visible}",
+            "active_probe": False,
+            "llm_enabled": False,
+            "via": "web_ui",
+        },
+        {
+            "challenge_id": "player-crypto-base32",
+            "category": "crypto",
+            "title": "Browser Player Crypto Base32",
+            "description": "Decode the uploaded Base32 text and submit the recovered flag.",
+            "target": "",
+            "attachments": [fixtures["crypto"]],
+            "expected_flag": "flag{player_crypto_base32}",
+            "active_probe": False,
+            "llm_enabled": False,
+            "via": "web_ui",
+        },
+        {
+            "challenge_id": "player-misc-binary",
+            "category": "misc",
+            "title": "Browser Player Misc binary ASCII",
+            "description": "Decode the uploaded binary ASCII stream.",
+            "target": "",
+            "attachments": [fixtures["misc"]],
+            "expected_flag": "flag{player_misc_binary}",
+            "active_probe": False,
+            "llm_enabled": False,
+            "via": "web_ui",
+        },
+    ]
+
+
+def _case_listing(case: dict[str, object]) -> dict[str, object]:
+    return {
+        "challenge_id": case["challenge_id"],
+        "category": case["category"],
+        "title": case["title"],
+        "expected_flag": case["expected_flag"],
+        "llm_enabled": case["llm_enabled"],
+        "via": case["via"],
+        "attachments": [Path(path).name for path in case["attachments"]],  # type: ignore[arg-type]
+    }
+
+
+def _playwright_bin() -> Path | None:
+    local_bin = WORKDIR / "node_modules" / ".bin" / "playwright"
+    if local_bin.exists():
+        return local_bin
+    path_bin = shutil.which("playwright")
+    return Path(path_bin) if path_bin else None
+
+
+def run_playwright(base_url: str, cases: list[dict[str, object]], playwright_bin: Path, headed: bool, keep: bool) -> int:
+    spec = _playwright_spec(base_url.rstrip("/"), cases, keep)
+    run_dir = WORKDIR / "playwright"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    spec_path = run_dir / "forgeflag-web-player.spec.js"
+    config_path = run_dir / "playwright.config.js"
+    spec_path.write_text(spec, encoding="utf-8")
+    config_path.write_text(
+        "module.exports = { testDir: __dirname, testMatch: 'forgeflag-web-player.spec.js', workers: 1, timeout: 90000 };\n",
+        encoding="utf-8",
+    )
+    command = [str(playwright_bin), "test", "--config", str(config_path), "--reporter=json"]
+    if headed:
+        command.append("--headed")
+    completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        if completed.stdout:
+            print(completed.stdout)
+        if completed.stderr:
+            print(completed.stderr, file=sys.stderr)
+        return completed.returncode
+    print(completed.stdout)
+    return 0
+
+
+def _playwright_spec(base_url: str, cases: list[dict[str, object]], keep: bool) -> str:
+    serializable_cases = []
+    for case in cases:
+        serializable = {**case, "attachments": [str(path) for path in case["attachments"]]}  # type: ignore[index]
+        serializable_cases.append(serializable)
+    return textwrap.dedent(
+        f"""
+        const {{ test, expect }} = require('@playwright/test');
+        const fs = require('node:fs');
+
+        const baseUrl = {json.dumps(base_url)};
+        const keep = {json.dumps(keep)};
+        const cases = {json.dumps(serializable_cases, ensure_ascii=False)};
+
+        test.describe('ForgeFlag browser player benchmark', () => {{
+          for (const ctfCase of cases) {{
+            test(ctfCase.challenge_id, async ({{ page }}) => {{
+              await page.goto(baseUrl);
+              await page.locator('#challengeId').fill(ctfCase.challenge_id);
+              await page.locator('#category').selectOption(ctfCase.category);
+              await page.locator('#title').fill(ctfCase.title);
+              await page.locator('#target').fill(ctfCase.target || '');
+              await page.locator('#description').fill(ctfCase.description || '');
+              if (ctfCase.attachments.length) {{
+                await page.locator('#attachments').setInputFiles(ctfCase.attachments);
+              }}
+              await page.getByRole('button', {{ name: '保存题目' }}).click();
+              await expect(page.locator('#status')).toContainText('题目已保存');
+              await expect(page.locator('#challengeList')).toContainText(ctfCase.challenge_id);
+
+              if (ctfCase.llm_enabled) {{
+                await page.locator('#llmEnabled').check();
+              }} else {{
+                await page.locator('#llmEnabled').uncheck();
+              }}
+              if (ctfCase.active_probe) {{
+                await page.locator('#activeProbe').check();
+              }} else {{
+                await page.locator('#activeProbe').uncheck();
+              }}
+
+              await page.getByRole('button', {{ name: '运行选中题目' }}).click();
+              await expect(page.locator('#status')).toContainText('运行完成', {{ timeout: 60000 }});
+              await page.getByRole('button', {{ name: 'Summary' }}).click();
+              await expect(page.locator('#output')).toContainText(ctfCase.expected_flag, {{ timeout: 10000 }});
+              await page.getByRole('button', {{ name: 'Write-up' }}).click();
+              await expect(page.locator('#output')).toContainText('解题思路');
+              await expect(page.locator('#output')).toContainText('复现步骤');
+              await expect(page.locator('#output')).toContainText(ctfCase.expected_flag);
+
+              if (!keep) {{
+                page.on('dialog', dialog => dialog.accept());
+                await page.getByRole('button', {{ name: '删除选中' }}).click();
+                await expect(page.locator('#status')).toContainText(`已删除：${{ctfCase.challenge_id}}`);
+              }}
+            }});
+          }}
+        }});
+        """
+    ).strip() + "\n"
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
