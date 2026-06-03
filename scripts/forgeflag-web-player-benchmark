@@ -34,6 +34,7 @@ def main() -> int:
     parser.add_argument("--run", action="store_true", help="Run the benchmark through Playwright browser automation")
     parser.add_argument("--headed", action="store_true", help="Show the browser while running Playwright")
     parser.add_argument("--keep", action="store_true", help="Keep generated benchmark challenges in the notebook")
+    parser.add_argument("--json", action="store_true", help="Print raw Playwright JSON instead of the compact scorecard")
     parser.add_argument("--case", action="append", default=[], help="Run only the named case id; may be repeated")
     args = parser.parse_args()
 
@@ -58,7 +59,7 @@ def main() -> int:
         )
         return 2
 
-    return run_playwright(args.url, selected, playwright_bin=playwright_bin, headed=args.headed, keep=args.keep)
+    return run_playwright(args.url, selected, playwright_bin=playwright_bin, headed=args.headed, keep=args.keep, raw_json=args.json)
 
 
 def build_fixtures() -> dict[str, Path]:
@@ -208,7 +209,14 @@ def _playwright_bin() -> Path | None:
     return Path(path_bin) if path_bin else None
 
 
-def run_playwright(base_url: str, cases: list[dict[str, object]], playwright_bin: Path, headed: bool, keep: bool) -> int:
+def run_playwright(
+    base_url: str,
+    cases: list[dict[str, object]],
+    playwright_bin: Path,
+    headed: bool,
+    keep: bool,
+    raw_json: bool = False,
+) -> int:
     spec = _playwright_spec(base_url.rstrip("/"), cases, keep)
     run_dir = WORKDIR / "playwright"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -223,14 +231,65 @@ def run_playwright(base_url: str, cases: list[dict[str, object]], playwright_bin
     if headed:
         command.append("--headed")
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=180)
-    if completed.returncode != 0:
+    if raw_json:
         if completed.stdout:
             print(completed.stdout)
         if completed.stderr:
             print(completed.stderr, file=sys.stderr)
         return completed.returncode
-    print(completed.stdout)
-    return 0
+    if completed.stdout:
+        try:
+            report = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            print(completed.stdout)
+        else:
+            print(format_playwright_summary(summarize_playwright_report(report)))
+    if completed.stderr:
+        print(completed.stderr, file=sys.stderr)
+    return completed.returncode
+
+
+def summarize_playwright_report(report: dict[str, object]) -> dict[str, object]:
+    specs = _collect_playwright_specs(report.get("suites", []))
+    cases = []
+    for spec in specs:
+        title = str(spec.get("title") or "unnamed")
+        passed = bool(spec.get("ok"))
+        cases.append({"title": title, "status": "PASS" if passed else "FAIL"})
+    passed_count = sum(1 for case in cases if case["status"] == "PASS")
+    return {
+        "passed": passed_count,
+        "total": len(cases),
+        "duration_ms": int((report.get("stats") or {}).get("duration") or 0) if isinstance(report.get("stats"), dict) else 0,
+        "cases": cases,
+    }
+
+
+def format_playwright_summary(summary: dict[str, object]) -> str:
+    passed = int(summary.get("passed") or 0)
+    total = int(summary.get("total") or 0)
+    duration_ms = int(summary.get("duration_ms") or 0)
+    lines = [f"ForgeFlag browser player benchmark: {passed}/{total} passed"]
+    if duration_ms:
+        lines.append(f"Duration: {duration_ms / 1000:.1f}s")
+    lines.append("Case results:")
+    for case in summary.get("cases", []):
+        if not isinstance(case, dict):
+            continue
+        lines.append(f"- {case.get('status', 'FAIL')} {case.get('title', 'unnamed')}")
+    return "\n".join(lines)
+
+
+def _collect_playwright_specs(suites: object) -> list[dict[str, object]]:
+    specs: list[dict[str, object]] = []
+    if not isinstance(suites, list):
+        return specs
+    for suite in suites:
+        if not isinstance(suite, dict):
+            continue
+        specs.extend(item for item in suite.get("specs", []) if isinstance(item, dict))
+        specs.extend(_collect_playwright_specs(suite.get("suites", [])))
+    return specs
 
 
 def _playwright_spec(base_url: str, cases: list[dict[str, object]], keep: bool) -> str:

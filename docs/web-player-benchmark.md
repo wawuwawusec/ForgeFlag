@@ -33,6 +33,22 @@ Run all current cases through the browser:
 scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run
 ```
 
+The default run output is a compact scorecard:
+
+```text
+ForgeFlag browser player benchmark: 7/7 passed
+Duration: 10.1s
+Case results:
+- PASS player-web-visible
+...
+```
+
+Use `--json` when you need the raw Playwright reporter output for debugging:
+
+```bash
+scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --json
+```
+
 Run one case and keep it in the notebook for manual inspection:
 
 ```bash

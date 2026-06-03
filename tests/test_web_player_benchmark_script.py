@@ -4,6 +4,8 @@ import json
 import subprocess
 import sys
 import unittest
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 
 
@@ -26,6 +28,42 @@ class WebPlayerBenchmarkScriptTest(unittest.TestCase):
         categories = {case["category"] for case in cases}
         self.assertTrue({"web", "crypto", "forensics", "traffic", "reverse", "pwn", "misc"}.issubset(categories))
         self.assertTrue(any(case["llm_enabled"] is False for case in cases))
+
+    def test_playwright_json_is_formatted_as_readable_scorecard(self) -> None:
+        module = _load_script_module()
+        report = {
+            "stats": {"duration": 1234},
+            "suites": [
+                {
+                    "specs": [
+                        {"title": "player-web-visible", "ok": True},
+                        {"title": "player-crypto-base32", "ok": True},
+                        {"title": "player-traffic-http", "ok": False},
+                    ],
+                    "suites": [],
+                }
+            ],
+        }
+
+        summary = module.summarize_playwright_report(report)
+        rendered = module.format_playwright_summary(summary)
+
+        self.assertEqual(summary["passed"], 2)
+        self.assertEqual(summary["total"], 3)
+        self.assertIn("ForgeFlag browser player benchmark: 2/3 passed", rendered)
+        self.assertIn("PASS player-web-visible", rendered)
+        self.assertIn("FAIL player-traffic-http", rendered)
+
+
+def _load_script_module():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-web-player-benchmark"
+    loader = SourceFileLoader("forgeflag_web_player_benchmark", str(script))
+    spec = spec_from_loader(loader.name, loader)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load forgeflag-web-player-benchmark")
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 if __name__ == "__main__":
