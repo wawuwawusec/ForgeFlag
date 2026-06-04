@@ -415,6 +415,11 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("--remote", html)
         self.assertIn("args.host", html)
         self.assertIn("cyclic_find", html)
+        self.assertIn("function downloadExploitTemplate", html)
+        self.assertIn('id="pwnDownloadExploitBtn"', html)
+        self.assertIn("下载 exploit.py", html)
+        self.assertIn("new Blob", html)
+        self.assertIn("exploit.py", html)
 
     def test_index_renders_classical_crypto_evidence_summary(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))

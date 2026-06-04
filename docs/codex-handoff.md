@@ -132,7 +132,7 @@ Implemented so far:
   - category workspace filters for Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra queues
   - per-run LLM provider/model/API key controls, browser-local config saving including API key, masked saved-key dropdown selection, and `/api/llm/test`
   - entered LLM keys can be restored or selected from browser local storage for run/test requests and are never stored in SQLite
-  - Pwn challenges show a local environment panel with copyable Docker/Kali entry, `socat` service launch, triage commands, a pwntools local/remote exploit template, and a one-click local Target/Active probe helper
+  - Pwn challenges show a local environment panel with copyable Docker/Kali entry, `socat` service launch, triage commands, a copyable/downloadable `exploit.py` pwntools local/remote template, and a one-click local Target/Active probe helper
   - run, auto-loaded findings, observations, artifact summaries, Write-up, tools, and catalog views
   - Summary, Findings, Observations, Artifacts, Write-up, Tools, and Catalog render as readable cards with collapsible debug JSON
   - Tools tab shows host/Docker/missing wrapper counts, per-wrapper source, and Docker build/smoke commands

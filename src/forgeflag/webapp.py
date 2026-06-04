@@ -1886,6 +1886,20 @@ INDEX_HTML = r"""<!doctype html>
         "io.interactive()",
       ].join("\n");
     }
+    function downloadExploitTemplate() {
+      const template = $("pwnExploitTemplate");
+      if (!template) return;
+      const blob = new Blob([template.textContent || ""], { type: "text/x-python;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "exploit.py";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      status("已生成 exploit.py 下载", "success");
+    }
     function renderPwnEnvironmentPanel() {
       const panel = $("pwnEnvironmentPanel");
       const challenge = selectedChallenge();
@@ -1941,7 +1955,7 @@ INDEX_HTML = r"""<!doctype html>
           <pre class="command-block" id="pwnTriageCommand">${escapeHtml(triageCommand)}</pre>
         </div>
         <div>
-          <div class="command-head"><strong>pwntools exploit template</strong><button class="secondary" type="button" data-copy-target="pwnExploitTemplate">复制</button></div>
+          <div class="command-head"><strong>pwntools exploit template</strong><span class="actions"><button class="secondary" type="button" data-copy-target="pwnExploitTemplate">复制</button><button class="secondary" id="pwnDownloadExploitBtn" type="button">下载 exploit.py</button></span></div>
           <pre class="command-block" id="pwnExploitTemplate">${escapeHtml(exploitTemplate)}</pre>
         </div>`;
       bindPwnEnvironmentPanel();
@@ -1958,6 +1972,8 @@ INDEX_HTML = r"""<!doctype html>
       $("pwnEnvironmentPanel").querySelectorAll("[data-copy-target]").forEach(copyButton => {
         copyButton.onclick = () => copyTextFromElement(copyButton.dataset.copyTarget);
       });
+      const downloadButton = $("pwnDownloadExploitBtn");
+      if (downloadButton) downloadButton.onclick = () => downloadExploitTemplate();
     }
     async function saveChallenge() {
       const challengeId = ensureChallengeId(false);
