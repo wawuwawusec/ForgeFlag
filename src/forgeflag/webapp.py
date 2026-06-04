@@ -520,6 +520,8 @@ INDEX_HTML = r"""<!doctype html>
     .pwn-helper { border: 1px solid #cfe4dc; border-radius: 6px; background: #f7fcfa; padding: 12px; display: grid; gap: 10px; }
     .pwn-helper[hidden] { display: none; }
     .pwn-helper h3 { margin: 0; font-size: 14px; }
+    .command-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+    .command-head strong { font-size: 13px; }
     .command-block { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #111820; color: #e7eef4; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.45; }
     .category-bar, .status-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 16px; }
     .category-pill, .status-pill { background: white; color: var(--ink); border-color: var(--line); display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; }
@@ -1821,6 +1823,69 @@ INDEX_HTML = r"""<!doctype html>
       if (index >= 0) return "." + text.slice(index);
       return text || "./chall";
     }
+    async function copyTextFromElement(elementId) {
+      const element = $(elementId);
+      if (!element) return;
+      const text = element.textContent || "";
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.setAttribute("readonly", "");
+          textarea.style.position = "fixed";
+          textarea.style.left = "-9999px";
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          textarea.remove();
+        }
+        status("已复制 Pwn 命令", "success");
+      } catch {
+        status("复制失败，请手动选择命令", "error");
+      }
+    }
+    function pwnExploitTemplate(artifactPath) {
+      const binaryLiteral = JSON.stringify(artifactPath || "./chall");
+      return [
+        "#!/usr/bin/env python3",
+        "from pwn import *",
+        "import argparse",
+        "",
+        "parser = argparse.ArgumentParser(description='pwntools exploit template')",
+        "parser.add_argument('--remote', action='store_true', help='connect to remote HOST:PORT instead of local process')",
+        "parser.add_argument('--host', default='127.0.0.1')",
+        "parser.add_argument('--port', type=int, default=31337)",
+        `parser.add_argument('--binary', default=${binaryLiteral})`,
+        "args = parser.parse_args()",
+        "",
+        "context.binary = ELF(args.binary, checksec=False)",
+        "context.log_level = 'info'",
+        "",
+        "def start():",
+        "    if args.remote:",
+        "        return remote(args.host, args.port)",
+        "    return process(args.binary)",
+        "",
+        "io = start()",
+        "",
+        "# Replace this with cyclic_find(crash_value) after reproducing the crash in gdb.",
+        "offset = cyclic_find(0x6161616c)",
+        "if offset < 0:",
+        "    offset = cyclic_find(b'laaa')",
+        "",
+        "payload = flat({",
+        "    0: b'A' * offset,",
+        "    # offset: p64(0xdeadbeef),",
+        "})",
+        "",
+        "# Adjust sendlineafter() to match the target prompt.",
+        "# io.sendlineafter(b'> ', payload)",
+        "io.sendline(payload)",
+        "io.interactive()",
+      ].join("\n");
+    }
     function renderPwnEnvironmentPanel() {
       const panel = $("pwnEnvironmentPanel");
       const challenge = selectedChallenge();
@@ -1845,6 +1910,7 @@ INDEX_HTML = r"""<!doctype html>
         `checksec --file ${quotedArtifact}`,
         `gdb ${quotedArtifact}`
       ].join("\n");
+      const exploitTemplate = pwnExploitTemplate(artifactPath);
       panel.hidden = false;
       panel.innerHTML = `
         <div class="card-head">
@@ -1862,9 +1928,22 @@ INDEX_HTML = r"""<!doctype html>
           <div class="kv"><span>Artifact</span><strong>${escapeHtml(artifactPath)}</strong><div class="meta">${asList(challenge.attachment_paths).length ? "已按 Web 上传附件生成路径" : "未上传附件时请在容器内改成真实二进制路径"}</div></div>
           <div class="kv"><span>Manual mode</span><strong>Docker + socat + pwntools</strong><div class="meta">适合 ret2win、格式化字符串、栈溢出等题型人工复现。</div></div>
         </div>
-        <div><strong>进入 Pwn 容器</strong><pre class="command-block">${escapeHtml(enterCommand)}</pre></div>
-        <div><strong>容器内启动题目服务</strong><pre class="command-block">${escapeHtml(serviceCommand)}</pre></div>
-        <div><strong>容器内手工分析</strong><pre class="command-block">${escapeHtml(triageCommand)}</pre></div>`;
+        <div>
+          <div class="command-head"><strong>进入 Pwn 容器</strong><button class="secondary" type="button" data-copy-target="pwnEnterCommand">复制</button></div>
+          <pre class="command-block" id="pwnEnterCommand">${escapeHtml(enterCommand)}</pre>
+        </div>
+        <div>
+          <div class="command-head"><strong>容器内启动题目服务</strong><button class="secondary" type="button" data-copy-target="pwnServiceCommand">复制</button></div>
+          <pre class="command-block" id="pwnServiceCommand">${escapeHtml(serviceCommand)}</pre>
+        </div>
+        <div>
+          <div class="command-head"><strong>容器内手工分析</strong><button class="secondary" type="button" data-copy-target="pwnTriageCommand">复制</button></div>
+          <pre class="command-block" id="pwnTriageCommand">${escapeHtml(triageCommand)}</pre>
+        </div>
+        <div>
+          <div class="command-head"><strong>pwntools exploit template</strong><button class="secondary" type="button" data-copy-target="pwnExploitTemplate">复制</button></div>
+          <pre class="command-block" id="pwnExploitTemplate">${escapeHtml(exploitTemplate)}</pre>
+        </div>`;
       bindPwnEnvironmentPanel();
     }
     function bindPwnEnvironmentPanel() {
@@ -1876,6 +1955,9 @@ INDEX_HTML = r"""<!doctype html>
         $("activeProbe").checked = true;
         status("已填入 Pwn 本地 Target，并启用本机 Active probe", "success");
       };
+      $("pwnEnvironmentPanel").querySelectorAll("[data-copy-target]").forEach(copyButton => {
+        copyButton.onclick = () => copyTextFromElement(copyButton.dataset.copyTarget);
+      });
     }
     async function saveChallenge() {
       const challengeId = ensureChallengeId(false);

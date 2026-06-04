@@ -407,6 +407,14 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("renderPwnEnvironmentPanel();", html)
         self.assertIn('].join("\\n");', html)
         self.assertNotIn('].join("\\\\n");', html)
+        self.assertIn("function copyTextFromElement", html)
+        self.assertIn('data-copy-target="pwnEnterCommand"', html)
+        self.assertIn('id="pwnExploitTemplate"', html)
+        self.assertIn("pwntools exploit template", html)
+        self.assertIn("from pwn import *", html)
+        self.assertIn("--remote", html)
+        self.assertIn("args.host", html)
+        self.assertIn("cyclic_find", html)
 
     def test_index_renders_classical_crypto_evidence_summary(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))

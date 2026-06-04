@@ -133,7 +133,7 @@ scripts/forgeflag-control restart
 
 Hashcat is installed in the image, but GPU/OpenCL access depends on the Docker runtime. On OrbStack without a passed-through cracking device, the smoke test reports hashcat as skipped while John CPU dictionary checks can still run.
 
-For manual Pwn work, select a `Pwn` challenge in the Web UI. ForgeFlag shows a "Pwn 本地环境" panel with a ready-to-run Docker command, a `socat` service command for port `31337`, and a button that fills `tcp://127.0.0.1:31337`, `127.0.0.1,localhost`, and `Active probe` for the selected challenge. You can also enter the same environment directly:
+For manual Pwn work, select a `Pwn` challenge in the Web UI. ForgeFlag shows a "Pwn 本地环境" panel with copyable Docker, `socat`, and triage commands, plus a starter pwntools exploit template that can switch between local `process()` and remote `remote(host, port)` mode. The panel also includes a button that fills `tcp://127.0.0.1:31337`, `127.0.0.1,localhost`, and `Active probe` for the selected challenge. You can also enter the same environment directly:
 
 ```bash
 docker run --rm -it --platform linux/amd64 \
