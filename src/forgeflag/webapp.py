@@ -517,6 +517,10 @@ INDEX_HTML = r"""<!doctype html>
     .llm-settings[hidden] { display: none; }
     .llm-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .llm-status { color: var(--muted); font-size: 12px; }
+    .pwn-helper { border: 1px solid #cfe4dc; border-radius: 6px; background: #f7fcfa; padding: 12px; display: grid; gap: 10px; }
+    .pwn-helper[hidden] { display: none; }
+    .pwn-helper h3 { margin: 0; font-size: 14px; }
+    .command-block { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #111820; color: #e7eef4; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.45; }
     .category-bar, .status-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 16px; }
     .category-pill, .status-pill { background: white; color: var(--ink); border-color: var(--line); display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; }
     .category-pill.active, .status-pill.active { background: var(--accent); color: white; border-color: var(--accent); }
@@ -669,6 +673,7 @@ INDEX_HTML = r"""<!doctype html>
             <span class="llm-status" id="llmConfigStatus">配置未保存；保存后 API Key 会保存到本浏览器</span>
           </div>
         </div>
+        <div class="pwn-helper" id="pwnEnvironmentPanel" hidden></div>
       </div>
       <div class="tabs" style="margin-top:18px">
         <button class="active" data-tab="summary">Summary</button>
@@ -749,6 +754,7 @@ INDEX_HTML = r"""<!doctype html>
     const LLM_CONFIG_KEY = "forgeflag.llm.config.v1";
     const LLM_SAVED_KEYS_LIMIT = 10;
     const DEFAULT_ZHIPU_MODEL = "glm-5.1";
+    const PWN_LOCAL_TARGET = "tcp://127.0.0.1:31337";
     categories.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; $("category").appendChild(o); });
     function slugifyIdPart(value) {
       return String(value || "")
@@ -1043,6 +1049,7 @@ INDEX_HTML = r"""<!doctype html>
       renderCategoryFilters(challenges);
       renderStatusFilters(challenges);
       renderChallengeList();
+      renderPwnEnvironmentPanel();
       show(challenges, "raw");
     }
     function renderChallengeList() {
@@ -1051,6 +1058,7 @@ INDEX_HTML = r"""<!doctype html>
       const visible = state.challenges.filter(ch => (state.activeCategory === "all" || ch.category === state.activeCategory) && statusMatches(ch));
       if (!visible.length) {
         list.innerHTML = `<div class="empty-state">当前筛选暂无题目。</div>`;
+        renderPwnEnvironmentPanel();
         return;
       }
       list.innerHTML = renderChallengeGroups(visible);
@@ -1058,6 +1066,7 @@ INDEX_HTML = r"""<!doctype html>
         item.onclick = () => {
           state.selected = item.dataset.challengeId;
           renderChallengeList();
+          renderPwnEnvironmentPanel();
           loadTab(document.querySelector(".tabs button.active").dataset.tab).catch(e => show({error:e.message}));
         };
       });
@@ -1797,6 +1806,76 @@ INDEX_HTML = r"""<!doctype html>
       const known = preferred.filter(key => groups[key]);
       const rest = Object.keys(groups).filter(key => !preferred.includes(key)).sort();
       return [...known, ...rest];
+    }
+    function selectedChallenge() {
+      return state.challenges.find(ch => ch.challenge_id === state.selected) || null;
+    }
+    function shellQuote(value) {
+      const text = String(value || "");
+      return `'${text.replace(/'/g, `'\\''`)}'`;
+    }
+    function projectRelativeArtifact(path) {
+      const text = String(path || "");
+      const marker = "/.forgeflag/";
+      const index = text.indexOf(marker);
+      if (index >= 0) return "." + text.slice(index);
+      return text || "./chall";
+    }
+    function renderPwnEnvironmentPanel() {
+      const panel = $("pwnEnvironmentPanel");
+      const challenge = selectedChallenge();
+      if (!panel) return;
+      if (!challenge || challenge.category !== "pwn") {
+        panel.hidden = true;
+        panel.innerHTML = "";
+        return;
+      }
+      const artifactPath = projectRelativeArtifact(asList(challenge.attachment_paths)[0]);
+      const quotedArtifact = shellQuote(artifactPath);
+      const enterCommand = [
+        "# 在 ForgeFlag 项目根目录执行",
+        'docker run --rm -it --platform linux/amd64 -p 31337:31337 -v "$PWD:/workspace" -w /workspace forgeflag-ctf:latest bash'
+      ].join("\n");
+      const serviceCommand = [
+        `chmod +x ${quotedArtifact}`,
+        `socat TCP-LISTEN:31337,reuseaddr,fork EXEC:${quotedArtifact},pty,stderr`
+      ].join("\n");
+      const triageCommand = [
+        `file ${quotedArtifact}`,
+        `checksec --file ${quotedArtifact}`,
+        `gdb ${quotedArtifact}`
+      ].join("\n");
+      panel.hidden = false;
+      panel.innerHTML = `
+        <div class="card-head">
+          <div class="card-title">
+            <h3>Pwn 本地环境</h3>
+            <div class="meta">人工调试入口：进 Kali 工具容器、起本地题目服务，再让 ForgeFlag 连接本机端口。</div>
+          </div>
+          <span class="badge muted">forgeflag-ctf:latest</span>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="pwnFillTargetBtn" type="button">填入本地 Target</button>
+        </div>
+        <div class="kv-grid">
+          <div class="kv"><span>Target</span><strong>${escapeHtml(PWN_LOCAL_TARGET)}</strong><div class="meta">运行前勾选 Active probe，Allowed Hosts 包含 127.0.0.1。</div></div>
+          <div class="kv"><span>Artifact</span><strong>${escapeHtml(artifactPath)}</strong><div class="meta">${asList(challenge.attachment_paths).length ? "已按 Web 上传附件生成路径" : "未上传附件时请在容器内改成真实二进制路径"}</div></div>
+          <div class="kv"><span>Manual mode</span><strong>Docker + socat + pwntools</strong><div class="meta">适合 ret2win、格式化字符串、栈溢出等题型人工复现。</div></div>
+        </div>
+        <div><strong>进入 Pwn 容器</strong><pre class="command-block">${escapeHtml(enterCommand)}</pre></div>
+        <div><strong>容器内启动题目服务</strong><pre class="command-block">${escapeHtml(serviceCommand)}</pre></div>
+        <div><strong>容器内手工分析</strong><pre class="command-block">${escapeHtml(triageCommand)}</pre></div>`;
+      bindPwnEnvironmentPanel();
+    }
+    function bindPwnEnvironmentPanel() {
+      const button = $("pwnFillTargetBtn");
+      if (!button) return;
+      button.onclick = () => {
+        $("target").value = PWN_LOCAL_TARGET;
+        $("allowedHosts").value = "127.0.0.1,localhost";
+        $("activeProbe").checked = true;
+        status("已填入 Pwn 本地 Target，并启用本机 Active probe", "success");
+      };
     }
     async function saveChallenge() {
       const challengeId = ensureChallengeId(false);

@@ -387,6 +387,27 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn('$("llmClearSavedKeys").onclick', html)
         self.assertIn("选择已保存 Key", html)
 
+    def test_index_contains_pwn_environment_helper(self) -> None:
+        handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
+
+        html = handler_cls.render_index()
+
+        self.assertIn('id="pwnEnvironmentPanel"', html)
+        self.assertIn("Pwn 本地环境", html)
+        self.assertIn("function renderPwnEnvironmentPanel", html)
+        self.assertIn("function selectedChallenge", html)
+        self.assertIn("function shellQuote", html)
+        self.assertIn("forgeflag-ctf:latest", html)
+        self.assertIn("--platform linux/amd64", html)
+        self.assertIn("在 ForgeFlag 项目根目录执行", html)
+        self.assertNotIn("cd /Users/", html)
+        self.assertIn("socat TCP-LISTEN:31337,reuseaddr,fork EXEC:", html)
+        self.assertIn("tcp://127.0.0.1:31337", html)
+        self.assertIn("Active probe", html)
+        self.assertIn("renderPwnEnvironmentPanel();", html)
+        self.assertIn('].join("\\n");', html)
+        self.assertNotIn('].join("\\\\n");', html)
+
     def test_index_renders_classical_crypto_evidence_summary(self) -> None:
         handler_cls = create_handler(Path("/tmp/forgeflag-test.sqlite"))
 
