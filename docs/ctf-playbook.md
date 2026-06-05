@@ -284,7 +284,7 @@ scripts/forgeflag-control start
 scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --keep --strict
 ```
 
-The expanded benchmark generates safe local fixtures from public CTF writeup patterns instead of vendoring original challenge archives. It currently covers 73 cases: Web, Forensics, Traffic, Reverse, Pwn, and Misc each have at least 10 cases; Crypto has 13 cases. The current strict result is 73/73 through the Web API.
+The expanded benchmark generates safe local fixtures from public CTF writeup patterns instead of vendoring original challenge archives. It currently covers 74 cases: Web has 11 cases, Crypto has 13 cases, and Forensics, Traffic, Reverse, Pwn, and Misc each have 10 cases. The current strict result is 74/74 through the Web API.
 
 ## Gaps To Add Next
 
