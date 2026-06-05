@@ -733,6 +733,51 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("io.interactive()", script)
         self.assertIn("```python", writeup["markdown"])
 
+    def test_pwn_ret2win_writeup_outputs_usable_exploit_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="pwn-ret2win-writeup",
+                solver="PwnSolver",
+                finding="Identified pwn source vulnerability pattern",
+                evidence={
+                    "workflow_guess": "ret2win",
+                    "exploit_plan": {
+                        "workflow": "ret2win",
+                        "symbol": "win",
+                        "crash_harness": "Send cyclic(512), then inspect the crashing instruction pointer.",
+                        "cyclic_offset": "Use cyclic_find(core.rip) to compute the exact offset.",
+                        "payload_template": "payload = b'A' * offset + p64(elf.symbols['win'])",
+                    },
+                },
+                confidence=0.78,
+                next_action="Crash with a cyclic pattern, compute the offset, then send padding plus win.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="pwn-ret2win-writeup",
+            category=ChallengeCategory.PWN,
+            title="ret2win",
+            attachment_paths=("/tmp/ret2win",),
+        )
+
+        report = ReportBuilder().build("pwn-ret2win-writeup", (), findings, [], challenge=challenge)
+
+        writeup = report["writeup"]
+        steps = {section["title"]: section for section in writeup["sections"]}["复现步骤"]["steps"]
+        script = writeup["exploit_script"]["content"]
+        self.assertEqual(writeup["exploit_script"]["filename"], "exploit_pwn_ret2win_writeup.py")
+        self.assertIn("本地模式", steps[0])
+        self.assertIn("--offset", steps[0])
+        self.assertIn("--remote", steps[1])
+        self.assertIn('parser.add_argument("--find-offset"', script)
+        self.assertIn('parser.add_argument("--offset", type=int', script)
+        self.assertIn("cyclic(512)", script)
+        self.assertIn('elf.symbols["win"]', script)
+        self.assertIn("remote(args.host, args.port)", script)
+        self.assertIn("process(args.binary)", script)
+        self.assertIn("io.interactive()", script)
+        self.assertIn("```python", writeup["markdown"])
+
     def test_writeup_describes_extra_png_idat_reproduction_steps(self) -> None:
         findings = [
             Finding(

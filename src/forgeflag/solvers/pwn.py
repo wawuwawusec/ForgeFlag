@@ -386,6 +386,7 @@ def _dangerous_symbol_mentions(text: str) -> list[str]:
 def _ret2win_exploit_plan(symbol: str) -> dict[str, object]:
     return {
         "workflow": "ret2win",
+        "symbol": symbol,
         "crash_harness": (
             "Run the binary locally or against the remote service with a pwntools script, send cyclic(512), "
             "then inspect the crashing instruction pointer/corefile."

