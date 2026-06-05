@@ -487,6 +487,42 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("flag{rsa_known_factors}", writeup["markdown"])
         self.assertIn("### Solve 脚本", writeup["markdown"])
 
+    def test_aes_ctr_reuse_writeup_outputs_crib_solve_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="ctr-writeup",
+                solver="CryptoSolver",
+                finding="Identified crypto primitive misuse pattern",
+                evidence={
+                    "pattern": "aes_ctr_nonce_reuse",
+                    "source_lines": [
+                        "cipher = AES.new(key, AES.MODE_CTR, nonce=b'fixed')",
+                        "ct1 = '001122'",
+                        "ct2 = '334455'",
+                    ],
+                },
+                confidence=0.72,
+                next_action="Collect ciphertexts, nonce, and known plaintext cribs; XOR ciphertexts to recover keystream bytes.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="ctr-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="CTR nonce reuse",
+        )
+
+        report = ReportBuilder().build("ctr-writeup", (), findings, [], challenge=challenge)
+
+        writeup = report["writeup"]
+        script = writeup["solve_script"]["content"]
+        self.assertEqual(writeup["solve_script"]["filename"], "solve_ctr_writeup.py")
+        self.assertIn("def xor_bytes", script)
+        self.assertIn("CIPHERTEXTS_HEX", script)
+        self.assertIn("KNOWN_PLAINTEXTS", script)
+        self.assertIn("keystream", script)
+        self.assertIn("AES-CTR", writeup["markdown"])
+        self.assertIn("### Solve 脚本", writeup["markdown"])
+
     def test_writeup_describes_direct_web_response_flag_steps(self) -> None:
         findings = [
             Finding(

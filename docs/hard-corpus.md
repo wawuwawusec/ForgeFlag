@@ -90,7 +90,7 @@ Result: 14/14 cases reached full score through the Web API.
 | Traffic | Follows shortlisted TCP streams and stores stream id, hints, payload sample, and recovered flags. |
 | Traffic | Exports HTTP objects and stores file name, path, size, SHA256, preview, and recovered flags. |
 | Traffic | Summarizes cleartext SMTP/FTP/IRC-style streams with protocol, commands, sample, and flags. |
-| Crypto | Recognizes AES-CTR nonce/keystream reuse and Poly1305 one-time-key algebra workflows. |
+| Crypto | Recognizes AES-CTR nonce/keystream reuse and emits a crib/keystream solve helper; also recognizes Poly1305 one-time-key algebra workflows. |
 | Forensics | Re-runs transforms on decoded mail/PowerShell content and recovers nested base64 flags. |
 | Pwn | Recognizes source-level `printf(user_input)` format string sinks and emits a pwntools probe/write harness. |
 | Pwn | Recognizes ret2win source patterns and records crash harness, cyclic offset, and pwntools payload template guidance. |

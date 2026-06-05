@@ -123,7 +123,7 @@ class ReportBuilder:
             reproduction_steps = _reproduction_steps(path_steps, trace_path, replay_steps, attachments, accepted_flag=accepted_flag)
             approach_body = _approach_summary(path_steps, findings)
             exploit_script = None
-            solve_script = _solve_script_doc(challenge_id, path_steps)
+            solve_script = _solve_script_doc(challenge_id, path_steps, findings)
 
         sections = [
             {
@@ -625,8 +625,13 @@ def _pwn_exploit_script_doc(
     }
 
 
-def _solve_script_doc(challenge_id: str, path_steps: list[dict[str, Any]]) -> dict[str, str] | None:
-    rsa_recovery = _first_nested(path_steps, "rsa_recovery")
+def _solve_script_doc(
+    challenge_id: str,
+    path_steps: list[dict[str, Any]],
+    findings: list[Finding],
+) -> dict[str, str] | None:
+    evidence_steps = [*path_steps, *(_finding_step_from_finding(finding) for finding in findings)]
+    rsa_recovery = _first_nested(evidence_steps, "rsa_recovery")
     if rsa_recovery:
         parameters = rsa_recovery.get("parameters")
         if isinstance(parameters, dict) and {"n", "e", "c"}.issubset(parameters):
@@ -636,7 +641,31 @@ def _solve_script_doc(challenge_id: str, path_steps: list[dict[str, Any]]) -> di
                 "language": "python",
                 "content": _rsa_solve_script(rsa_recovery),
             }
+    primitive = _first_crypto_primitive_pattern(evidence_steps)
+    if primitive and primitive.get("pattern") == "aes_ctr_nonce_reuse":
+        slug = _safe_filename_slug(challenge_id)
+        return {
+            "filename": f"solve_{slug}.py",
+            "language": "python",
+            "content": _aes_ctr_reuse_solve_script(primitive),
+        }
     return None
+
+
+def _finding_step_from_finding(finding: Finding) -> dict[str, Any]:
+    return {
+        "solver": finding.solver,
+        "finding": finding.finding,
+        "evidence": finding.evidence,
+    }
+
+
+def _first_crypto_primitive_pattern(path_steps: list[dict[str, Any]]) -> dict[str, Any]:
+    for step in path_steps:
+        evidence = step.get("evidence")
+        if isinstance(evidence, dict) and evidence.get("pattern"):
+            return evidence
+    return {}
 
 
 def _rsa_solve_script(recovery: dict[str, Any]) -> str:
@@ -674,6 +703,82 @@ def main():
         raise SystemExit("Need p/q or d; try RsaCtfTool/Sage for harder RSA variants.")
     plaintext = long_to_bytes(m)
     print(plaintext.decode(errors="replace"))
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _aes_ctr_reuse_solve_script(pattern: dict[str, Any]) -> str:
+    source_lines = _string_list(pattern.get("source_lines"))
+    source_comment = "\n".join(f"# evidence: {line}" for line in source_lines[:6])
+    if source_comment:
+        source_comment += "\n"
+    return f"""#!/usr/bin/env python3
+from __future__ import annotations
+
+import binascii
+
+{source_comment}# AES-CTR nonce reuse crib helper.
+# Fill these with the reused-nonce CTR ciphertexts from the challenge.
+CIPHERTEXTS_HEX = [
+    "",  # ct1 hex
+    "",  # ct2 hex
+]
+
+# Add any known plaintext snippets at the matching offset.
+# Example: (0, b"flag{{") means ciphertext index 0 starts with b"flag{{".
+KNOWN_PLAINTEXTS = [
+    # (0, b"flag{{"),
+]
+
+
+def unhex(value: str) -> bytes:
+    value = value.strip().replace(" ", "").replace("\\n", "")
+    return binascii.unhexlify(value) if value else b""
+
+
+def xor_bytes(left: bytes, right: bytes) -> bytes:
+    return bytes(a ^ b for a, b in zip(left, right))
+
+
+def printable(data: bytes) -> str:
+    return "".join(chr(byte) if 32 <= byte < 127 else "." for byte in data)
+
+
+def recover_keystream(ciphertexts: list[bytes]) -> bytearray:
+    max_len = max((len(item) for item in ciphertexts), default=0)
+    keystream = bytearray(b"\\x00" * max_len)
+    known = bytearray(b"\\x00" * max_len)
+    for index, plaintext in KNOWN_PLAINTEXTS:
+        ct = ciphertexts[index]
+        piece = xor_bytes(ct[:len(plaintext)], plaintext)
+        keystream[:len(piece)] = piece
+        known[:len(piece)] = b"\\x01" * len(piece)
+    return keystream, known
+
+
+def main() -> None:
+    ciphertexts = [unhex(value) for value in CIPHERTEXTS_HEX if value.strip()]
+    if len(ciphertexts) < 2:
+        raise SystemExit("Need at least two ciphertext hex strings encrypted with the same CTR nonce.")
+
+    print("[+] ciphertext XORs reveal plaintext XORs under CTR nonce reuse")
+    for left_index in range(len(ciphertexts)):
+        for right_index in range(left_index + 1, len(ciphertexts)):
+            mixed = xor_bytes(ciphertexts[left_index], ciphertexts[right_index])
+            print(f"ct{{left_index}} xor ct{{right_index}} = {{mixed.hex()}}")
+            print(f"preview: {{printable(mixed)}}")
+
+    keystream, known = recover_keystream(ciphertexts)
+    if any(known):
+        print("[+] recovered plaintext with known keystream bytes")
+        for index, ct in enumerate(ciphertexts):
+            recovered = bytes(c ^ k if marker else ord(".") for c, k, marker in zip(ct, keystream, known))
+            print(f"pt{{index}} = {{printable(recovered)}}")
+    else:
+        print("[!] Add cribs to KNOWN_PLAINTEXTS, then rerun to recover keystream bytes.")
 
 
 if __name__ == "__main__":
