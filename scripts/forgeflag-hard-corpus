@@ -103,6 +103,16 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    rsa_low_exponent = WORKDIR / "rsa-low-exponent.txt"
+    rsa_message = int.from_bytes(b"flag{hard_rsa_low_exponent}", "big")
+    rsa_e = 3
+    rsa_n = 2**521 - 1
+    rsa_c = rsa_message**rsa_e
+    rsa_low_exponent.write_text(
+        f"RSA low public exponent challenge with no padding.\nn = {rsa_n}\ne = {rsa_e}\nc = {rsa_c}\n",
+        encoding="utf-8",
+    )
+
     traffic = WORKDIR / "dns-split-base32.pcap"
     write_dns_pcap(traffic, "flag{hard_dns_split}")
 
@@ -181,6 +191,7 @@ def build_fixtures() -> dict[str, Path]:
         "web_route_source": web_route_source,
         "crypto_ctr": crypto_ctr,
         "poly1305": poly1305,
+        "rsa_low_exponent": rsa_low_exponent,
         "traffic": traffic,
         "http_stream": http_stream,
         "http_object": http_object,
@@ -248,6 +259,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["Poly1305", "one-time", "algebra"],
             "source_url": "https://github.com/DownUnderCTF/Challenges_2024_Public",
             "improvement_hint": "LLM planner should route MAC algebra cases to Sage/Python solve-script generation.",
+        },
+        {
+            "challenge_id": "hard-crypto-rsa-low-exponent",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "RSA low exponent without padding",
+            "description": "CryptoHack/picoCTF-style RSA: e=3 and m^e is smaller than n, so exact integer root recovery should produce the plaintext.",
+            "attachments": [fixtures["rsa_low_exponent"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_rsa_low_exponent}",
+            "required_evidence": ["low_exponent_root", "flag{hard_rsa_low_exponent}", "integer_nth_root"],
+            "source_url": "https://cryptohack.org/challenges/rsa/",
+            "improvement_hint": "CryptoSolver should recover exact low-exponent plaintext roots and the Write-up should emit a direct replay script.",
         },
         {
             "challenge_id": "hard-traffic-dns-split",

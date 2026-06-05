@@ -176,7 +176,7 @@ ForgeFlag coverage today:
 - Transform chaining handles common reversible encodings.
 - Transform chaining now includes Caesar all-rotation search, Morse, and decimal/octal ASCII in addition to hex, Base32/Base64, binary ASCII, ROT13, URL, and HTML entity decoding.
 - CryptoSolver recovers single-byte XOR, supplied-key repeating XOR, and supplied-key Vigenere flags when ciphertext/key evidence is present.
-- RSA and hash triage are structured; known-factor RSA recovery now preserves parameters and emits a reproducible Python solve script in the Write-up.
+- RSA and hash triage are structured; known-factor RSA recovery preserves parameters, and low-exponent exact-root RSA now recovers flags and emits a reproducible Python solve script in the Write-up.
 - AES-CTR nonce reuse now emits a Python crib/keystream helper script in the Write-up so the player can fill ciphertexts and known plaintext snippets.
 - Poly1305 one-time key reuse now emits a Sage-oriented algebra helper that builds message/tag equations and enumerates the small tag carry window.
 - The corpus smoke includes Base32 decoding and verifies the generated CTF write-up.

@@ -487,6 +487,44 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("flag{rsa_known_factors}", writeup["markdown"])
         self.assertIn("### Solve 脚本", writeup["markdown"])
 
+    def test_rsa_low_exponent_writeup_outputs_plaintext_root_solve_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="rsa-low-writeup",
+                solver="CryptoSolver",
+                finding="Recovered RSA flag candidates",
+                evidence={
+                    "rsa_recovery": {
+                        "method": "low_exponent_root",
+                        "flags": ["flag{rsa_low_exponent}"],
+                        "plaintext_preview": "flag{rsa_low_exponent}",
+                        "parameters": {
+                            "n": str(2**521 - 1),
+                            "e": "3",
+                            "c": "123456789",
+                        },
+                    }
+                },
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the RSA parameters as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="rsa-low-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="RSA low exponent",
+        )
+
+        report = ReportBuilder().build("rsa-low-writeup", ("flag{rsa_low_exponent}",), findings, [], challenge=challenge)
+
+        script = report["writeup"]["solve_script"]["content"]
+        self.assertEqual(report["writeup"]["solve_script"]["filename"], "solve_rsa_low_writeup.py")
+        self.assertIn('METHOD = "low_exponent_root"', script)
+        self.assertIn("integer_nth_root(c, e)", script)
+        self.assertIn("if root is None", script)
+        self.assertIn("flag{rsa_low_exponent}", report["writeup"]["markdown"])
+        self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
+
     def test_aes_ctr_reuse_writeup_outputs_crib_solve_script(self) -> None:
         findings = [
             Finding(

@@ -73,6 +73,29 @@ class CryptoSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Recovered RSA flag candidates")
         self.assertEqual(finding.evidence["rsa_recovery"]["method"], "known_factors")
 
+    def test_crypto_solver_recovers_rsa_low_exponent_plaintext_root(self) -> None:
+        e = 3
+        n = 2**521 - 1
+        message = int.from_bytes(b"flag{rsa_low_exponent}", "big")
+        c = message**e
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-rsa-low-exponent",
+                    category=ChallengeCategory.CRYPTO,
+                    description=f"n = {n}\ne = {e}\nc = {c}\n",
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-rsa-low-exponent")
+            finding = next(f for f in notebook.findings_for("crypto-rsa-low-exponent") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{rsa_low_exponent}"])
+        self.assertEqual(finding.finding, "Recovered RSA flag candidates")
+        self.assertEqual(finding.evidence["rsa_recovery"]["method"], "low_exponent_root")
+
     def test_crypto_solver_recovers_python_random_xor_flag_from_attachment(self) -> None:
         script = """
 import random

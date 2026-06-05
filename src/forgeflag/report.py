@@ -698,6 +698,21 @@ q = {values["q"]}
 d = {values["d"]}
 
 
+def integer_nth_root(value, degree):
+    low = 0
+    high = 1 << ((value.bit_length() + degree - 1) // degree)
+    while low <= high:
+        mid = (low + high) // 2
+        powered = mid**degree
+        if powered == value:
+            return mid
+        if powered < value:
+            low = mid + 1
+        else:
+            high = mid - 1
+    return None
+
+
 def main():
     global d
     if d:
@@ -706,6 +721,11 @@ def main():
         phi = (p - 1) * (q - 1)
         d = pow(e, -1, phi)
         m = pow(c, d, n)
+    elif METHOD == "low_exponent_root":
+        root = integer_nth_root(c, e)
+        if root is None:
+            raise SystemExit("Ciphertext is not an exact e-th power; try Sage/Coppersmith/RsaCtfTool.")
+        m = root
     else:
         raise SystemExit("Need p/q or d; try RsaCtfTool/Sage for harder RSA variants.")
     plaintext = long_to_bytes(m)
