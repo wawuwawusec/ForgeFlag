@@ -176,7 +176,7 @@ ForgeFlag coverage today:
 - Transform chaining handles common reversible encodings.
 - Transform chaining now includes Caesar all-rotation search, Morse, and decimal/octal ASCII in addition to hex, Base32/Base64, binary ASCII, ROT13, URL, and HTML entity decoding.
 - CryptoSolver recovers single-byte XOR, supplied-key repeating XOR, and supplied-key Vigenere flags when ciphertext/key evidence is present.
-- RSA and hash triage are structured.
+- RSA and hash triage are structured; known-factor RSA recovery now preserves parameters and emits a reproducible Python solve script in the Write-up.
 - The corpus smoke includes Base32 decoding and verifies the generated CTF write-up.
 - PNG misc/stego triage should inspect abnormal extra IDAT chunks as possible independent zlib payloads; truncated length fields can still carry recoverable flag text.
 
@@ -290,7 +290,7 @@ The expanded benchmark generates safe local fixtures from public CTF writeup pat
 ## Gaps To Add Next
 
 - Web: API option leakage, robots.txt discovery, simple form capture, and SSRF/path traversal evidence.
-- Crypto: unknown-key Vigenere/substitution hints, XOR cribbing, and RSA solve-script generation.
+- Crypto: unknown-key Vigenere/substitution hints, XOR cribbing, and Sage/LLL solve-script generation for harder RSA/lattice cases.
 - Misc: small scripting puzzle harnesses and sandbox/pickle blackbox notes.
 - Forensics: zip-with-comment/password hint, PNG/JPEG visual preview, and disk image timeline fixtures.
 - Traffic: DNS label reconstruction across multiple packets, TXT extraction, HTTP object export, SMTP/FTP exfil, and stream reassembly.

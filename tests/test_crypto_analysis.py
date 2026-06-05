@@ -40,6 +40,11 @@ class CryptoAnalysisTest(unittest.TestCase):
 
         self.assertEqual(result["flags"], ["flag{rsa_known_factors}"])
         self.assertEqual(result["method"], "known_factors")
+        self.assertEqual(result["parameters"]["n"], str(n))
+        self.assertEqual(result["parameters"]["e"], str(e))
+        self.assertEqual(result["parameters"]["c"], str(c))
+        self.assertEqual(result["parameters"]["p"], str(p))
+        self.assertEqual(result["parameters"]["q"], str(q))
 
     def test_recover_python_random_xor_flags_from_small_seed_script(self) -> None:
         script = """

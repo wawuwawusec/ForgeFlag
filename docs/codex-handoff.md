@@ -68,7 +68,7 @@ Implemented so far:
 - Crypto/RSA triage:
   - `forgeflag.crypto_analysis.rsa_summary_from_text`
   - extracts common RSA parameters (`n`, `e`, `c`, `p`, `q`, `d`, `phi`) and PEM key markers
-  - `CryptoSolver` records RSA hints and recommends RsaCtfTool/SageMath/Z3 follow-up
+  - `CryptoSolver` records RSA hints, recovers known-factor RSA flags, preserves `n/e/c/p/q/d`, and emits a reproducible `solve_<challenge>.py` script in the Write-up
   - `CryptoSolver` recovers common classical crypto flags for single-byte XOR, supplied-key repeating XOR, and supplied-key Vigenere
 - Hash/password triage:
   - `forgeflag.hash_analysis.hash_summary_from_text`

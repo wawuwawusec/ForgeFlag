@@ -444,6 +444,49 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("0x37", " ".join(steps))
         self.assertIn("flag{expanded_single_xor}", " ".join(steps))
 
+    def test_rsa_writeup_outputs_reproducible_solve_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="rsa-writeup",
+                solver="CryptoSolver",
+                finding="Recovered RSA flag candidates",
+                evidence={
+                    "rsa_recovery": {
+                        "method": "known_factors",
+                        "flags": ["flag{rsa_known_factors}"],
+                        "plaintext_preview": "flag{rsa_known_factors}",
+                        "parameters": {
+                            "n": "499",
+                            "e": "5",
+                            "c": "42",
+                            "p": "31",
+                            "q": "17",
+                        },
+                    }
+                },
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the RSA parameters as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="rsa-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="RSA known factors",
+        )
+
+        report = ReportBuilder().build("rsa-writeup", ("flag{rsa_known_factors}",), findings, [], challenge=challenge)
+
+        writeup = report["writeup"]
+        script = writeup["solve_script"]["content"]
+        self.assertEqual(writeup["solve_script"]["filename"], "solve_rsa_writeup.py")
+        self.assertIn("n = 499", script)
+        self.assertIn("p = 31", script)
+        self.assertIn("q = 17", script)
+        self.assertIn("pow(e, -1, phi)", script)
+        self.assertIn("long_to_bytes(m)", script)
+        self.assertIn("flag{rsa_known_factors}", writeup["markdown"])
+        self.assertIn("### Solve 脚本", writeup["markdown"])
+
     def test_writeup_describes_direct_web_response_flag_steps(self) -> None:
         findings = [
             Finding(

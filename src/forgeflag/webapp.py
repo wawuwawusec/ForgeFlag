@@ -1684,6 +1684,7 @@ INDEX_HTML = r"""<!doctype html>
       const writeup = data.writeup || {};
       const sections = orderedWriteupSections(asList(writeup.sections));
       const exploit = writeup.exploit_script || null;
+      const solve = writeup.solve_script || null;
       return `
         ${sections.map(section => `
           <div class="result-card writeup-section">
@@ -1704,6 +1705,16 @@ INDEX_HTML = r"""<!doctype html>
               </div>
             </div>
             <pre class="writeup-code"><code>${escapeHtml(exploit.content)}</code></pre>
+          </div>` : ""}
+        ${solve && solve.content ? `
+          <div class="result-card writeup-section">
+            <div class="card-head">
+              <div class="card-title">
+                <h3>Solve 脚本</h3>
+                <div class="meta">${escapeHtml(solve.filename || "solve.py")}</div>
+              </div>
+            </div>
+            <pre class="writeup-code"><code>${escapeHtml(solve.content)}</code></pre>
           </div>` : ""}
         ${sections.length ? "" : `<div class="empty-state">还没有可展示的解题思路和复现步骤。</div>`}`;
     }

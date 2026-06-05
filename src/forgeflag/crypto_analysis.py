@@ -74,6 +74,7 @@ def recover_rsa_flags_from_text(text: str) -> dict[str, object]:
         "method": method,
         "flags": list(extract_flags(preview)),
         "plaintext_preview": preview[:500],
+        "parameters": {name: str(value) for name, value in parameters.items()},
     }
 
 
