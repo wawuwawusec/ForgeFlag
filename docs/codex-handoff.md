@@ -53,6 +53,7 @@ Implemented so far:
 - Local pwn/reverse binary triage:
   - PwnSolver runs `file`, `strings`, `checksec`, `ROPgadget`, and `ropper` against registered attachments when IDA MCP is disabled
   - PwnSolver runs a bounded `tcp_interact` transcript against scoped service targets when no binary attachment is registered and active probing is enabled
+  - PwnSolver recognizes source-level `printf(user_input)` format string sinks and emits a pwntools `%p` probe / offset replay / optional `fmtstr_payload` write harness
   - PwnSolver recognizes source-level ret2win patterns from win-like functions plus unsafe input calls and emits a crash harness, cyclic offset, win symbol, and configurable pwntools exploit script
   - PwnSolver infers ret2win workflow hints from binary tool output when win-like symbols and dangerous input symbols appear in `strings`/tool evidence, then carries the symbol into the generated exploit script
   - ReverseSolver runs `file`, `strings`, `ROPgadget`, and `ropper` against registered attachments when IDA MCP is disabled

@@ -778,6 +778,49 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("io.interactive()", script)
         self.assertIn("```python", writeup["markdown"])
 
+    def test_pwn_format_string_writeup_outputs_probe_exploit_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="pwn-format-source-writeup",
+                solver="PwnSolver",
+                finding="Identified pwn source vulnerability pattern",
+                evidence={
+                    "workflow_guess": "format_string",
+                    "exploit_plan": {
+                        "workflow": "format_string",
+                        "offset_probe": "%p." * 24,
+                        "payload_template": "fmtstr_payload(FMT_OFFSET, {WRITE_TARGET: WRITE_VALUE}, write_size='short')",
+                    },
+                },
+                confidence=0.74,
+                next_action="Build a pwntools harness and find the stack offset with %p probes.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="pwn-format-source-writeup",
+            category=ChallengeCategory.PWN,
+            title="format string",
+            attachment_paths=("/tmp/vuln",),
+        )
+
+        report = ReportBuilder().build("pwn-format-source-writeup", (), findings, [], challenge=challenge)
+
+        writeup = report["writeup"]
+        steps = {section["title"]: section for section in writeup["sections"]}["复现步骤"]["steps"]
+        script = writeup["exploit_script"]["content"]
+        self.assertEqual(writeup["exploit_script"]["filename"], "exploit_pwn_format_source_writeup.py")
+        self.assertIn("--probe", steps[0])
+        self.assertIn("--offset", steps[1])
+        self.assertIn('parser.add_argument("--probe"', script)
+        self.assertIn('parser.add_argument("--offset", type=int', script)
+        self.assertIn('parser.add_argument("--write-target"', script)
+        self.assertIn('parser.add_argument("--write-value"', script)
+        self.assertIn("fmtstr_payload(args.offset", script)
+        self.assertIn("remote(args.host, args.port)", script)
+        self.assertIn("process(args.binary)", script)
+        self.assertIn("io.interactive()", script)
+        self.assertIn("```python", writeup["markdown"])
+
     def test_writeup_describes_extra_png_idat_reproduction_steps(self) -> None:
         findings = [
             Finding(

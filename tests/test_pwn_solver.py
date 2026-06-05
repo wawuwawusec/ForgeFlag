@@ -124,6 +124,9 @@ class PwnSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Identified pwn source vulnerability pattern")
         self.assertEqual(finding.evidence["pattern"], "format string")
         self.assertIn("printf", finding.evidence["dangerous_calls"])
+        self.assertEqual(finding.evidence["exploit_plan"]["workflow"], "format_string")
+        self.assertIn("%p", finding.evidence["exploit_plan"]["offset_probe"])
+        self.assertIn("fmtstr_payload", finding.evidence["exploit_plan"]["payload_template"])
         self.assertIn("pwntools", finding.next_action)
 
     def test_pwn_solver_identifies_ret2win_source_and_replay_plan(self) -> None:

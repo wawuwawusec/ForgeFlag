@@ -248,6 +248,7 @@ Common first moves:
 ForgeFlag coverage today:
 
 - Local pwn triage uses file/strings/checksec/ROPgadget/ropper and optional IDA MCP.
+- Source-level format-string patterns now produce a pwntools harness for `%p` offset probing, offset replay, and optional `fmtstr_payload` target writes.
 - Source-level ret2win patterns now produce a crash harness, cyclic offset instruction, and a configurable pwntools exploit script with `--find-offset`, `--offset`, local binary mode, and remote host/port mode.
 - Binary triage can infer ret2win workflow hints when tool output exposes win-like symbols and unsafe input symbols, then pass the win symbol into the generated exploit script.
 - The corpus smoke compiles a small pwn-style binary and verifies strings/checksec baseline behavior.
