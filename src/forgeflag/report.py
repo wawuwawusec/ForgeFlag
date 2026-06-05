@@ -111,7 +111,10 @@ class ReportBuilder:
         accepted_flag = accepted_flags[0] if accepted_flags else None
         pwn_exploit_plan = _first_pwn_exploit_plan(findings)
         if pwn_exploit_plan:
-            reproduction_steps = _pwn_exploit_reproduction_steps(pwn_exploit_plan, attachments)
+            reproduction_steps = _with_final_flag_step(
+                _pwn_exploit_reproduction_steps(pwn_exploit_plan, attachments),
+                accepted_flag,
+            )
             approach_body = _pwn_exploit_approach_summary(pwn_exploit_plan)
             exploit_script = _pwn_exploit_script_doc(challenge_id, pwn_exploit_plan, attachments)
         else:
@@ -524,11 +527,17 @@ def _reproduction_steps(
             f"按 DNS exfil 常见的 base32/base64/hex 方式解码，得到 {flag}，提交该 flag。",
         ]
     if replay_steps:
-        return replay_steps[:5]
+        return _with_final_flag_step(replay_steps[:5], accepted_flag)
     trace_steps = _trace_replay_steps(trace_path)
     if trace_steps:
-        return trace_steps[:5]
-    return _fallback_replay_steps(path_steps)
+        return _with_final_flag_step(trace_steps[:5], accepted_flag)
+    return _with_final_flag_step(_fallback_replay_steps(path_steps), accepted_flag)
+
+
+def _with_final_flag_step(steps: list[str], accepted_flag: str | None = None) -> list[str]:
+    if not accepted_flag or any(accepted_flag in step for step in steps):
+        return steps
+    return [*steps, f"提交 {accepted_flag}，verifier 验证通过。"]
 
 
 def _first_pwn_exploit_plan(findings: list[Finding]) -> dict[str, Any]:

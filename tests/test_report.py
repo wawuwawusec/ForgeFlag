@@ -103,6 +103,36 @@ class ReportBuilderTest(unittest.TestCase):
         )
         self.assertNotIn("Raw JSON", writeup["markdown"])
 
+    def test_writeup_generic_replay_steps_include_verified_flag(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="web-visible-generic",
+                solver="ReconSolver",
+                finding="Found visible text flag candidate",
+                evidence={"flag_candidates": ["flag{generic_visible}"]},
+                confidence=0.82,
+                hypothesis="The prompt text contains a flag-like token.",
+                next_action="Verify whether the text candidate is the intended flag, then record the shortest reproduction path.",
+            )
+        ]
+        observations = [
+            Observation(
+                challenge_id="web-visible-generic",
+                source="ReconSolver",
+                kind="flag_candidate",
+                summary="flag{generic_visible}",
+                evidence={"candidate": "flag{generic_visible}"},
+            )
+        ]
+
+        report = ReportBuilder().build("web-visible-generic", ("flag{generic_visible}",), findings, observations)
+
+        sections = {section["title"]: section for section in report["writeup"]["sections"]}
+        replay_text = "\n".join(sections["复现步骤"]["steps"])
+        self.assertIn("flag{generic_visible}", replay_text)
+        self.assertIn("flag{generic_visible}", report["writeup"]["markdown"])
+        self.assertEqual([section["title"] for section in report["writeup"]["sections"]], ["解题思路", "复现步骤"])
+
     def test_report_includes_solve_trace_and_shortest_discovery_path(self) -> None:
         findings = [
             Finding(
