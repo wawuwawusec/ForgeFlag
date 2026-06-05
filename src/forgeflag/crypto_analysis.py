@@ -121,6 +121,9 @@ def recover_rsa_flags_from_text(text: str) -> dict[str, object]:
         root = _integer_nth_root(c, e)
         if root is not None:
             plaintext = _int_to_bytes(root)
+    if not plaintext and _is_probable_prime(n):
+        method = "prime_modulus"
+        plaintext = _rsa_decrypt_with_prime_modulus(n, e, c)
 
     preview = plaintext.decode("utf-8", errors="replace") if plaintext else ""
     return {
@@ -253,6 +256,8 @@ def _rsa_hints(parameters: dict[str, str], has_public_key: bool, has_private_key
         hints.append("broadcast")
     if parameters.get("e") in {"3", "5", "17"}:
         hints.append("low_exponent")
+    if "n" in parameters and _looks_prime_decimal(parameters["n"]):
+        hints.append("prime_modulus")
     if {"p", "q"}.issubset(parameters):
         hints.append("known_factors")
     if has_public_key:
@@ -268,6 +273,14 @@ def _parse_int(value: str) -> int:
 
 def _rsa_decrypt_with_factors(n: int, e: int, c: int, p: int, q: int) -> bytes:
     phi = (p - 1) * (q - 1)
+    if math.gcd(e, phi) != 1:
+        return b""
+    d = pow(e, -1, phi)
+    return _int_to_bytes(pow(c, d, n))
+
+
+def _rsa_decrypt_with_prime_modulus(n: int, e: int, c: int) -> bytes:
+    phi = n - 1
     if math.gcd(e, phi) != 1:
         return b""
     d = pow(e, -1, phi)
@@ -308,6 +321,41 @@ def _crt_combine(residues: tuple[int, ...], moduli: tuple[int, ...]) -> int:
         partial = modulus_product // modulus
         total += residue * partial * pow(partial, -1, modulus)
     return total % modulus_product
+
+
+def _looks_prime_decimal(value: str) -> bool:
+    try:
+        return _is_probable_prime(_parse_int(value))
+    except ValueError:
+        return False
+
+
+def _is_probable_prime(value: int) -> bool:
+    if value < 2:
+        return False
+    small_primes = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37)
+    if value in small_primes:
+        return True
+    if any(value % prime == 0 for prime in small_primes):
+        return False
+    d = value - 1
+    shifts = 0
+    while d % 2 == 0:
+        shifts += 1
+        d //= 2
+    for base in (2, 3, 5, 7, 11, 13, 17):
+        if base >= value:
+            continue
+        candidate = pow(base, d, value)
+        if candidate in (1, value - 1):
+            continue
+        for _ in range(shifts - 1):
+            candidate = pow(candidate, 2, value)
+            if candidate == value - 1:
+                break
+        else:
+            return False
+    return True
 
 
 def _pow_with_signed_exponent(base: int, exponent: int, modulus: int) -> int:

@@ -113,6 +113,17 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    rsa_prime_modulus = WORKDIR / "rsa-prime-modulus.txt"
+    prime_n = 2**521 - 1
+    prime_e = 65537
+    prime_message = int.from_bytes(b"flag{hard_rsa_prime_modulus}", "big")
+    prime_c = pow(prime_message, prime_e, prime_n)
+    rsa_prime_modulus.write_text(
+        "RSA prime modulus challenge: n is prime, so phi is n - 1.\n"
+        f"n = {prime_n}\ne = {prime_e}\nc = {prime_c}\n",
+        encoding="utf-8",
+    )
+
     rsa_common_modulus = WORKDIR / "rsa-common-modulus.txt"
     common_message = int.from_bytes(b"flag{hard_rsa_common_modulus}", "big")
     common_n = 2**521 - 1
@@ -236,6 +247,7 @@ def build_fixtures() -> dict[str, Path]:
         "crypto_ctr": crypto_ctr,
         "poly1305": poly1305,
         "rsa_low_exponent": rsa_low_exponent,
+        "rsa_prime_modulus": rsa_prime_modulus,
         "rsa_common_modulus": rsa_common_modulus,
         "rsa_shared_prime": rsa_shared_prime,
         "rsa_broadcast": rsa_broadcast,
@@ -319,6 +331,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["low_exponent_root", "flag{hard_rsa_low_exponent}", "integer_nth_root"],
             "source_url": "https://cryptohack.org/challenges/rsa/",
             "improvement_hint": "CryptoSolver should recover exact low-exponent plaintext roots and the Write-up should emit a direct replay script.",
+        },
+        {
+            "challenge_id": "hard-crypto-rsa-prime-modulus",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "RSA prime modulus",
+            "description": "CryptoHack/picoCTF-style RSA: n itself is prime, so phi(n)=n-1 and private exponent recovery is direct.",
+            "attachments": [fixtures["rsa_prime_modulus"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_rsa_prime_modulus}",
+            "required_evidence": ["prime_modulus", "flag{hard_rsa_prime_modulus}", "decrypt_prime_modulus"],
+            "source_url": "https://cryptohack.org/challenges/rsa/",
+            "improvement_hint": "CryptoSolver should detect prime RSA modulus values and emit a phi=n-1 replay script.",
         },
         {
             "challenge_id": "hard-crypto-rsa-common-modulus",

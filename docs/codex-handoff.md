@@ -68,7 +68,7 @@ Implemented so far:
 - Crypto/RSA triage:
   - `forgeflag.crypto_analysis.rsa_summary_from_text`
   - extracts common RSA parameters (`n`, `e`, `c`, `p`, `q`, `d`, `phi`) plus numbered common-modulus/shared-prime/broadcast fields such as `e1/e2/c1/c2`, `n1/n2`, and `n3/c3`, and PEM key markers
-  - `CryptoSolver` records RSA hints, recovers known-factor, low-exponent exact-root, common-modulus, shared-prime, and broadcast RSA flags, preserves replay parameters, and emits a reproducible `solve_<challenge>.py` script in the Write-up
+  - `CryptoSolver` records RSA hints, recovers known-factor, low-exponent exact-root, prime-modulus, common-modulus, shared-prime, and broadcast RSA flags, preserves replay parameters, and emits a reproducible `solve_<challenge>.py` script in the Write-up
   - `CryptoSolver` recognizes AES-CTR nonce reuse and the Write-up emits a crib/keystream `solve_<challenge>.py` helper for filling ciphertexts and known plaintext snippets
   - `CryptoSolver` recognizes Poly1305 one-time key reuse and the Write-up emits a Sage-oriented algebra helper for message/tag equations and carry enumeration
   - `CryptoSolver` recovers common classical crypto flags for single-byte XOR, supplied-key repeating XOR, and supplied-key Vigenere
@@ -147,8 +147,8 @@ Implemented so far:
 - Web-run hard/expert CTF corpus benchmark:
   - `scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeup patterns
-  - Covers hidden Web APIs, source route/sink triage, crypto primitive misuse, RSA low-exponent, common-modulus, shared-prime, and broadcast recovery, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, ret2win pwn, pickle sandbox, and Web-to-Java chains
-  - Current strict result: 18/18 full score through the Web API
+  - Covers hidden Web APIs, source route/sink triage, crypto primitive misuse, RSA low-exponent, prime-modulus, common-modulus, shared-prime, and broadcast recovery, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, ret2win pwn, pickle sandbox, and Web-to-Java chains
+  - Current strict result: 19/19 full score through the Web API
 - Web-run expanded CTF corpus benchmark:
   - `scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeups, forums, challenge indexes, and benchmark papers

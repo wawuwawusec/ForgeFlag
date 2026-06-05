@@ -647,6 +647,44 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("flag{rsa_broadcast}", report["writeup"]["markdown"])
         self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
 
+    def test_rsa_prime_modulus_writeup_outputs_replay_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="rsa-prime-writeup",
+                solver="CryptoSolver",
+                finding="Recovered RSA flag candidates",
+                evidence={
+                    "rsa_recovery": {
+                        "method": "prime_modulus",
+                        "flags": ["flag{rsa_prime_modulus}"],
+                        "plaintext_preview": "flag{rsa_prime_modulus}",
+                        "parameters": {
+                            "n": str(2**521 - 1),
+                            "e": "65537",
+                            "c": "123456789",
+                        },
+                    }
+                },
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the RSA parameters as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="rsa-prime-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="RSA prime modulus",
+        )
+
+        report = ReportBuilder().build("rsa-prime-writeup", ("flag{rsa_prime_modulus}",), findings, [], challenge=challenge)
+
+        script = report["writeup"]["solve_script"]["content"]
+        self.assertEqual(report["writeup"]["solve_script"]["filename"], "solve_rsa_prime_writeup.py")
+        self.assertIn('METHOD = "prime_modulus"', script)
+        self.assertIn("m = decrypt_prime_modulus(n, e, c)", script)
+        self.assertIn("phi = n - 1", script)
+        self.assertIn("flag{rsa_prime_modulus}", report["writeup"]["markdown"])
+        self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
+
     def test_aes_ctr_reuse_writeup_outputs_crib_solve_script(self) -> None:
         findings = [
             Finding(

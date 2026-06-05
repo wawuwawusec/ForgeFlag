@@ -115,6 +115,20 @@ class CryptoAnalysisTest(unittest.TestCase):
         self.assertEqual(result["parameters"]["n3"], str(n3))
         self.assertEqual(result["parameters"]["c3"], str(c3))
 
+    def test_recover_rsa_flags_from_prime_modulus(self) -> None:
+        n = 2**521 - 1
+        e = 65537
+        message = int.from_bytes(b"flag{rsa_prime_modulus}", "big")
+        c = pow(message, e, n)
+
+        result = recover_rsa_flags_from_text(f"n = {n}\ne = {e}\nc = {c}\n")
+
+        self.assertEqual(result["flags"], ["flag{rsa_prime_modulus}"])
+        self.assertEqual(result["method"], "prime_modulus")
+        self.assertEqual(result["parameters"]["n"], str(n))
+        self.assertEqual(result["parameters"]["e"], str(e))
+        self.assertEqual(result["parameters"]["c"], str(c))
+
     def test_recover_python_random_xor_flags_from_small_seed_script(self) -> None:
         script = """
 import random

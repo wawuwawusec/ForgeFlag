@@ -750,6 +750,12 @@ def decrypt_with_factors(n, e, c, p, q):
     return pow(c, d, n)
 
 
+def decrypt_prime_modulus(n, e, c):
+    phi = n - 1
+    d = pow(e, -1, phi)
+    return pow(c, d, n)
+
+
 def shared_prime_recover(n1, n2, e, c1):
     p = math.gcd(n1, n2)
     if p <= 1 or p >= n1 or n1 % p:
@@ -805,6 +811,8 @@ def main():
         if root is None:
             raise SystemExit("Ciphertext is not an exact e-th power; try Sage/Coppersmith/RsaCtfTool.")
         m = root
+    elif METHOD == "prime_modulus":
+        m = decrypt_prime_modulus(n, e, c)
     elif METHOD == "common_modulus":
         m = common_modulus_recover(c1, c2, e1, e2, n)
     elif METHOD == "shared_prime":
