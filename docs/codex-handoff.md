@@ -153,9 +153,11 @@ Implemented so far:
   - Current strict result: 74/74 full score through the Web API
 - Browser-player Web UI benchmark:
   - `scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run`
+  - `scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --suite expanded`
   - Uses Playwright to operate the visible Web UI like a human player: save challenge, upload attachments, run, inspect Summary, inspect Write-up, and delete cleanup challenges
   - Supports deterministic, `--llm`, and `--both` comparison variants; `--both --list` is safe because it only lists variants without calling a model
   - Current first-pass result: 7/7 cases passed through the browser for Web, Crypto, Misc, Forensics, Traffic, Reverse, and Pwn
+  - Current expanded browser result: 74/74 cases passed through the browser; category split is Web 11, Crypto 13, and 10 each for Forensics, Traffic, Reverse, Pwn, and Misc
   - Setup is documented in `docs/web-player-benchmark.md`
 - CTF playbook notes:
   - `docs/ctf-playbook.md`

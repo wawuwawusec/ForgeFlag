@@ -53,6 +53,27 @@ Case results:
 ...
 ```
 
+Run the expanded 74-case suite through the same visible Web UI flow:
+
+```bash
+scripts/forgeflag-web-player-benchmark --url http://127.0.0.1:8080 --run --suite expanded
+```
+
+Current expanded browser result:
+
+```text
+ForgeFlag browser player benchmark: 74/74 passed
+Duration: 108.6s
+Category results:
+- crypto: 13/13
+- forensics: 10/10
+- misc: 10/10
+- pwn: 10/10
+- reverse: 10/10
+- traffic: 10/10
+- web: 11/11
+```
+
 Use `--json` when you need the raw Playwright reporter output for debugging:
 
 ```bash
