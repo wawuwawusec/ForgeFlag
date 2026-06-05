@@ -649,6 +649,13 @@ def _solve_script_doc(
             "language": "python",
             "content": _aes_ctr_reuse_solve_script(primitive),
         }
+    if primitive and primitive.get("pattern") == "poly1305_one_time_key_reuse":
+        slug = _safe_filename_slug(challenge_id)
+        return {
+            "filename": f"solve_{slug}.py",
+            "language": "python",
+            "content": _poly1305_reuse_solve_script(primitive),
+        }
     return None
 
 
@@ -779,6 +786,79 @@ def main() -> None:
             print(f"pt{{index}} = {{printable(recovered)}}")
     else:
         print("[!] Add cribs to KNOWN_PLAINTEXTS, then rerun to recover keystream bytes.")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _poly1305_reuse_solve_script(pattern: dict[str, Any]) -> str:
+    source_lines = _string_list(pattern.get("source_lines"))
+    source_comment = "\n".join(f"# evidence: {line}" for line in source_lines[:6])
+    if source_comment:
+        source_comment += "\n"
+    return f"""#!/usr/bin/env python3
+from __future__ import annotations
+
+{source_comment}# Poly1305 one-time key reuse algebra helper.
+# Run with Sage when possible: `sage -python solve.py`.
+P = 2**130 - 5
+TAG_MOD = 2**128
+
+# Fill with `(message_bytes, tag_int)` pairs that reused the same Poly1305 key.
+# Tags are little-endian integers in most CTF writeups; adjust parsing if needed.
+MESSAGE_TAG_PAIRS = [
+    # (bytes.fromhex(""), 0x0),
+    # (bytes.fromhex(""), 0x0),
+]
+
+
+def blocks(message: bytes) -> list[int]:
+    values = []
+    for index in range(0, len(message), 16):
+        chunk = message[index:index + 16]
+        values.append(int.from_bytes(chunk + b"\\x01", "little"))
+    return values
+
+
+def poly_expr(block_values, variable):
+    acc = 0
+    power = variable
+    for block in block_values:
+        acc += block * power
+        power *= variable
+    return acc
+
+
+def solve_candidates():
+    if len(MESSAGE_TAG_PAIRS) < 2:
+        raise SystemExit("Need at least two message/tag pairs with reused Poly1305 one-time key.")
+    try:
+        from sage.all import PolynomialRing, Zmod
+    except Exception as exc:
+        raise SystemExit("Install/run SageMath, then execute: sage -python solve.py") from exc
+
+    (m1, t1), (m2, t2) = MESSAGE_TAG_PAIRS[:2]
+    ring = PolynomialRing(Zmod(P), "r")
+    r = ring.gen()
+    diff_poly = poly_expr(blocks(m1), r) - poly_expr(blocks(m2), r)
+
+    candidates = []
+    # Poly1305 tags are reduced modulo 2^128, so lift by a small carry window.
+    for carry in range(-4, 5):
+        target = (int(t1) - int(t2) + carry * TAG_MOD) % P
+        equation = diff_poly - target
+        for root, _multiplicity in equation.roots():
+            candidates.append(int(root))
+            print(f"carry={{carry}} r={{hex(int(root))}}")
+    if not candidates:
+        print("No r candidates found. Check endian, tag parsing, and whether the pairs truly reused the key.")
+    return candidates
+
+
+def main() -> None:
+    solve_candidates()
 
 
 if __name__ == "__main__":

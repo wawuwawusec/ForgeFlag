@@ -523,6 +523,42 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("AES-CTR", writeup["markdown"])
         self.assertIn("### Solve 脚本", writeup["markdown"])
 
+    def test_poly1305_reuse_writeup_outputs_algebra_solve_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="poly-writeup",
+                solver="CryptoSolver",
+                finding="Identified crypto primitive misuse pattern",
+                evidence={
+                    "pattern": "poly1305_one_time_key_reuse",
+                    "source_lines": [
+                        "Poly1305 one-time MAC key was reused",
+                        "solve algebra equations over message/tag pairs",
+                    ],
+                },
+                confidence=0.72,
+                next_action="Extract message/tag pairs, model the reused one-time key equations, then solve with Sage.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="poly-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="Poly1305 reuse",
+        )
+
+        report = ReportBuilder().build("poly-writeup", (), findings, [], challenge=challenge)
+
+        writeup = report["writeup"]
+        script = writeup["solve_script"]["content"]
+        self.assertEqual(writeup["solve_script"]["filename"], "solve_poly_writeup.py")
+        self.assertIn("P = 2**130 - 5", script)
+        self.assertIn("MESSAGE_TAG_PAIRS", script)
+        self.assertIn("PolynomialRing", script)
+        self.assertIn("for carry", script)
+        self.assertIn(".roots()", script)
+        self.assertIn("Poly1305", writeup["markdown"])
+        self.assertIn("### Solve 脚本", writeup["markdown"])
+
     def test_writeup_describes_direct_web_response_flag_steps(self) -> None:
         findings = [
             Finding(
