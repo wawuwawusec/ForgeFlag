@@ -31,7 +31,11 @@ def rsa_summary_from_text(text: str) -> dict[str, object]:
     recommended_tools = []
     if parameters or has_public_key or has_private_key:
         recommended_tools.append("RsaCtfTool")
-    if {"n", "e", "c"}.issubset(parameters) or {"n", "e1", "e2", "c1", "c2"}.issubset(parameters):
+    if (
+        {"n", "e", "c"}.issubset(parameters)
+        or {"n", "e1", "e2", "c1", "c2"}.issubset(parameters)
+        or {"n1", "n2", "e", "c1"}.issubset(parameters)
+    ):
         recommended_tools.append("SageMath")
     if "low_exponent" in hints:
         recommended_tools.append("Z3")
@@ -65,6 +69,24 @@ def recover_rsa_flags_from_text(text: str) -> dict[str, object]:
             "flags": list(extract_flags(preview)),
             "plaintext_preview": preview[:500],
             "parameters": {name: str(value) for name, value in parameters.items()},
+        }
+
+    if {"n1", "n2", "e", "c1"}.issubset(parameters):
+        plaintext, factor = _rsa_shared_prime_recover(
+            parameters["n1"],
+            parameters["n2"],
+            parameters["e"],
+            parameters["c1"],
+        )
+        preview = plaintext.decode("utf-8", errors="replace") if plaintext else ""
+        replay_parameters = {name: str(value) for name, value in parameters.items()}
+        if factor:
+            replay_parameters["p"] = str(factor)
+        return {
+            "method": "shared_prime",
+            "flags": list(extract_flags(preview)),
+            "plaintext_preview": preview[:500],
+            "parameters": replay_parameters,
         }
 
     required = {"n", "e", "c"}
@@ -210,6 +232,8 @@ def _rsa_hints(parameters: dict[str, str], has_public_key: bool, has_private_key
         hints.append("rsa_n_e_c")
     if {"n", "e1", "e2", "c1", "c2"}.issubset(parameters):
         hints.append("common_modulus")
+    if {"n1", "n2", "e", "c1"}.issubset(parameters):
+        hints.append("shared_prime")
     if parameters.get("e") in {"3", "5", "17"}:
         hints.append("low_exponent")
     if {"p", "q"}.issubset(parameters):
@@ -239,6 +263,15 @@ def _rsa_common_modulus_recover(n: int, e1: int, e2: int, c1: int, c2: int) -> b
         return b""
     m = (_pow_with_signed_exponent(c1, a, n) * _pow_with_signed_exponent(c2, b, n)) % n
     return _int_to_bytes(m)
+
+
+def _rsa_shared_prime_recover(n1: int, n2: int, e: int, c1: int) -> tuple[bytes, int]:
+    factor = math.gcd(n1, n2)
+    if factor <= 1 or factor >= n1 or n1 % factor != 0:
+        return b"", 0
+    q1 = n1 // factor
+    plaintext = _rsa_decrypt_with_factors(n1, e, c1, factor, q1)
+    return plaintext, factor
 
 
 def _pow_with_signed_exponent(base: int, exponent: int, modulus: int) -> int:

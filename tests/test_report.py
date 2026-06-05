@@ -565,6 +565,46 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("flag{rsa_common_modulus}", report["writeup"]["markdown"])
         self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
 
+    def test_rsa_shared_prime_writeup_outputs_replay_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="rsa-shared-writeup",
+                solver="CryptoSolver",
+                finding="Recovered RSA flag candidates",
+                evidence={
+                    "rsa_recovery": {
+                        "method": "shared_prime",
+                        "flags": ["flag{rsa_shared_prime}"],
+                        "plaintext_preview": "flag{rsa_shared_prime}",
+                        "parameters": {
+                            "n1": "123456789",
+                            "n2": "987654321",
+                            "e": "65537",
+                            "c1": "424242",
+                            "p": "9",
+                        },
+                    }
+                },
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the RSA parameters as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="rsa-shared-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="RSA shared prime",
+        )
+
+        report = ReportBuilder().build("rsa-shared-writeup", ("flag{rsa_shared_prime}",), findings, [], challenge=challenge)
+
+        script = report["writeup"]["solve_script"]["content"]
+        self.assertEqual(report["writeup"]["solve_script"]["filename"], "solve_rsa_shared_writeup.py")
+        self.assertIn('METHOD = "shared_prime"', script)
+        self.assertIn("shared_prime_recover(n1, n2, e, c1)", script)
+        self.assertIn("math.gcd(n1, n2)", script)
+        self.assertIn("flag{rsa_shared_prime}", report["writeup"]["markdown"])
+        self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
+
     def test_aes_ctr_reuse_writeup_outputs_crib_solve_script(self) -> None:
         findings = [
             Finding(

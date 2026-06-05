@@ -636,7 +636,8 @@ def _solve_script_doc(
         parameters = rsa_recovery.get("parameters")
         has_standard_rsa = isinstance(parameters, dict) and {"n", "e", "c"}.issubset(parameters)
         has_common_modulus = isinstance(parameters, dict) and {"n", "e1", "e2", "c1", "c2"}.issubset(parameters)
-        if has_standard_rsa or has_common_modulus:
+        has_shared_prime = isinstance(parameters, dict) and {"n1", "n2", "e", "c1"}.issubset(parameters)
+        if has_standard_rsa or has_common_modulus or has_shared_prime:
             slug = _safe_filename_slug(challenge_id)
             return {
                 "filename": f"solve_{slug}.py",
@@ -679,9 +680,14 @@ def _first_crypto_primitive_pattern(path_steps: list[dict[str, Any]]) -> dict[st
 
 def _rsa_solve_script(recovery: dict[str, Any]) -> str:
     parameters = recovery.get("parameters") if isinstance(recovery.get("parameters"), dict) else {}
-    values = {name: str(parameters.get(name) or "0") for name in ("n", "e", "c", "p", "q", "d", "e1", "e2", "c1", "c2")}
+    values = {
+        name: str(parameters.get(name) or "0")
+        for name in ("n", "e", "c", "p", "q", "d", "e1", "e2", "c1", "c2", "n1", "n2")
+    }
     method = str(recovery.get("method") or "rsa_recovery")
     return f"""#!/usr/bin/env python3
+import math
+
 try:
     from Crypto.Util.number import long_to_bytes
 except ImportError:
@@ -702,6 +708,8 @@ e1 = {values["e1"]}
 e2 = {values["e2"]}
 c1 = {values["c1"]}
 c2 = {values["c2"]}
+n1 = {values["n1"]}
+n2 = {values["n2"]}
 
 
 def egcd(left, right):
@@ -731,6 +739,20 @@ def common_modulus_recover(c1, c2, e1, e2, n):
     if gcd != 1:
         raise SystemExit("e1 and e2 must be coprime for the common modulus attack.")
     return (signed_pow(c1, a, n) * signed_pow(c2, b, n)) % n
+
+
+def decrypt_with_factors(n, e, c, p, q):
+    phi = (p - 1) * (q - 1)
+    d = pow(e, -1, phi)
+    return pow(c, d, n)
+
+
+def shared_prime_recover(n1, n2, e, c1):
+    p = math.gcd(n1, n2)
+    if p <= 1 or p >= n1 or n1 % p:
+        raise SystemExit("n1 and n2 do not expose a usable shared prime.")
+    q1 = n1 // p
+    return decrypt_with_factors(n1, e, c1, p, q1)
 
 
 def integer_nth_root(value, degree):
@@ -763,6 +785,8 @@ def main():
         m = root
     elif METHOD == "common_modulus":
         m = common_modulus_recover(c1, c2, e1, e2, n)
+    elif METHOD == "shared_prime":
+        m = shared_prime_recover(n1, n2, e, c1)
     else:
         raise SystemExit("Need p/q or d; try RsaCtfTool/Sage for harder RSA variants.")
     plaintext = long_to_bytes(m)

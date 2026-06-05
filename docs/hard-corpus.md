@@ -61,6 +61,7 @@ Required evidence is intentionally broader than a flag: cases can score classifi
 | `hard-crypto-poly1305-reuse` | crypto | Poly1305 one-time key reuse | classify MAC algebra workflow |
 | `hard-crypto-rsa-low-exponent` | crypto | RSA low exponent without padding | recover exact integer-root plaintext and emit replay script |
 | `hard-crypto-rsa-common-modulus` | crypto | RSA common modulus pair | recover plaintext with extended-gcd ciphertext combination |
+| `hard-crypto-rsa-shared-prime` | crypto | RSA shared-prime moduli | recover shared factor with gcd and decrypt |
 | `hard-traffic-dns-split` | traffic | split DNS label exfiltration | reconstruct encoded flag |
 | `hard-traffic-http-stream-follow` | traffic | HTTP payload in an interesting TCP stream | follow stream id and recover payload flag |
 | `hard-traffic-http-object-export` | traffic | HTTP response object export | exported object hash, preview, and flag |
@@ -81,7 +82,7 @@ scripts/forgeflag-control restart
 scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict
 ```
 
-Result: 16/16 cases reached full score through the Web API.
+Result: 17/17 cases reached full score through the Web API.
 
 | Area | Improvement Verified |
 | --- | --- |
@@ -92,7 +93,7 @@ Result: 16/16 cases reached full score through the Web API.
 | Traffic | Follows shortlisted TCP streams and stores stream id, hints, payload sample, and recovered flags. |
 | Traffic | Exports HTTP objects and stores file name, path, size, SHA256, preview, and recovered flags. |
 | Traffic | Summarizes cleartext SMTP/FTP/IRC-style streams with protocol, commands, sample, and flags. |
-| Crypto | Recognizes AES-CTR nonce/keystream reuse and emits a crib/keystream solve helper; Poly1305 key reuse emits a Sage algebra helper; RSA low-exponent exact roots and common-modulus pairs recover flags and emit direct replay scripts. |
+| Crypto | Recognizes AES-CTR nonce/keystream reuse and emits a crib/keystream solve helper; Poly1305 key reuse emits a Sage algebra helper; RSA low-exponent exact roots, common-modulus pairs, and shared-prime moduli recover flags and emit direct replay scripts. |
 | Forensics | Re-runs transforms on decoded mail/PowerShell content and recovers nested base64 flags. |
 | Pwn | Recognizes source-level `printf(user_input)` format string sinks and emits a pwntools probe/write harness. |
 | Pwn | Recognizes ret2win source patterns and records crash harness, cyclic offset, and pwntools payload template guidance. |

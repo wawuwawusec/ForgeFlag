@@ -126,6 +126,21 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    rsa_shared_prime = WORKDIR / "rsa-shared-prime.txt"
+    shared_p = 2**127 - 1
+    shared_q1 = 2**89 - 1
+    shared_q2 = 2**107 - 1
+    shared_n1 = shared_p * shared_q1
+    shared_n2 = shared_p * shared_q2
+    shared_e = 65537
+    shared_message = int.from_bytes(b"flag{hard_rsa_shared_prime}", "big")
+    shared_c1 = pow(shared_message, shared_e, shared_n1)
+    rsa_shared_prime.write_text(
+        "RSA shared-prime challenge: two public moduli accidentally share one prime factor.\n"
+        f"n1 = {shared_n1}\nn2 = {shared_n2}\ne = {shared_e}\nc1 = {shared_c1}\n",
+        encoding="utf-8",
+    )
+
     traffic = WORKDIR / "dns-split-base32.pcap"
     write_dns_pcap(traffic, "flag{hard_dns_split}")
 
@@ -206,6 +221,7 @@ def build_fixtures() -> dict[str, Path]:
         "poly1305": poly1305,
         "rsa_low_exponent": rsa_low_exponent,
         "rsa_common_modulus": rsa_common_modulus,
+        "rsa_shared_prime": rsa_shared_prime,
         "traffic": traffic,
         "http_stream": http_stream,
         "http_object": http_object,
@@ -299,6 +315,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["common_modulus", "flag{hard_rsa_common_modulus}", "common_modulus_recover"],
             "source_url": "https://cryptohack.org/challenges/rsa/",
             "improvement_hint": "CryptoSolver should recover common-modulus RSA pairs and the Write-up should emit an extended-gcd replay script.",
+        },
+        {
+            "challenge_id": "hard-crypto-rsa-shared-prime",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "RSA shared-prime moduli",
+            "description": "CryptoHack/picoCTF-style RSA: two public moduli share a prime factor, so gcd(n1, n2) splits the key.",
+            "attachments": [fixtures["rsa_shared_prime"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_rsa_shared_prime}",
+            "required_evidence": ["shared_prime", "flag{hard_rsa_shared_prime}", "shared_prime_recover"],
+            "source_url": "https://cryptohack.org/challenges/rsa/",
+            "improvement_hint": "CryptoSolver should factor shared-prime RSA moduli with gcd and emit a direct replay script.",
         },
         {
             "challenge_id": "hard-traffic-dns-split",
