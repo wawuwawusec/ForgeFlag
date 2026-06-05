@@ -7,7 +7,7 @@ import re
 from forgeflag.flags import extract_flags
 
 
-RSA_PARAM_PATTERN = re.compile(r"(?im)^\s*(n|e|c|p|q|d|phi)\s*[:=]\s*(0x[0-9a-f]+|\d+)\s*$")
+RSA_PARAM_PATTERN = re.compile(r"(?im)^\s*((?:n|e|c|p|q|d|phi)\d*)\s*[:=]\s*(0x[0-9a-f]+|\d+)\s*$")
 PUBLIC_KEY_MARKERS = ("-----BEGIN PUBLIC KEY-----", "-----BEGIN RSA PUBLIC KEY-----")
 PRIVATE_KEY_MARKERS = ("-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----")
 PY_RANDOM_RANDINT_PATTERN = re.compile(r"random\.randint\(\s*([0-9*+\-\s]+)\s*,\s*([0-9*+\-\s]+)\s*\)")
@@ -31,7 +31,7 @@ def rsa_summary_from_text(text: str) -> dict[str, object]:
     recommended_tools = []
     if parameters or has_public_key or has_private_key:
         recommended_tools.append("RsaCtfTool")
-    if {"n", "e", "c"}.issubset(parameters):
+    if {"n", "e", "c"}.issubset(parameters) or {"n", "e1", "e2", "c1", "c2"}.issubset(parameters):
         recommended_tools.append("SageMath")
     if "low_exponent" in hints:
         recommended_tools.append("Z3")
@@ -51,6 +51,22 @@ def recover_rsa_flags_from_text(text: str) -> dict[str, object]:
         name: _parse_int(value)
         for name, value in dict(summary["parameters"]).items()
     }
+    if {"n", "e1", "e2", "c1", "c2"}.issubset(parameters):
+        plaintext = _rsa_common_modulus_recover(
+            parameters["n"],
+            parameters["e1"],
+            parameters["e2"],
+            parameters["c1"],
+            parameters["c2"],
+        )
+        preview = plaintext.decode("utf-8", errors="replace") if plaintext else ""
+        return {
+            "method": "common_modulus",
+            "flags": list(extract_flags(preview)),
+            "plaintext_preview": preview[:500],
+            "parameters": {name: str(value) for name, value in parameters.items()},
+        }
+
     required = {"n", "e", "c"}
     if not required.issubset(parameters):
         return {"method": None, "flags": [], "plaintext_preview": ""}
@@ -192,6 +208,8 @@ def _rsa_hints(parameters: dict[str, str], has_public_key: bool, has_private_key
     hints: list[str] = []
     if {"n", "e", "c"}.issubset(parameters):
         hints.append("rsa_n_e_c")
+    if {"n", "e1", "e2", "c1", "c2"}.issubset(parameters):
+        hints.append("common_modulus")
     if parameters.get("e") in {"3", "5", "17"}:
         hints.append("low_exponent")
     if {"p", "q"}.issubset(parameters):
@@ -213,6 +231,34 @@ def _rsa_decrypt_with_factors(n: int, e: int, c: int, p: int, q: int) -> bytes:
         return b""
     d = pow(e, -1, phi)
     return _int_to_bytes(pow(c, d, n))
+
+
+def _rsa_common_modulus_recover(n: int, e1: int, e2: int, c1: int, c2: int) -> bytes:
+    gcd, a, b = _extended_gcd(e1, e2)
+    if gcd != 1:
+        return b""
+    m = (_pow_with_signed_exponent(c1, a, n) * _pow_with_signed_exponent(c2, b, n)) % n
+    return _int_to_bytes(m)
+
+
+def _pow_with_signed_exponent(base: int, exponent: int, modulus: int) -> int:
+    if exponent >= 0:
+        return pow(base, exponent, modulus)
+    if math.gcd(base, modulus) != 1:
+        return 0
+    return pow(pow(base, -1, modulus), -exponent, modulus)
+
+
+def _extended_gcd(left: int, right: int) -> tuple[int, int, int]:
+    old_r, r = left, right
+    old_s, s = 1, 0
+    old_t, t = 0, 1
+    while r:
+        quotient = old_r // r
+        old_r, r = r, old_r - quotient * r
+        old_s, s = s, old_s - quotient * s
+        old_t, t = t, old_t - quotient * t
+    return old_r, old_s, old_t
 
 
 def _integer_nth_root(value: int, degree: int) -> int | None:

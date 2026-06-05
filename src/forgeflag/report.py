@@ -634,7 +634,9 @@ def _solve_script_doc(
     rsa_recovery = _first_nested(evidence_steps, "rsa_recovery")
     if rsa_recovery:
         parameters = rsa_recovery.get("parameters")
-        if isinstance(parameters, dict) and {"n", "e", "c"}.issubset(parameters):
+        has_standard_rsa = isinstance(parameters, dict) and {"n", "e", "c"}.issubset(parameters)
+        has_common_modulus = isinstance(parameters, dict) and {"n", "e1", "e2", "c1", "c2"}.issubset(parameters)
+        if has_standard_rsa or has_common_modulus:
             slug = _safe_filename_slug(challenge_id)
             return {
                 "filename": f"solve_{slug}.py",
@@ -677,7 +679,7 @@ def _first_crypto_primitive_pattern(path_steps: list[dict[str, Any]]) -> dict[st
 
 def _rsa_solve_script(recovery: dict[str, Any]) -> str:
     parameters = recovery.get("parameters") if isinstance(recovery.get("parameters"), dict) else {}
-    values = {name: str(parameters.get(name) or "0") for name in ("n", "e", "c", "p", "q", "d")}
+    values = {name: str(parameters.get(name) or "0") for name in ("n", "e", "c", "p", "q", "d", "e1", "e2", "c1", "c2")}
     method = str(recovery.get("method") or "rsa_recovery")
     return f"""#!/usr/bin/env python3
 try:
@@ -696,6 +698,39 @@ c = {values["c"]}
 p = {values["p"]}
 q = {values["q"]}
 d = {values["d"]}
+e1 = {values["e1"]}
+e2 = {values["e2"]}
+c1 = {values["c1"]}
+c2 = {values["c2"]}
+
+
+def egcd(left, right):
+    old_r, r = left, right
+    old_s, s = 1, 0
+    old_t, t = 0, 1
+    while r:
+        quotient = old_r // r
+        old_r, r = r, old_r - quotient * r
+        old_s, s = s, old_s - quotient * s
+        old_t, t = t, old_t - quotient * t
+    return old_r, old_s, old_t
+
+
+def mod_inverse(value, modulus):
+    return pow(value, -1, modulus)
+
+
+def signed_pow(value, exponent, modulus):
+    if exponent >= 0:
+        return pow(value, exponent, modulus)
+    return pow(mod_inverse(value, modulus), -exponent, modulus)
+
+
+def common_modulus_recover(c1, c2, e1, e2, n):
+    gcd, a, b = egcd(e1, e2)
+    if gcd != 1:
+        raise SystemExit("e1 and e2 must be coprime for the common modulus attack.")
+    return (signed_pow(c1, a, n) * signed_pow(c2, b, n)) % n
 
 
 def integer_nth_root(value, degree):
@@ -726,6 +761,8 @@ def main():
         if root is None:
             raise SystemExit("Ciphertext is not an exact e-th power; try Sage/Coppersmith/RsaCtfTool.")
         m = root
+    elif METHOD == "common_modulus":
+        m = common_modulus_recover(c1, c2, e1, e2, n)
     else:
         raise SystemExit("Need p/q or d; try RsaCtfTool/Sage for harder RSA variants.")
     plaintext = long_to_bytes(m)

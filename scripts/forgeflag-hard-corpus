@@ -113,6 +113,19 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    rsa_common_modulus = WORKDIR / "rsa-common-modulus.txt"
+    common_message = int.from_bytes(b"flag{hard_rsa_common_modulus}", "big")
+    common_n = 2**521 - 1
+    common_e1 = 17
+    common_e2 = 65537
+    common_c1 = pow(common_message, common_e1, common_n)
+    common_c2 = pow(common_message, common_e2, common_n)
+    rsa_common_modulus.write_text(
+        "RSA common modulus challenge: the same plaintext was encrypted with the same n and two coprime public exponents.\n"
+        f"n = {common_n}\ne1 = {common_e1}\ne2 = {common_e2}\nc1 = {common_c1}\nc2 = {common_c2}\n",
+        encoding="utf-8",
+    )
+
     traffic = WORKDIR / "dns-split-base32.pcap"
     write_dns_pcap(traffic, "flag{hard_dns_split}")
 
@@ -192,6 +205,7 @@ def build_fixtures() -> dict[str, Path]:
         "crypto_ctr": crypto_ctr,
         "poly1305": poly1305,
         "rsa_low_exponent": rsa_low_exponent,
+        "rsa_common_modulus": rsa_common_modulus,
         "traffic": traffic,
         "http_stream": http_stream,
         "http_object": http_object,
@@ -272,6 +286,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["low_exponent_root", "flag{hard_rsa_low_exponent}", "integer_nth_root"],
             "source_url": "https://cryptohack.org/challenges/rsa/",
             "improvement_hint": "CryptoSolver should recover exact low-exponent plaintext roots and the Write-up should emit a direct replay script.",
+        },
+        {
+            "challenge_id": "hard-crypto-rsa-common-modulus",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "RSA common modulus pair",
+            "description": "CryptoHack/picoCTF-style RSA: two coprime public exponents share the same modulus and plaintext, so extended gcd combines ciphertexts.",
+            "attachments": [fixtures["rsa_common_modulus"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_rsa_common_modulus}",
+            "required_evidence": ["common_modulus", "flag{hard_rsa_common_modulus}", "common_modulus_recover"],
+            "source_url": "https://cryptohack.org/challenges/rsa/",
+            "improvement_hint": "CryptoSolver should recover common-modulus RSA pairs and the Write-up should emit an extended-gcd replay script.",
         },
         {
             "challenge_id": "hard-traffic-dns-split",

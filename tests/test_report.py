@@ -525,6 +525,46 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("flag{rsa_low_exponent}", report["writeup"]["markdown"])
         self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
 
+    def test_rsa_common_modulus_writeup_outputs_replay_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="rsa-common-writeup",
+                solver="CryptoSolver",
+                finding="Recovered RSA flag candidates",
+                evidence={
+                    "rsa_recovery": {
+                        "method": "common_modulus",
+                        "flags": ["flag{rsa_common_modulus}"],
+                        "plaintext_preview": "flag{rsa_common_modulus}",
+                        "parameters": {
+                            "n": str(2**521 - 1),
+                            "e1": "17",
+                            "e2": "65537",
+                            "c1": "12345",
+                            "c2": "67890",
+                        },
+                    }
+                },
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the RSA parameters as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="rsa-common-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="RSA common modulus",
+        )
+
+        report = ReportBuilder().build("rsa-common-writeup", ("flag{rsa_common_modulus}",), findings, [], challenge=challenge)
+
+        script = report["writeup"]["solve_script"]["content"]
+        self.assertEqual(report["writeup"]["solve_script"]["filename"], "solve_rsa_common_writeup.py")
+        self.assertIn('METHOD = "common_modulus"', script)
+        self.assertIn("common_modulus_recover(c1, c2, e1, e2, n)", script)
+        self.assertIn("mod_inverse", script)
+        self.assertIn("flag{rsa_common_modulus}", report["writeup"]["markdown"])
+        self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
+
     def test_aes_ctr_reuse_writeup_outputs_crib_solve_script(self) -> None:
         findings = [
             Finding(

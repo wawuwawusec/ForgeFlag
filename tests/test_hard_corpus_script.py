@@ -29,6 +29,10 @@ class HardCorpusScriptTest(unittest.TestCase):
         self.assertEqual(len(low_exponent_cases), 1)
         self.assertEqual(low_exponent_cases[0]["expected_flag"], "flag{hard_rsa_low_exponent}")
         self.assertIn("low_exponent_root", low_exponent_cases[0]["required_evidence"])
+        common_modulus_cases = [case for case in cases if case["challenge_id"] == "hard-crypto-rsa-common-modulus"]
+        self.assertEqual(len(common_modulus_cases), 1)
+        self.assertEqual(common_modulus_cases[0]["expected_flag"], "flag{hard_rsa_common_modulus}")
+        self.assertIn("common_modulus_recover", common_modulus_cases[0]["required_evidence"])
         ret2win_cases = [case for case in cases if case["challenge_id"] == "hard-pwn-ret2win-source"]
         self.assertEqual(len(ret2win_cases), 1)
         self.assertIn("cyclic", ret2win_cases[0]["required_evidence"])
