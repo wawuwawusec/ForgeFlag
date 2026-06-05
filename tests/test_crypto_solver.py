@@ -148,6 +148,33 @@ class CryptoSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Recovered RSA flag candidates")
         self.assertEqual(finding.evidence["rsa_recovery"]["method"], "shared_prime")
 
+    def test_crypto_solver_recovers_rsa_broadcast_attack(self) -> None:
+        message = int.from_bytes(b"flag{rsa_broadcast}", "big")
+        e = 3
+        n1 = 2**521 - 1
+        n2 = 2**607 - 1
+        n3 = 2**431 - 1
+        c1 = pow(message, e, n1)
+        c2 = pow(message, e, n2)
+        c3 = pow(message, e, n3)
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-rsa-broadcast",
+                    category=ChallengeCategory.CRYPTO,
+                    description=f"n1 = {n1}\nn2 = {n2}\nn3 = {n3}\ne = {e}\nc1 = {c1}\nc2 = {c2}\nc3 = {c3}\n",
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-rsa-broadcast")
+            finding = next(f for f in notebook.findings_for("crypto-rsa-broadcast") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{rsa_broadcast}"])
+        self.assertEqual(finding.finding, "Recovered RSA flag candidates")
+        self.assertEqual(finding.evidence["rsa_recovery"]["method"], "broadcast")
+
     def test_crypto_solver_recovers_python_random_xor_flag_from_attachment(self) -> None:
         script = """
 import random

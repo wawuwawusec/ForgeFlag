@@ -37,6 +37,10 @@ class HardCorpusScriptTest(unittest.TestCase):
         self.assertEqual(len(shared_prime_cases), 1)
         self.assertEqual(shared_prime_cases[0]["expected_flag"], "flag{hard_rsa_shared_prime}")
         self.assertIn("shared_prime_recover", shared_prime_cases[0]["required_evidence"])
+        broadcast_cases = [case for case in cases if case["challenge_id"] == "hard-crypto-rsa-broadcast"]
+        self.assertEqual(len(broadcast_cases), 1)
+        self.assertEqual(broadcast_cases[0]["expected_flag"], "flag{hard_rsa_broadcast}")
+        self.assertIn("broadcast_recover", broadcast_cases[0]["required_evidence"])
         ret2win_cases = [case for case in cases if case["challenge_id"] == "hard-pwn-ret2win-source"]
         self.assertEqual(len(ret2win_cases), 1)
         self.assertIn("cyclic", ret2win_cases[0]["required_evidence"])

@@ -637,7 +637,8 @@ def _solve_script_doc(
         has_standard_rsa = isinstance(parameters, dict) and {"n", "e", "c"}.issubset(parameters)
         has_common_modulus = isinstance(parameters, dict) and {"n", "e1", "e2", "c1", "c2"}.issubset(parameters)
         has_shared_prime = isinstance(parameters, dict) and {"n1", "n2", "e", "c1"}.issubset(parameters)
-        if has_standard_rsa or has_common_modulus or has_shared_prime:
+        has_broadcast = isinstance(parameters, dict) and {"n1", "n2", "n3", "e", "c1", "c2", "c3"}.issubset(parameters)
+        if has_standard_rsa or has_common_modulus or has_shared_prime or has_broadcast:
             slug = _safe_filename_slug(challenge_id)
             return {
                 "filename": f"solve_{slug}.py",
@@ -682,7 +683,7 @@ def _rsa_solve_script(recovery: dict[str, Any]) -> str:
     parameters = recovery.get("parameters") if isinstance(recovery.get("parameters"), dict) else {}
     values = {
         name: str(parameters.get(name) or "0")
-        for name in ("n", "e", "c", "p", "q", "d", "e1", "e2", "c1", "c2", "n1", "n2")
+        for name in ("n", "e", "c", "p", "q", "d", "e1", "e2", "c1", "c2", "c3", "n1", "n2", "n3")
     }
     method = str(recovery.get("method") or "rsa_recovery")
     return f"""#!/usr/bin/env python3
@@ -708,8 +709,10 @@ e1 = {values["e1"]}
 e2 = {values["e2"]}
 c1 = {values["c1"]}
 c2 = {values["c2"]}
+c3 = {values["c3"]}
 n1 = {values["n1"]}
 n2 = {values["n2"]}
+n3 = {values["n3"]}
 
 
 def egcd(left, right):
@@ -755,6 +758,25 @@ def shared_prime_recover(n1, n2, e, c1):
     return decrypt_with_factors(n1, e, c1, p, q1)
 
 
+def crt_combine(residues, moduli):
+    modulus_product = math.prod(moduli)
+    total = 0
+    for residue, modulus in zip(residues, moduli):
+        partial = modulus_product // modulus
+        total += residue * partial * mod_inverse(partial, modulus)
+    return total % modulus_product
+
+
+def broadcast_recover(ciphertexts, moduli, exponent):
+    if exponent != len(moduli):
+        raise SystemExit("Need exactly e ciphertext/modulus pairs for this broadcast helper.")
+    combined = crt_combine(ciphertexts, moduli)
+    root = integer_nth_root(combined, exponent)
+    if root is None:
+        raise SystemExit("CRT result is not an exact e-th power; check pairwise-coprime moduli and ciphertexts.")
+    return root
+
+
 def integer_nth_root(value, degree):
     low = 0
     high = 1 << ((value.bit_length() + degree - 1) // degree)
@@ -787,6 +809,8 @@ def main():
         m = common_modulus_recover(c1, c2, e1, e2, n)
     elif METHOD == "shared_prime":
         m = shared_prime_recover(n1, n2, e, c1)
+    elif METHOD == "broadcast":
+        m = broadcast_recover([c1, c2, c3], [n1, n2, n3], e)
     else:
         raise SystemExit("Need p/q or d; try RsaCtfTool/Sage for harder RSA variants.")
     plaintext = long_to_bytes(m)

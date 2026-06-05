@@ -35,6 +35,7 @@ def rsa_summary_from_text(text: str) -> dict[str, object]:
         {"n", "e", "c"}.issubset(parameters)
         or {"n", "e1", "e2", "c1", "c2"}.issubset(parameters)
         or {"n1", "n2", "e", "c1"}.issubset(parameters)
+        or {"n1", "n2", "n3", "e", "c1", "c2", "c3"}.issubset(parameters)
     ):
         recommended_tools.append("SageMath")
     if "low_exponent" in hints:
@@ -66,6 +67,20 @@ def recover_rsa_flags_from_text(text: str) -> dict[str, object]:
         preview = plaintext.decode("utf-8", errors="replace") if plaintext else ""
         return {
             "method": "common_modulus",
+            "flags": list(extract_flags(preview)),
+            "plaintext_preview": preview[:500],
+            "parameters": {name: str(value) for name, value in parameters.items()},
+        }
+
+    if {"n1", "n2", "n3", "e", "c1", "c2", "c3"}.issubset(parameters):
+        plaintext = _rsa_broadcast_recover(
+            (parameters["n1"], parameters["n2"], parameters["n3"]),
+            (parameters["c1"], parameters["c2"], parameters["c3"]),
+            parameters["e"],
+        )
+        preview = plaintext.decode("utf-8", errors="replace") if plaintext else ""
+        return {
+            "method": "broadcast",
             "flags": list(extract_flags(preview)),
             "plaintext_preview": preview[:500],
             "parameters": {name: str(value) for name, value in parameters.items()},
@@ -234,6 +249,8 @@ def _rsa_hints(parameters: dict[str, str], has_public_key: bool, has_private_key
         hints.append("common_modulus")
     if {"n1", "n2", "e", "c1"}.issubset(parameters):
         hints.append("shared_prime")
+    if {"n1", "n2", "n3", "e", "c1", "c2", "c3"}.issubset(parameters):
+        hints.append("broadcast")
     if parameters.get("e") in {"3", "5", "17"}:
         hints.append("low_exponent")
     if {"p", "q"}.issubset(parameters):
@@ -272,6 +289,25 @@ def _rsa_shared_prime_recover(n1: int, n2: int, e: int, c1: int) -> tuple[bytes,
     q1 = n1 // factor
     plaintext = _rsa_decrypt_with_factors(n1, e, c1, factor, q1)
     return plaintext, factor
+
+
+def _rsa_broadcast_recover(moduli: tuple[int, int, int], ciphertexts: tuple[int, int, int], exponent: int) -> bytes:
+    if exponent != len(moduli):
+        return b""
+    combined = _crt_combine(ciphertexts, moduli)
+    root = _integer_nth_root(combined, exponent)
+    if root is None:
+        return b""
+    return _int_to_bytes(root)
+
+
+def _crt_combine(residues: tuple[int, ...], moduli: tuple[int, ...]) -> int:
+    modulus_product = math.prod(moduli)
+    total = 0
+    for residue, modulus in zip(residues, moduli, strict=True):
+        partial = modulus_product // modulus
+        total += residue * partial * pow(partial, -1, modulus)
+    return total % modulus_product
 
 
 def _pow_with_signed_exponent(base: int, exponent: int, modulus: int) -> int:

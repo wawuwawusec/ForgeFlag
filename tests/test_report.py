@@ -605,6 +605,48 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("flag{rsa_shared_prime}", report["writeup"]["markdown"])
         self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
 
+    def test_rsa_broadcast_writeup_outputs_replay_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="rsa-broadcast-writeup",
+                solver="CryptoSolver",
+                finding="Recovered RSA flag candidates",
+                evidence={
+                    "rsa_recovery": {
+                        "method": "broadcast",
+                        "flags": ["flag{rsa_broadcast}"],
+                        "plaintext_preview": "flag{rsa_broadcast}",
+                        "parameters": {
+                            "n1": "101",
+                            "n2": "103",
+                            "n3": "107",
+                            "e": "3",
+                            "c1": "42",
+                            "c2": "43",
+                            "c3": "44",
+                        },
+                    }
+                },
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the RSA parameters as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="rsa-broadcast-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="RSA broadcast",
+        )
+
+        report = ReportBuilder().build("rsa-broadcast-writeup", ("flag{rsa_broadcast}",), findings, [], challenge=challenge)
+
+        script = report["writeup"]["solve_script"]["content"]
+        self.assertEqual(report["writeup"]["solve_script"]["filename"], "solve_rsa_broadcast_writeup.py")
+        self.assertIn('METHOD = "broadcast"', script)
+        self.assertIn("broadcast_recover([c1, c2, c3], [n1, n2, n3], e)", script)
+        self.assertIn("crt_combine", script)
+        self.assertIn("flag{rsa_broadcast}", report["writeup"]["markdown"])
+        self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
+
     def test_aes_ctr_reuse_writeup_outputs_crib_solve_script(self) -> None:
         findings = [
             Finding(

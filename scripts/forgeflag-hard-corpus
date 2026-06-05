@@ -141,6 +141,22 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    rsa_broadcast = WORKDIR / "rsa-broadcast.txt"
+    broadcast_message = int.from_bytes(b"flag{hard_rsa_broadcast}", "big")
+    broadcast_e = 3
+    broadcast_n1 = 2**521 - 1
+    broadcast_n2 = 2**607 - 1
+    broadcast_n3 = 2**431 - 1
+    broadcast_c1 = pow(broadcast_message, broadcast_e, broadcast_n1)
+    broadcast_c2 = pow(broadcast_message, broadcast_e, broadcast_n2)
+    broadcast_c3 = pow(broadcast_message, broadcast_e, broadcast_n3)
+    rsa_broadcast.write_text(
+        "RSA broadcast challenge: the same plaintext was sent to three pairwise-coprime moduli with e=3 and no padding.\n"
+        f"n1 = {broadcast_n1}\nn2 = {broadcast_n2}\nn3 = {broadcast_n3}\ne = {broadcast_e}\n"
+        f"c1 = {broadcast_c1}\nc2 = {broadcast_c2}\nc3 = {broadcast_c3}\n",
+        encoding="utf-8",
+    )
+
     traffic = WORKDIR / "dns-split-base32.pcap"
     write_dns_pcap(traffic, "flag{hard_dns_split}")
 
@@ -222,6 +238,7 @@ def build_fixtures() -> dict[str, Path]:
         "rsa_low_exponent": rsa_low_exponent,
         "rsa_common_modulus": rsa_common_modulus,
         "rsa_shared_prime": rsa_shared_prime,
+        "rsa_broadcast": rsa_broadcast,
         "traffic": traffic,
         "http_stream": http_stream,
         "http_object": http_object,
@@ -328,6 +345,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["shared_prime", "flag{hard_rsa_shared_prime}", "shared_prime_recover"],
             "source_url": "https://cryptohack.org/challenges/rsa/",
             "improvement_hint": "CryptoSolver should factor shared-prime RSA moduli with gcd and emit a direct replay script.",
+        },
+        {
+            "challenge_id": "hard-crypto-rsa-broadcast",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "RSA broadcast e=3",
+            "description": "CryptoHack/picoCTF-style RSA: the same plaintext is encrypted to three coprime moduli with e=3 and no padding.",
+            "attachments": [fixtures["rsa_broadcast"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_rsa_broadcast}",
+            "required_evidence": ["broadcast", "flag{hard_rsa_broadcast}", "broadcast_recover"],
+            "source_url": "https://cryptohack.org/challenges/rsa/",
+            "improvement_hint": "CryptoSolver should combine broadcast ciphertexts with CRT and emit a direct replay script.",
         },
         {
             "challenge_id": "hard-traffic-dns-split",
