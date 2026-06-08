@@ -198,6 +198,31 @@ class CryptoSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Recovered RSA flag candidates")
         self.assertEqual(finding.evidence["rsa_recovery"]["method"], "prime_modulus")
 
+    def test_crypto_solver_recovers_rsa_fermat_close_primes(self) -> None:
+        p = 170141183460469231731687303715884105727
+        q = 170141183460469231731687303715884105757
+        n = p * q
+        e = 65537
+        message = int.from_bytes(b"flag{rsa_fermat}", "big")
+        c = pow(message, e, n)
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-rsa-fermat",
+                    category=ChallengeCategory.CRYPTO,
+                    description=f"n = {n}\ne = {e}\nc = {c}\n",
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-rsa-fermat")
+            finding = next(f for f in notebook.findings_for("crypto-rsa-fermat") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{rsa_fermat}"])
+        self.assertEqual(finding.finding, "Recovered RSA flag candidates")
+        self.assertEqual(finding.evidence["rsa_recovery"]["method"], "fermat_factors")
+
     def test_crypto_solver_recovers_python_random_xor_flag_from_attachment(self) -> None:
         script = """
 import random

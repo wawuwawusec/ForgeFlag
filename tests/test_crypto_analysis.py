@@ -129,6 +129,21 @@ class CryptoAnalysisTest(unittest.TestCase):
         self.assertEqual(result["parameters"]["e"], str(e))
         self.assertEqual(result["parameters"]["c"], str(c))
 
+    def test_recover_rsa_flags_from_fermat_close_primes(self) -> None:
+        p = 170141183460469231731687303715884105727
+        q = 170141183460469231731687303715884105757
+        n = p * q
+        e = 65537
+        message = int.from_bytes(b"flag{rsa_fermat}", "big")
+        c = pow(message, e, n)
+
+        result = recover_rsa_flags_from_text(f"n = {n}\ne = {e}\nc = {c}\n")
+
+        self.assertEqual(result["flags"], ["flag{rsa_fermat}"])
+        self.assertEqual(result["method"], "fermat_factors")
+        self.assertEqual(result["parameters"]["p"], str(p))
+        self.assertEqual(result["parameters"]["q"], str(q))
+
     def test_recover_python_random_xor_flags_from_small_seed_script(self) -> None:
         script = """
 import random

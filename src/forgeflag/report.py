@@ -756,6 +756,22 @@ def decrypt_prime_modulus(n, e, c):
     return pow(c, d, n)
 
 
+def fermat_factor(n, max_iterations=100000):
+    a = math.isqrt(n)
+    if a * a < n:
+        a += 1
+    for _ in range(max_iterations + 1):
+        b2 = a * a - n
+        b = math.isqrt(b2)
+        if b * b == b2:
+            p = a - b
+            q = a + b
+            if p > 1 and q > 1 and p * q == n:
+                return p, q
+        a += 1
+    raise SystemExit("Fermat factorization did not converge; p and q may not be close enough.")
+
+
 def shared_prime_recover(n1, n2, e, c1):
     p = math.gcd(n1, n2)
     if p <= 1 or p >= n1 or n1 % p:
@@ -802,6 +818,9 @@ def main():
     global d
     if d:
         m = pow(c, d, n)
+    elif METHOD == "fermat_factors":
+        p, q = fermat_factor(n)
+        m = decrypt_with_factors(n, e, c, p, q)
     elif p and q:
         phi = (p - 1) * (q - 1)
         d = pow(e, -1, phi)

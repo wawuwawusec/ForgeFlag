@@ -124,6 +124,19 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    rsa_fermat = WORKDIR / "rsa-fermat.txt"
+    fermat_p = 170141183460469231731687303715884105727
+    fermat_q = 170141183460469231731687303715884105757
+    fermat_n = fermat_p * fermat_q
+    fermat_e = 65537
+    fermat_message = int.from_bytes(b"flag{hard_rsa_fermat}", "big")
+    fermat_c = pow(fermat_message, fermat_e, fermat_n)
+    rsa_fermat.write_text(
+        "RSA close-prime challenge: p and q are close enough for Fermat factorization.\n"
+        f"n = {fermat_n}\ne = {fermat_e}\nc = {fermat_c}\n",
+        encoding="utf-8",
+    )
+
     rsa_common_modulus = WORKDIR / "rsa-common-modulus.txt"
     common_message = int.from_bytes(b"flag{hard_rsa_common_modulus}", "big")
     common_n = 2**521 - 1
@@ -248,6 +261,7 @@ def build_fixtures() -> dict[str, Path]:
         "poly1305": poly1305,
         "rsa_low_exponent": rsa_low_exponent,
         "rsa_prime_modulus": rsa_prime_modulus,
+        "rsa_fermat": rsa_fermat,
         "rsa_common_modulus": rsa_common_modulus,
         "rsa_shared_prime": rsa_shared_prime,
         "rsa_broadcast": rsa_broadcast,
@@ -344,6 +358,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["prime_modulus", "flag{hard_rsa_prime_modulus}", "decrypt_prime_modulus"],
             "source_url": "https://cryptohack.org/challenges/rsa/",
             "improvement_hint": "CryptoSolver should detect prime RSA modulus values and emit a phi=n-1 replay script.",
+        },
+        {
+            "challenge_id": "hard-crypto-rsa-fermat",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "RSA close primes",
+            "description": "CryptoHack/picoCTF-style RSA: p and q are close, so Fermat factorization recovers factors quickly.",
+            "attachments": [fixtures["rsa_fermat"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_rsa_fermat}",
+            "required_evidence": ["fermat_factors", "flag{hard_rsa_fermat}", "fermat_factor"],
+            "source_url": "https://cryptohack.org/challenges/rsa/",
+            "improvement_hint": "CryptoSolver should use Fermat factorization for close-prime RSA and emit a replay script.",
         },
         {
             "challenge_id": "hard-crypto-rsa-common-modulus",

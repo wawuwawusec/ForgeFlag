@@ -45,6 +45,10 @@ class HardCorpusScriptTest(unittest.TestCase):
         self.assertEqual(len(prime_modulus_cases), 1)
         self.assertEqual(prime_modulus_cases[0]["expected_flag"], "flag{hard_rsa_prime_modulus}")
         self.assertIn("decrypt_prime_modulus", prime_modulus_cases[0]["required_evidence"])
+        fermat_cases = [case for case in cases if case["challenge_id"] == "hard-crypto-rsa-fermat"]
+        self.assertEqual(len(fermat_cases), 1)
+        self.assertEqual(fermat_cases[0]["expected_flag"], "flag{hard_rsa_fermat}")
+        self.assertIn("fermat_factor", fermat_cases[0]["required_evidence"])
         ret2win_cases = [case for case in cases if case["challenge_id"] == "hard-pwn-ret2win-source"]
         self.assertEqual(len(ret2win_cases), 1)
         self.assertIn("cyclic", ret2win_cases[0]["required_evidence"])

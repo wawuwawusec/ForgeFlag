@@ -685,6 +685,46 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("flag{rsa_prime_modulus}", report["writeup"]["markdown"])
         self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
 
+    def test_rsa_fermat_writeup_outputs_replay_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="rsa-fermat-writeup",
+                solver="CryptoSolver",
+                finding="Recovered RSA flag candidates",
+                evidence={
+                    "rsa_recovery": {
+                        "method": "fermat_factors",
+                        "flags": ["flag{rsa_fermat}"],
+                        "plaintext_preview": "flag{rsa_fermat}",
+                        "parameters": {
+                            "n": "28948022309329048855892746252171976968225213274203289145376257814616423610039",
+                            "e": "65537",
+                            "c": "123456789",
+                            "p": "170141183460469231731687303715884105727",
+                            "q": "170141183460469231731687303715884105757",
+                        },
+                    }
+                },
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the RSA parameters as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="rsa-fermat-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="RSA close primes",
+        )
+
+        report = ReportBuilder().build("rsa-fermat-writeup", ("flag{rsa_fermat}",), findings, [], challenge=challenge)
+
+        script = report["writeup"]["solve_script"]["content"]
+        self.assertEqual(report["writeup"]["solve_script"]["filename"], "solve_rsa_fermat_writeup.py")
+        self.assertIn('METHOD = "fermat_factors"', script)
+        self.assertIn("fermat_factor(n)", script)
+        self.assertIn("m = decrypt_with_factors(n, e, c, p, q)", script)
+        self.assertIn("flag{rsa_fermat}", report["writeup"]["markdown"])
+        self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
+
     def test_aes_ctr_reuse_writeup_outputs_crib_solve_script(self) -> None:
         findings = [
             Finding(

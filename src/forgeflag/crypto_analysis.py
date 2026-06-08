@@ -124,6 +124,14 @@ def recover_rsa_flags_from_text(text: str) -> dict[str, object]:
     if not plaintext and _is_probable_prime(n):
         method = "prime_modulus"
         plaintext = _rsa_decrypt_with_prime_modulus(n, e, c)
+    if not plaintext:
+        factors = _fermat_factor(n)
+        if factors is not None:
+            p, q = factors
+            method = "fermat_factors"
+            plaintext = _rsa_decrypt_with_factors(n, e, c, p, q)
+            parameters["p"] = p
+            parameters["q"] = q
 
     preview = plaintext.decode("utf-8", errors="replace") if plaintext else ""
     return {
@@ -258,6 +266,8 @@ def _rsa_hints(parameters: dict[str, str], has_public_key: bool, has_private_key
         hints.append("low_exponent")
     if "n" in parameters and _looks_prime_decimal(parameters["n"]):
         hints.append("prime_modulus")
+    if "n" in parameters:
+        hints.append("fermat_check")
     if {"p", "q"}.issubset(parameters):
         hints.append("known_factors")
     if has_public_key:
@@ -285,6 +295,24 @@ def _rsa_decrypt_with_prime_modulus(n: int, e: int, c: int) -> bytes:
         return b""
     d = pow(e, -1, phi)
     return _int_to_bytes(pow(c, d, n))
+
+
+def _fermat_factor(n: int, max_iterations: int = 100_000) -> tuple[int, int] | None:
+    if n <= 0 or n % 2 == 0:
+        return None
+    a = math.isqrt(n)
+    if a * a < n:
+        a += 1
+    for _ in range(max_iterations + 1):
+        b2 = a * a - n
+        b = math.isqrt(b2)
+        if b * b == b2:
+            p = a - b
+            q = a + b
+            if p > 1 and q > 1 and p * q == n:
+                return (p, q) if p <= q else (q, p)
+        a += 1
+    return None
 
 
 def _rsa_common_modulus_recover(n: int, e1: int, e2: int, c1: int, c2: int) -> bytes:
