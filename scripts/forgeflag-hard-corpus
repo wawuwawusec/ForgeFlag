@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import json
 from pathlib import Path
 import socket
@@ -13,6 +14,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -263,6 +265,9 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    magic_mismatch = WORKDIR / "renamed-photo.jpg"
+    write_png_text(magic_mismatch, "flag{hard_magic_extension}")
+
     java_reverse = WORKDIR / "dark-portal-notes.txt"
     java_reverse.write_text(
         "Real World CTF Dark Portal pattern: web LFI downloads ROOT.war, then Java handlers need static analysis passes.\n",
@@ -290,6 +295,7 @@ def build_fixtures() -> dict[str, Path]:
         "pwn_source": pwn_source,
         "ret2win_source": ret2win_source,
         "pickle": pickle,
+        "magic_mismatch": magic_mismatch,
         "java_reverse": java_reverse,
     }
 
@@ -558,6 +564,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "improvement_hint": "MiscSolver/LLM should identify pickle sinks and propose safe sandbox-escape reasoning steps.",
         },
         {
+            "challenge_id": "hard-misc-magic-extension-mismatch",
+            "category": "misc",
+            "difficulty": "hard",
+            "title": "Image extension mismatch",
+            "description": "Forensics/stego style: the uploaded .jpg is actually a PNG, so magic bytes must override the misleading filename.",
+            "attachments": [fixtures["magic_mismatch"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_magic_extension}",
+            "required_evidence": ["extension_mismatch", "png", "flag{hard_magic_extension}"],
+            "source_url": "https://hacktricks.wiki/stego/index.html",
+            "improvement_hint": "MiscSolver should record magic-extension mismatches and continue analysis using the detected container type.",
+        },
+        {
             "challenge_id": "expert-web-java-reverse-chain",
             "category": "web",
             "difficulty": "expert",
@@ -707,6 +726,22 @@ def get_json(base_url: str, path: str) -> dict[str, object] | list[dict[str, obj
 
 def compile_c(source: Path, output: Path) -> None:
     subprocess.run(["clang", str(source), "-o", str(output)], check=True)
+
+
+def write_png_text(path: Path, text: str) -> None:
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        crc = binascii.crc32(kind + body) & 0xFFFFFFFF
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", crc)
+
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    row = b"\x00" + bytes([255, 255, 255, 255])
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"tEXt", b"Comment\x00" + text.encode("latin-1", errors="replace"))
+        + chunk(b"IDAT", zlib.compress(row))
+        + chunk(b"IEND", b"")
+    )
 
 
 def write_dns_pcap(path: Path, flag: str) -> None:

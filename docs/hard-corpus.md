@@ -75,6 +75,7 @@ Required evidence is intentionally broader than a flag: cases can score classifi
 | `hard-pwn-format-string` | pwn | source-level `printf(user_input)` bug | format string and pwntools workflow |
 | `hard-pwn-ret2win-source` | pwn | win-like target plus unsafe stack input | ret2win, cyclic offset, and pwntools replay workflow |
 | `hard-misc-pickle-sandbox` | misc | `pickle.loads` blacklist sandbox | pickle sink and sandbox workflow |
+| `hard-misc-magic-extension-mismatch` | misc | PNG content renamed as `.jpg` | magic-extension mismatch and flag extraction |
 | `expert-web-java-reverse-chain` | web | LFI to WAR then Java static analysis | multi-stage WebSolver -> ReverseSolver plan |
 
 ## 2026-06-02 Web Benchmark Result
@@ -86,7 +87,7 @@ scripts/forgeflag-control restart
 scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict
 ```
 
-Result: 21/21 cases reached full score through the Web API.
+Result: 22/22 cases reached full score through the Web API.
 
 | Area | Improvement Verified |
 | --- | --- |
@@ -102,6 +103,7 @@ Result: 21/21 cases reached full score through the Web API.
 | Pwn | Recognizes source-level `printf(user_input)` format string sinks and emits a pwntools probe/write harness. |
 | Pwn | Recognizes ret2win source patterns and records crash harness, cyclic offset, and pwntools payload template guidance. |
 | Misc | Recognizes `pickle.loads` blacklist sandbox patterns and records a reproduction-oriented next step. |
+| Misc | Records magic-extension mismatch evidence and continues image/stego analysis using the detected container type. |
 
 ## LLM Opportunities
 

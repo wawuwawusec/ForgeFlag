@@ -11,6 +11,30 @@ from typing import Any
 from forgeflag.flags import extract_flags
 
 
+def analyze_magic_extension_mismatch(path: Path) -> dict[str, Any] | None:
+    try:
+        data = path.read_bytes()[:16]
+    except OSError:
+        return None
+    actual = _magic_format(data)
+    if actual is None:
+        return None
+    declared = path.suffix.lower().lstrip(".")
+    expected = _expected_extensions(actual)
+    if not declared or declared in expected:
+        return None
+    return {
+        "declared_extension": declared,
+        "actual_format": actual,
+        "expected_extensions": expected,
+        "hints": [
+            "extension_mismatch",
+            f"treat_as_{actual}",
+            "rerun specialist triage using magic bytes instead of filename",
+        ],
+    }
+
+
 def analyze_png_ihdr(path: Path) -> dict[str, Any] | None:
     try:
         data = path.read_bytes()
@@ -89,6 +113,35 @@ def analyze_image_stego_hints(path: Path) -> dict[str, Any] | None:
     if data.startswith(b"\xff\xd8"):
         return _analyze_jpeg_stego_hints(data)
     return None
+
+
+def _magic_format(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8"):
+        return "jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    if data.startswith(b"PK\x03\x04") or data.startswith(b"PK\x05\x06") or data.startswith(b"PK\x07\x08"):
+        return "zip"
+    if data.startswith(b"\x1f\x8b"):
+        return "gzip"
+    if data.startswith(b"%PDF-"):
+        return "pdf"
+    if data.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return "7z"
+    if data.startswith(b"Rar!\x1a\x07"):
+        return "rar"
+    return None
+
+
+def _expected_extensions(actual_format: str) -> list[str]:
+    aliases = {
+        "jpeg": ["jpg", "jpeg", "jfif"],
+        "gzip": ["gz", "gzip"],
+        "7z": ["7z"],
+    }
+    return aliases.get(actual_format, [actual_format])
 
 
 def _analyze_png_stego_hints(data: bytes) -> dict[str, Any] | None:

@@ -4,11 +4,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from forgeflag.image import analyze_image_stego_hints
+from forgeflag.image import analyze_image_stego_hints, analyze_magic_extension_mismatch
 from tests.png_fixtures import png_with_extra_compressed_idat, png_with_rgb_lsb_payload, png_with_text_and_trailing_data
 
 
 class ImageAnalysisTest(unittest.TestCase):
+    def test_magic_extension_mismatch_detects_png_named_jpg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "out.jpg"
+            image.write_bytes(png_with_text_and_trailing_data("flag{wrong_extension}"))
+
+            summary = analyze_magic_extension_mismatch(image)
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["declared_extension"], "jpg")
+        self.assertEqual(summary["actual_format"], "png")
+        self.assertEqual(summary["expected_extensions"], ["png"])
+        self.assertIn("extension_mismatch", summary["hints"])
+
     def test_png_stego_hints_extract_text_chunks_and_trailing_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             image = Path(tmp) / "hint.png"

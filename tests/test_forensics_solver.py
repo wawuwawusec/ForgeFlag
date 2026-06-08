@@ -205,6 +205,49 @@ class ForensicsSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["image_stego"]["format"], "png")
         self.assertEqual(finding.evidence["image_stego"]["trailing_data"]["length"], len(b"hidden-tail"))
 
+    def test_forensics_solver_records_magic_extension_mismatch_for_png_named_jpg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "evidence.jpg"
+            attachment.write_bytes(png_with_text_and_trailing_data("flag{forensics_wrong_extension}"))
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="forensics-wrong-extension",
+                    category=ChallengeCategory.FORENSICS,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.forensics.ctf.file_identify",
+                    return_value=ToolResult(tool="file", target=None, status="success", raw={"stdout": "PNG image data"}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.strings_extract",
+                    return_value=ToolResult(tool="strings", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.binwalk_scan",
+                    return_value=ToolResult(tool="binwalk", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.exiftool_read",
+                    return_value=ToolResult(tool="exiftool", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig(), solvers=[ForensicsSolver()]).run_challenge("forensics-wrong-extension")
+                finding = next(
+                    f for f in notebook.findings_for("forensics-wrong-extension")
+                    if f.finding == "Triaged forensic attachment"
+                )
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{forensics_wrong_extension}"])
+        self.assertEqual(finding.evidence["magic_extension_mismatch"]["declared_extension"], "jpg")
+        self.assertEqual(finding.evidence["magic_extension_mismatch"]["actual_format"], "png")
+
     def test_forensics_solver_records_archive_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

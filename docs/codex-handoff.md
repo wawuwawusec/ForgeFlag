@@ -94,6 +94,7 @@ Implemented so far:
 - Scoped ForensicsSolver workflow:
   - local attachment triage with `file`, `strings`, `binwalk`, and `exiftool`
 - Reusable image puzzle analysis:
+  - magic-byte vs filename extension mismatch detection, for example PNG content uploaded as `.jpg`
   - PNG IHDR height/CRC mismatch detection with repaired PNG artifact output
   - PNG text chunk, IEND trailing-data, JPEG comment, and JPEG APP marker summaries for stego-style hints
   - PNG independent/extra IDAT zlib payload extraction, including truncated extra IDAT chunks that hide printable flag text
@@ -148,8 +149,8 @@ Implemented so far:
 - Web-run hard/expert CTF corpus benchmark:
   - `scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeup patterns
-  - Covers hidden Web APIs, source route/sink triage, crypto primitive misuse including AES-CTR and AES-GCM nonce reuse, RSA low-exponent, prime-modulus, close-prime Fermat, common-modulus, shared-prime, and broadcast recovery, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, ret2win pwn, pickle sandbox, and Web-to-Java chains
-  - Current strict result: 21/21 full score through the Web API
+  - Covers hidden Web APIs, source route/sink triage, crypto primitive misuse including AES-CTR and AES-GCM nonce reuse, RSA low-exponent, prime-modulus, close-prime Fermat, common-modulus, shared-prime, and broadcast recovery, DNS exfil, TCP stream follow-up, HTTP object export, SMTP stream summaries, mail/PowerShell forensics, packed reverse, format-string pwn, ret2win pwn, pickle sandbox, magic-extension mismatch, and Web-to-Java chains
+  - Current strict result: 22/22 full score through the Web API
 - Web-run expanded CTF corpus benchmark:
   - `scripts/forgeflag-expanded-corpus --url http://127.0.0.1:8080 --keep --strict`
   - Generates safe local fixtures distilled from public CTF writeups, forums, challenge indexes, and benchmark papers

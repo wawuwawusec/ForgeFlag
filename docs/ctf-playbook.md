@@ -85,7 +85,6 @@ ForgeFlag next additions:
 
 ForgeFlag next additions:
 
-- Add magic-extension mismatch evidence.
 - Add safe archive listing for nested archives and comments.
 - Add PNG/JPEG preview generation and a stego checklist in Findings.
 
@@ -181,6 +180,7 @@ ForgeFlag coverage today:
 - Poly1305 one-time key reuse now emits a Sage-oriented algebra helper that builds message/tag equations and enumerates the small tag carry window.
 - The corpus smoke includes Base32 decoding and verifies the generated CTF write-up.
 - PNG misc/stego triage should inspect abnormal extra IDAT chunks as possible independent zlib payloads; truncated length fields can still carry recoverable flag text.
+- Forensics/Misc now record magic-byte versus filename extension mismatches and continue image/stego analysis using the detected container type, such as PNG content uploaded as `.jpg`.
 
 ### Misc
 

@@ -7,7 +7,7 @@ from forgeflag.archive_analysis import analyze_archive, preview_archive_text
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.hash_analysis import hash_summary_from_text
-from forgeflag.image import analyze_image_stego_hints, analyze_png_ihdr
+from forgeflag.image import analyze_image_stego_hints, analyze_magic_extension_mismatch, analyze_png_ihdr
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
 from forgeflag.transforms import candidates_to_payload, transform_candidates
@@ -99,6 +99,7 @@ class MiscSolver:
                 resolved = Path(ctf.ensure_existing_file(attachment_path))
             except FileNotFoundError:
                 continue
+            magic_mismatch = analyze_magic_extension_mismatch(resolved)
             png_ihdr = analyze_png_ihdr(resolved)
             image_stego = analyze_image_stego_hints(resolved)
             jpeg_tools, jpeg_flags = _analyze_jpeg_stego_tools(context, resolved, image_stego)
@@ -113,13 +114,14 @@ class MiscSolver:
                 evidence={
                     "artifact": {"name": resolved.name, "path": str(resolved)},
                     "flag_candidates": list(flags),
+                    **({"magic_extension_mismatch": magic_mismatch} if magic_mismatch else {}),
                     **({"png_ihdr": png_ihdr} if png_ihdr else {}),
                     **({"image_stego": image_stego} if image_stego else {}),
                     **({"jpeg_stego_tools": jpeg_tools} if jpeg_tools else {}),
                 },
-                hypothesis=_image_hypothesis(flags, png_ihdr, image_stego, jpeg_tools),
+                hypothesis=_image_hypothesis(flags, magic_mismatch, png_ihdr, image_stego, jpeg_tools),
                 confidence=0.78 if flags else 0.68,
-                next_action=_image_next_action(flags, png_ihdr, image_stego, jpeg_tools),
+                next_action=_image_next_action(flags, magic_mismatch, png_ihdr, image_stego, jpeg_tools),
             )
             context.notebook.add_finding(finding)
             findings.append(finding)
@@ -352,12 +354,15 @@ def _mask_passphrase_hint(passphrase: str) -> str:
 
 def _image_hypothesis(
     flags: tuple[str, ...],
+    magic_mismatch: dict[str, object] | None,
     png_ihdr: dict[str, object] | None,
     image_stego: dict[str, object] | None,
     jpeg_tools: dict[str, object] | None = None,
 ) -> str:
     if flags:
         return "Image metadata or appended bytes contain a flag-like token."
+    if magic_mismatch:
+        return "The filename extension is misleading; image puzzle triage should follow the magic-byte format."
     if png_ihdr:
         return "Misc image puzzle has PNG structure evidence that should be inspected before broader puzzle triage."
     if jpeg_tools:
@@ -369,12 +374,16 @@ def _image_hypothesis(
 
 def _image_next_action(
     flags: tuple[str, ...],
+    magic_mismatch: dict[str, object] | None,
     png_ihdr: dict[str, object] | None,
     image_stego: dict[str, object] | None,
     jpeg_tools: dict[str, object] | None = None,
 ) -> str:
     if flags:
         return "Send image-derived flag candidates to Verifier and preserve the image evidence path."
+    if magic_mismatch:
+        actual = magic_mismatch.get("actual_format")
+        return f"Ignore the misleading extension and continue image/stego checks as {actual}."
     if png_ihdr and png_ihdr.get("repaired_path"):
         return "Open the repaired PNG, then inspect visible hints, channels, and bit planes."
     if jpeg_tools:

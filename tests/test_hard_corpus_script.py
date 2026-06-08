@@ -59,6 +59,10 @@ class HardCorpusScriptTest(unittest.TestCase):
         source_route_cases = [case for case in cases if case["challenge_id"] == "hard-web-source-routes"]
         self.assertEqual(len(source_route_cases), 1)
         self.assertIn("JWT/session", source_route_cases[0]["required_evidence"])
+        magic_mismatch_cases = [case for case in cases if case["challenge_id"] == "hard-misc-magic-extension-mismatch"]
+        self.assertEqual(len(magic_mismatch_cases), 1)
+        self.assertEqual(magic_mismatch_cases[0]["expected_flag"], "flag{hard_magic_extension}")
+        self.assertIn("extension_mismatch", magic_mismatch_cases[0]["required_evidence"])
         self.assertTrue(all(case["required_evidence"] for case in cases))
         self.assertTrue(any(case["expected_flag"] is None for case in cases))
 

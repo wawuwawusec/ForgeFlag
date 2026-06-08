@@ -6,7 +6,7 @@ from typing import Any
 from forgeflag.archive_analysis import analyze_archive, preview_archive_text
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
-from forgeflag.image import analyze_image_stego_hints, analyze_png_ihdr
+from forgeflag.image import analyze_image_stego_hints, analyze_magic_extension_mismatch, analyze_png_ihdr
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
 from forgeflag.transforms import TransformCandidate, candidates_to_payload, transform_candidates
@@ -82,6 +82,7 @@ class ForensicsSolver:
         )
         decoded_candidates = _forensic_transform_candidates(combined_output)
         decoded_flags = extract_flags("\n".join(candidate.value for candidate in decoded_candidates))
+        magic_mismatch = analyze_magic_extension_mismatch(Path(resolved))
         png_ihdr = analyze_png_ihdr(Path(resolved))
         image_stego = analyze_image_stego_hints(Path(resolved))
         flags = tuple(
@@ -110,6 +111,7 @@ class ForensicsSolver:
                     if decoded_candidates
                     else {}
                 ),
+                **({"magic_extension_mismatch": magic_mismatch} if magic_mismatch else {}),
                 **({"png_ihdr": png_ihdr} if png_ihdr else {}),
                 **({"image_stego": image_stego} if image_stego else {}),
                 **({"archive": archive} if archive else {}),
@@ -119,12 +121,13 @@ class ForensicsSolver:
                 flags,
                 labeled_results[0][1].status,
                 labeled_results[1][1].status,
+                magic_mismatch,
                 png_ihdr,
                 archive,
                 image_stego,
             ),
             confidence=0.78 if flags else 0.58,
-            next_action=_next_action(flags, png_ihdr, archive, image_stego),
+            next_action=_next_action(flags, magic_mismatch, png_ihdr, archive, image_stego),
         )
         context.notebook.add_finding(finding)
         return finding
@@ -161,12 +164,15 @@ def _forensics_hypothesis(
     flags: tuple[str, ...],
     file_status: str,
     strings_status: str,
+    magic_mismatch: dict[str, Any] | None = None,
     png_ihdr: dict[str, Any] | None = None,
     archive: dict[str, Any] | None = None,
     image_stego: dict[str, Any] | None = None,
 ) -> str:
     if flags:
         return "Printable artifact content contains a flag-like token that should be verified."
+    if magic_mismatch:
+        return "The file extension does not match the magic bytes; triage should follow the actual container format."
     if png_ihdr and png_ihdr.get("suspected_height_mismatch"):
         return "PNG IHDR height appears inconsistent with IDAT scanline data; the repaired artifact is likely the next image to inspect."
     if archive:
@@ -180,12 +186,16 @@ def _forensics_hypothesis(
 
 def _next_action(
     flags: tuple[str, ...],
+    magic_mismatch: dict[str, Any] | None = None,
     png_ihdr: dict[str, Any] | None = None,
     archive: dict[str, Any] | None = None,
     image_stego: dict[str, Any] | None = None,
 ) -> str:
     if flags:
         return "Send candidates to Verifier and preserve the attachment path as reproduction evidence."
+    if magic_mismatch:
+        actual = magic_mismatch.get("actual_format")
+        return f"Ignore the misleading extension and rerun analysis as {actual} based on magic bytes."
     if png_ihdr and png_ihdr.get("repaired_path"):
         return "Open the repaired PNG, then continue with visual, channel, and low-bit-plane stego analysis."
     if archive:

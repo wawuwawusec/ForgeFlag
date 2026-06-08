@@ -64,6 +64,28 @@ class MiscSolverTest(unittest.TestCase):
         self.assertIn("image_stego", finding.evidence)
         self.assertEqual(finding.evidence["image_stego"]["text_chunks"][0]["keyword"], "Comment")
 
+    def test_misc_solver_records_magic_extension_mismatch_for_png_named_jpg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "out.jpg"
+            attachment.write_bytes(png_with_text_and_trailing_data("flag{misc_wrong_extension}"))
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-wrong-extension",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-wrong-extension")
+            finding = next(f for f in notebook.findings_for("misc-wrong-extension") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{misc_wrong_extension}"])
+        self.assertEqual(finding.evidence["magic_extension_mismatch"]["declared_extension"], "jpg")
+        self.assertEqual(finding.evidence["magic_extension_mismatch"]["actual_format"], "png")
+
     def test_misc_solver_recovers_flag_from_extra_png_idat_stream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
