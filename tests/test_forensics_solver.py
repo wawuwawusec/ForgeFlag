@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import shutil
 import tempfile
 import unittest
@@ -204,6 +205,51 @@ class ForensicsSolverTest(unittest.TestCase):
 
         self.assertEqual(finding.evidence["image_stego"]["format"], "png")
         self.assertEqual(finding.evidence["image_stego"]["trailing_data"]["length"], len(b"hidden-tail"))
+
+    def test_forensics_solver_decodes_base64_jpeg_comment_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "cat.jpg"
+            encoded = base64.b64encode(b"SVIBRG{jpeg_comment_b64}").decode("ascii").encode("ascii")
+            attachment.write_bytes(b"\xff\xd8" + b"\xff\xfe" + (len(encoded) + 2).to_bytes(2, "big") + encoded + b"\xff\xd9")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="forensics-jpeg-comment-base64",
+                    category=ChallengeCategory.FORENSICS,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.forensics.ctf.file_identify",
+                    return_value=ToolResult(tool="file", target=None, status="success", raw={"stdout": "JPEG image data"}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.strings_extract",
+                    return_value=ToolResult(tool="strings", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.binwalk_scan",
+                    return_value=ToolResult(tool="binwalk", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.exiftool_read",
+                    return_value=ToolResult(tool="exiftool", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig(), solvers=[ForensicsSolver()]).run_challenge("forensics-jpeg-comment-base64")
+                finding = next(
+                    f for f in notebook.findings_for("forensics-jpeg-comment-base64")
+                    if f.finding == "Triaged forensic attachment"
+                )
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["SVIBRG{jpeg_comment_b64}"])
+        self.assertIn("decoded_image_text_candidates", finding.evidence)
+        recipes = {tuple(candidate["recipe"]) for candidate in finding.evidence["decoded_image_text_candidates"]}
+        self.assertIn(("base64_decode",), recipes)
 
     def test_forensics_solver_records_magic_extension_mismatch_for_png_named_jpg(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

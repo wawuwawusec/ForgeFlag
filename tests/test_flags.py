@@ -7,11 +7,11 @@ from forgeflag.flags import extract_flags
 
 class FlagExtractionTest(unittest.TestCase):
     def test_extract_flags_preserves_platform_prefixes(self) -> None:
-        text = "warmup solved: picoCTF{prefix_should_survive} and HTB{box_flag}"
+        text = "warmup solved: picoCTF{prefix_should_survive} and HTB{box_flag} and SVIBRG{cat_found}"
 
         self.assertEqual(
             extract_flags(text),
-            ("picoCTF{prefix_should_survive}", "HTB{box_flag}"),
+            ("picoCTF{prefix_should_survive}", "HTB{box_flag}", "SVIBRG{cat_found}"),
         )
 
 

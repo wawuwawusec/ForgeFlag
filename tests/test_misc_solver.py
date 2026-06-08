@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import tempfile
 import unittest
 import zipfile
@@ -63,6 +64,32 @@ class MiscSolverTest(unittest.TestCase):
         self.assertEqual(finding.finding, "Analyzed misc image artifact")
         self.assertIn("image_stego", finding.evidence)
         self.assertEqual(finding.evidence["image_stego"]["text_chunks"][0]["keyword"], "Comment")
+
+    def test_misc_solver_decodes_base64_jpeg_comment_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "cat.jpg"
+            encoded = base64.b64encode(b"SVIBRG{misc_jpeg_comment_b64}")
+            attachment.write_bytes(
+                b"\xff\xd8" + b"\xff\xfe" + (len(encoded) + 2).to_bytes(2, "big") + encoded + b"\xff\xd9"
+            )
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-jpeg-comment-base64",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-jpeg-comment-base64")
+            finding = next(f for f in notebook.findings_for("misc-jpeg-comment-base64") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["SVIBRG{misc_jpeg_comment_b64}"])
+        self.assertIn("decoded_image_text_candidates", finding.evidence)
+        recipes = {tuple(candidate["recipe"]) for candidate in finding.evidence["decoded_image_text_candidates"]}
+        self.assertIn(("base64_decode",), recipes)
 
     def test_misc_solver_records_magic_extension_mismatch_for_png_named_jpg(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

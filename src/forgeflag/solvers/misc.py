@@ -103,7 +103,10 @@ class MiscSolver:
             png_ihdr = analyze_png_ihdr(resolved)
             image_stego = analyze_image_stego_hints(resolved)
             jpeg_tools, jpeg_flags = _analyze_jpeg_stego_tools(context, resolved, image_stego)
-            flags = tuple(dict.fromkeys((*extract_flags(_image_text(image_stego)), *jpeg_flags)))
+            image_text = _image_text(image_stego)
+            decoded_image_candidates = tuple(transform_candidates(image_text)) if image_text else ()
+            decoded_image_flags = extract_flags("\n".join(candidate.value for candidate in decoded_image_candidates))
+            flags = tuple(dict.fromkeys((*extract_flags(image_text), *decoded_image_flags, *jpeg_flags)))
             if not png_ihdr and not image_stego:
                 continue
             flag_candidates.extend(flags)
@@ -117,6 +120,11 @@ class MiscSolver:
                     **({"magic_extension_mismatch": magic_mismatch} if magic_mismatch else {}),
                     **({"png_ihdr": png_ihdr} if png_ihdr else {}),
                     **({"image_stego": image_stego} if image_stego else {}),
+                    **(
+                        {"decoded_image_text_candidates": candidates_to_payload(decoded_image_candidates)}
+                        if decoded_image_candidates
+                        else {}
+                    ),
                     **({"jpeg_stego_tools": jpeg_tools} if jpeg_tools else {}),
                 },
                 hypothesis=_image_hypothesis(flags, magic_mismatch, png_ihdr, image_stego, jpeg_tools),

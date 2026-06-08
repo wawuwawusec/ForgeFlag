@@ -410,6 +410,57 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("flag{expanded_caesar}", markdown)
         self.assertNotIn("zfua{wrong_candidate}", markdown)
 
+    def test_writeup_describes_encoded_jpeg_comment_reproduction_steps(self) -> None:
+        source = "U1ZJQlJHe2pwZWdfY29tbWVudF9iNjR9"
+        findings = [
+            Finding(
+                challenge_id="jpeg-comment-report",
+                solver="ForensicsSolver",
+                finding="Triaged forensic attachment",
+                evidence={
+                    "artifact": {"name": "cat.jpg", "path": "/tmp/cat.jpg"},
+                    "flag_candidates": ["SVIBRG{jpeg_comment_b64}"],
+                    "image_stego": {
+                        "format": "jpeg",
+                        "comments": [{"text_preview": source}],
+                    },
+                    "decoded_image_text_candidates": [
+                        {
+                            "recipe": ["base64_decode"],
+                            "source": source,
+                            "value": "SVIBRG{jpeg_comment_b64}",
+                        }
+                    ],
+                    "tool_samples": {
+                        "file": {"stdout": "/tmp/cat.jpg: JPEG image data\n", "stderr": ""},
+                        "strings": {"stdout": source + "\n", "stderr": ""},
+                    },
+                },
+                confidence=0.78,
+                hypothesis="Image metadata contains encoded flag-like data.",
+                next_action="Send candidates to Verifier and preserve the attachment path as reproduction evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="jpeg-comment-report",
+            category=ChallengeCategory.FORENSICS,
+            attachment_paths=("/tmp/cat.jpg",),
+        )
+
+        report = ReportBuilder().build(
+            "jpeg-comment-report",
+            ("SVIBRG{jpeg_comment_b64}",),
+            findings,
+            [],
+            challenge=challenge,
+        )
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("JPEG COM 注释", markdown)
+        self.assertIn(f"printf '%s' '{source}' | base64 -d", markdown)
+        self.assertIn("SVIBRG{jpeg_comment_b64}", markdown)
+        self.assertNotIn("在 strings/元数据输出中看到 SVIBRG{jpeg_comment_b64}", markdown)
+
     def test_writeup_describes_classical_xor_recovery_steps(self) -> None:
         findings = [
             Finding(

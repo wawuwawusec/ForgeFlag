@@ -5,7 +5,7 @@ import re
 
 FLAG_PATTERN = re.compile(
     r"(?i)(?:^|(?<![A-Za-z0-9_])|(?<=\\n)|(?<=\\r))"
-    r"(?:[A-Za-z0-9_]{0,20}ctf|flag|f1ag|htb|ductf)\{[^{}\s]{3,128}\}"
+    r"(?:[A-Za-z0-9_]{0,20}ctf|flag|f1ag|htb|ductf|svibrg)\{[^{}\s]{3,128}\}"
 )
 
 

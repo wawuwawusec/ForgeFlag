@@ -85,8 +85,11 @@ class ForensicsSolver:
         magic_mismatch = analyze_magic_extension_mismatch(Path(resolved))
         png_ihdr = analyze_png_ihdr(Path(resolved))
         image_stego = analyze_image_stego_hints(Path(resolved))
+        image_text = _image_text(image_stego)
+        decoded_image_candidates = tuple(transform_candidates(image_text)) if image_text else ()
+        decoded_image_flags = extract_flags("\n".join(candidate.value for candidate in decoded_image_candidates))
         flags = tuple(
-            dict.fromkeys((*extract_flags(combined_output), *decoded_flags, *extract_flags(_image_text(image_stego))))
+            dict.fromkeys((*extract_flags(combined_output), *decoded_flags, *extract_flags(image_text), *decoded_image_flags))
         )
         archive = analyze_archive(resolved)
         archive_text_previews = preview_archive_text(resolved) if archive else []
@@ -114,6 +117,11 @@ class ForensicsSolver:
                 **({"magic_extension_mismatch": magic_mismatch} if magic_mismatch else {}),
                 **({"png_ihdr": png_ihdr} if png_ihdr else {}),
                 **({"image_stego": image_stego} if image_stego else {}),
+                **(
+                    {"decoded_image_text_candidates": candidates_to_payload(decoded_image_candidates)}
+                    if decoded_image_candidates
+                    else {}
+                ),
                 **({"archive": archive} if archive else {}),
                 **({"archive_text_previews": archive_text_previews} if archive_text_previews else {}),
             },

@@ -195,6 +195,11 @@ def _approach_summary(path_steps: list[dict[str, Any]], findings: list[Finding])
     if image_lsb:
         recipe = image_lsb.get("recipe") or "LSB"
         return f"关键点是 PNG LSB 隐写：按 {recipe} 提取低位比特流，必要时再做文本解码，即可得到 flag。"
+    encoded_image_text = _first_encoded_image_text_recovery(path_steps)
+    if encoded_image_text:
+        location = encoded_image_text.get("location") or "图片文本线索"
+        method = encoded_image_text.get("method") or "可逆编码"
+        return f"关键点是图片元数据/注释隐藏了编码文本：先定位 {location}，再执行 {method} 解码得到 flag。"
     reverse_strings = _first_reverse_strings_step(path_steps)
     if reverse_strings:
         return "关键点是二进制明文字符串泄露：先确认附件类型，再用 strings 提取可打印字符串，直接发现 flag。"
@@ -397,6 +402,24 @@ def _reproduction_steps(
             _transform_reproduction_step(method),
             f"得到候选 {value}，交给 verifier 验证通过。",
         ]
+    encoded_image_text = _first_encoded_image_text_recovery(path_steps, accepted_flag=accepted_flag)
+    if encoded_image_text:
+        filename = encoded_image_text.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
+        source = encoded_image_text.get("source") or "可疑编码文本"
+        method = encoded_image_text.get("method") or "可逆编码"
+        location = encoded_image_text.get("location") or "图片文本线索"
+        flag = encoded_image_text.get("flag") or accepted_flag or "flag 候选"
+        steps = [
+            f"执行 `file {filename}` 确认附件是图片文件。",
+            f"执行 `exiftool {filename}` 或 `strings -n 4 {filename}` 检查图片元数据/注释。",
+            f"在 {location}中发现可疑编码文本：`{source}`。",
+        ]
+        if "base64_decode" in method:
+            steps.append(f"执行 `printf '%s' '{_shell_single_quote_body(source)}' | base64 -d` 解码。")
+        else:
+            steps.append(f"对该文本执行 {method} 解码。")
+        steps.append(f"得到 {flag}，提交该 flag。")
+        return steps
     image_lsb = _first_image_lsb_recovery(path_steps, accepted_flag=accepted_flag)
     if image_lsb:
         filename = image_lsb.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
@@ -1561,10 +1584,12 @@ def _first_forensics_strings_recovery(steps: list[dict[str, Any]], accepted_flag
             continue
         flags = _string_list(evidence.get("flag_candidates"))
         decoded = evidence.get("decoded_transform_candidates")
+        decoded_values: list[str] = []
         if isinstance(decoded, list):
             for candidate in decoded:
                 if isinstance(candidate, dict) and isinstance(candidate.get("value"), str):
                     flags.append(candidate["value"])
+                    decoded_values.append(candidate["value"])
         tool_samples = evidence.get("tool_samples")
         strings_stdout = ""
         file_stdout = ""
@@ -1575,7 +1600,8 @@ def _first_forensics_strings_recovery(steps: list[dict[str, Any]], accepted_flag
             file_sample = tool_samples.get("file")
             if isinstance(file_sample, dict):
                 file_stdout = str(file_sample.get("stdout") or "").strip()
-        if accepted_flag and accepted_flag not in flags and accepted_flag not in strings_stdout:
+        direct_text = "\n".join((strings_stdout, file_stdout, "\n".join(decoded_values)))
+        if accepted_flag and accepted_flag not in direct_text:
             continue
         artifact = evidence.get("artifact")
         artifact_name = artifact.get("name") if isinstance(artifact, dict) else ""
@@ -1643,6 +1669,49 @@ def _first_transform_candidate(steps: list[dict[str, Any]], accepted_flag: str |
                     return normalized
                 if not fallback:
                     fallback = normalized
+    return fallback
+
+
+def _first_encoded_image_text_recovery(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, Any]:
+    fallback: dict[str, Any] = {}
+    for step in steps:
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        candidates = evidence.get("decoded_image_text_candidates")
+        if not isinstance(candidates, list):
+            continue
+        image_stego = evidence.get("image_stego")
+        location = "图片文本线索"
+        if isinstance(image_stego, dict):
+            image_format = str(image_stego.get("format") or "").lower()
+            if image_format == "jpeg" and image_stego.get("comments"):
+                location = "JPEG COM 注释"
+            elif image_format == "png" and image_stego.get("text_chunks"):
+                location = "PNG 文本块"
+            elif image_format:
+                location = f"{image_format.upper()} 图片元数据"
+        artifact_name = _evidence_artifact_name(evidence)
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            value = str(candidate.get("value") or "")
+            source = str(candidate.get("source") or "")
+            if accepted_flag and accepted_flag not in value:
+                continue
+            result = {
+                "artifact_name": artifact_name,
+                "location": location,
+                "source": source,
+                "method": _recipe_text(candidate.get("recipe")) or str(candidate.get("method") or "可逆编码"),
+                "flag": accepted_flag or value or _first_string(evidence.get("flag_candidates")) or "",
+            }
+            if accepted_flag:
+                return result
+            if not fallback:
+                fallback = result
+        if fallback and not accepted_flag:
+            return fallback
     return fallback
 
 
@@ -1861,6 +1930,10 @@ def _first_string(value: object) -> str | None:
 
 def _basename(path: str) -> str:
     return path.rstrip("/").rsplit("/", 1)[-1] or path
+
+
+def _shell_single_quote_body(value: str) -> str:
+    return value.replace("'", "'\"'\"'")
 
 
 def _safe_filename_slug(value: str) -> str:
