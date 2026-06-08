@@ -2,6 +2,8 @@
 
 This note summarizes public CTF challenge patterns that ForgeFlag should keep testing against. It is a pattern guide, not a vendored challenge archive.
 
+For concrete recent hands-on examples and replay snippets, see [ForgeFlag CTF Casebook](ctf-casebook.md).
+
 ## Sources Reviewed
 
 - picoCTF solution indexes show broad beginner-to-medium coverage across Web Exploitation, Cryptography, Reverse Engineering, Forensics, General Skills, Binary Exploitation, and Blockchain.
