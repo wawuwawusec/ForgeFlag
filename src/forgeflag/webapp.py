@@ -17,6 +17,7 @@ from forgeflag.llm import build_llm_provider
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.project_catalog import recommended_projects
+from forgeflag.report import ReportBuilder
 from forgeflag.safety import ScopePolicy
 from forgeflag.tools.runner import ToolRunner
 
@@ -296,7 +297,22 @@ def create_handler(db_path: str | Path):
         @classmethod
         def handle_report(cls, challenge_id: str) -> dict[str, Any]:
             summary = cls.notebook.latest_run_summary(challenge_id)
-            return (summary or {}).get("replay_report") or {}
+            replay_report = (summary or {}).get("replay_report")
+            if isinstance(replay_report, dict) and replay_report:
+                return replay_report
+            challenge = cls.notebook.get_challenge(challenge_id)
+            findings = cls.notebook.findings_for(challenge_id)
+            observations = cls.notebook.observations_for(challenge_id)
+            if not findings and not observations and not summary:
+                return {}
+            accepted_flags = tuple(_string_list((summary or {}).get("accepted_flags")))
+            return ReportBuilder().build(
+                challenge_id,
+                accepted_flags,
+                findings,
+                observations,
+                challenge=challenge,
+            )
 
         @classmethod
         def handle_project_catalog(cls) -> list[dict[str, Any]]:

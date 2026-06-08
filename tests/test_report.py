@@ -797,6 +797,42 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("Poly1305", writeup["markdown"])
         self.assertIn("### Solve 脚本", writeup["markdown"])
 
+    def test_aes_gcm_reuse_writeup_outputs_forbidden_attack_solve_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="gcm-writeup",
+                solver="CryptoSolver",
+                finding="Identified crypto primitive misuse pattern",
+                evidence={
+                    "pattern": "aes_gcm_nonce_reuse",
+                    "source_lines": [
+                        "AES.new(key, AES.MODE_GCM, nonce=nonce)",
+                        "same nonce reused for c1/tag1 and c2/tag2",
+                    ],
+                },
+                confidence=0.72,
+                next_action="Collect nonce, AAD, ciphertexts, and tags; solve GHASH equations before attempting forgery.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="gcm-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="GCM nonce reuse",
+        )
+
+        report = ReportBuilder().build("gcm-writeup", (), findings, [], challenge=challenge)
+
+        writeup = report["writeup"]
+        script = writeup["solve_script"]["content"]
+        self.assertEqual(writeup["solve_script"]["filename"], "solve_gcm_writeup.py")
+        self.assertIn("AES-GCM nonce reuse", script)
+        self.assertIn("AAD_HEX", script)
+        self.assertIn("CIPHERTEXT_TAG_PAIRS", script)
+        self.assertIn("GHASH", script)
+        self.assertIn("forbidden attack", script)
+        self.assertIn("AES-GCM", writeup["markdown"])
+        self.assertIn("### Solve 脚本", writeup["markdown"])
+
     def test_writeup_describes_direct_web_response_flag_steps(self) -> None:
         findings = [
             Finding(

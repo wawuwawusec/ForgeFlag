@@ -653,6 +653,13 @@ def _solve_script_doc(
             "language": "python",
             "content": _aes_ctr_reuse_solve_script(primitive),
         }
+    if primitive and primitive.get("pattern") == "aes_gcm_nonce_reuse":
+        slug = _safe_filename_slug(challenge_id)
+        return {
+            "filename": f"solve_{slug}.py",
+            "language": "python",
+            "content": _aes_gcm_reuse_solve_script(primitive),
+        }
     if primitive and primitive.get("pattern") == "poly1305_one_time_key_reuse":
         slug = _safe_filename_slug(challenge_id)
         return {
@@ -918,6 +925,70 @@ def main() -> None:
             print(f"pt{{index}} = {{printable(recovered)}}")
     else:
         print("[!] Add cribs to KNOWN_PLAINTEXTS, then rerun to recover keystream bytes.")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _aes_gcm_reuse_solve_script(pattern: dict[str, Any]) -> str:
+    source_lines = _string_list(pattern.get("source_lines"))
+    source_comment = "\n".join(f"# evidence: {line}" for line in source_lines[:6])
+    if source_comment:
+        source_comment += "\n"
+    return f"""#!/usr/bin/env python3
+from __future__ import annotations
+
+import binascii
+
+{source_comment}# AES-GCM nonce reuse analysis helper.
+# Reused nonces are dangerous: ciphertexts leak plaintext XOR like CTR, and
+# repeated nonce/tag pairs can expose GHASH algebra for a forbidden attack.
+NONCE_HEX = ""
+AAD_HEX = ""
+
+# Fill with `(ciphertext_hex, tag_hex)` pairs that used the same nonce.
+CIPHERTEXT_TAG_PAIRS = [
+    # ("", ""),
+    # ("", ""),
+]
+
+
+def unhex(value: str) -> bytes:
+    value = value.strip().replace(" ", "").replace("\\n", "")
+    return binascii.unhexlify(value) if value else b""
+
+
+def xor_bytes(left: bytes, right: bytes) -> bytes:
+    return bytes(a ^ b for a, b in zip(left, right))
+
+
+def printable(data: bytes) -> str:
+    return "".join(chr(byte) if 32 <= byte < 127 else "." for byte in data)
+
+
+def main() -> None:
+    nonce = unhex(NONCE_HEX)
+    aad = unhex(AAD_HEX)
+    pairs = [(unhex(ct), unhex(tag)) for ct, tag in CIPHERTEXT_TAG_PAIRS if ct.strip() and tag.strip()]
+    if len(pairs) < 2:
+        raise SystemExit("Need at least two ciphertext/tag pairs encrypted with the same AES-GCM nonce.")
+
+    print(f"[+] AES-GCM nonce reuse evidence: nonce={{nonce.hex() or '<fill-me>'}} aad_len={{len(aad)}}")
+    print("[+] Ciphertext XORs reveal plaintext XORs because GCM encrypts with CTR mode.")
+    for left_index in range(len(pairs)):
+        for right_index in range(left_index + 1, len(pairs)):
+            mixed = xor_bytes(pairs[left_index][0], pairs[right_index][0])
+            print(f"ct{{left_index}} xor ct{{right_index}} = {{mixed.hex()}}")
+            print(f"preview: {{printable(mixed)}}")
+
+    print("[+] GHASH/tag route:")
+    print("    1. Preserve nonce, AAD, ciphertext lengths, and tags exactly.")
+    print("    2. Build GHASH equations from two same-nonce transcripts.")
+    print("    3. Solve for the authentication subkey H in GF(2^128), then recover E_K(J0).")
+    print("    4. Forge a chosen ciphertext/tag only inside the authorized CTF target.")
+    print("[!] Implement the finite-field forbidden attack in Sage or use a vetted CTF helper after validating endian/length encoding.")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from forgeflag.domain import LLMConfig
+from forgeflag.domain import Finding, LLMConfig
 from forgeflag.webapp import create_handler
 
 
@@ -136,6 +136,50 @@ class WebAppApiTest(unittest.TestCase):
         self.assertEqual(payload["challenge_id"], "webui-not-run")
         self.assertEqual(payload["status"], "not_run")
         self.assertEqual(payload["accepted_flags"], [])
+
+    def test_report_endpoint_builds_writeup_for_no_flag_solver_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / ".forgeflag" / "notebook.sqlite"
+            handler_cls = create_handler(db)
+            handler_cls.handle_create_challenge(
+                {
+                    "challenge_id": "webui-gcm-guidance",
+                    "category": "crypto",
+                    "title": "GCM nonce reuse",
+                }
+            )
+            handler_cls.notebook.add_finding(
+                Finding(
+                    challenge_id="webui-gcm-guidance",
+                    solver="CryptoSolver",
+                    finding="Identified crypto primitive misuse pattern",
+                    evidence={
+                        "pattern": "aes_gcm_nonce_reuse",
+                        "source_lines": ["AES-GCM nonce reused across ciphertext/tag pairs"],
+                    },
+                    confidence=0.72,
+                    next_action="Collect nonce, AAD, ciphertexts, and tags; solve GHASH equations.",
+                )
+            )
+            handler_cls.notebook.record_run(
+                "webui-gcm-guidance",
+                "completed",
+                {
+                    "challenge_id": "webui-gcm-guidance",
+                    "status": "completed",
+                    "accepted_flags": [],
+                    "rejected_flags": [],
+                },
+            )
+
+            payload = handler_cls.handle_report("webui-gcm-guidance")
+
+        self.assertEqual(payload["challenge_id"], "webui-gcm-guidance")
+        self.assertEqual(payload["flags"], [])
+        self.assertIn("writeup", payload)
+        self.assertEqual(payload["writeup"]["solve_script"]["filename"], "solve_webui_gcm_guidance.py")
+        self.assertIn("AES-GCM nonce reuse", payload["writeup"]["solve_script"]["content"])
 
     def test_challenge_list_includes_latest_run_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

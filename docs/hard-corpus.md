@@ -58,6 +58,7 @@ Required evidence is intentionally broader than a flag: cases can score classifi
 | `hard-web-api-options` | web | client script hints at a hidden API route | flag and route extraction |
 | `hard-web-source-routes` | web | source-only route and sink triage | route extraction plus API option, JWT/session, SSRF, and path traversal hints |
 | `hard-crypto-aes-ctr-reuse` | crypto | AES-CTR nonce reuse | classify stream keystream reuse |
+| `hard-crypto-aes-gcm-reuse` | crypto | AES-GCM nonce reuse | classify GHASH/tag forbidden-attack workflow |
 | `hard-crypto-poly1305-reuse` | crypto | Poly1305 one-time key reuse | classify MAC algebra workflow |
 | `hard-crypto-rsa-low-exponent` | crypto | RSA low exponent without padding | recover exact integer-root plaintext and emit replay script |
 | `hard-crypto-rsa-prime-modulus` | crypto | RSA prime modulus | recover private exponent with `phi=n-1` |
@@ -85,7 +86,7 @@ scripts/forgeflag-control restart
 scripts/forgeflag-hard-corpus --url http://127.0.0.1:8080 --keep --strict
 ```
 
-Result: 20/20 cases reached full score through the Web API.
+Result: 21/21 cases reached full score through the Web API.
 
 | Area | Improvement Verified |
 | --- | --- |
@@ -96,7 +97,7 @@ Result: 20/20 cases reached full score through the Web API.
 | Traffic | Follows shortlisted TCP streams and stores stream id, hints, payload sample, and recovered flags. |
 | Traffic | Exports HTTP objects and stores file name, path, size, SHA256, preview, and recovered flags. |
 | Traffic | Summarizes cleartext SMTP/FTP/IRC-style streams with protocol, commands, sample, and flags. |
-| Crypto | Recognizes AES-CTR nonce/keystream reuse and emits a crib/keystream solve helper; Poly1305 key reuse emits a Sage algebra helper; RSA low-exponent exact roots, prime moduli, close-prime Fermat factors, common-modulus pairs, shared-prime moduli, and broadcast e=3 cases recover flags and emit direct replay scripts. |
+| Crypto | Recognizes AES-CTR nonce/keystream reuse and emits a crib/keystream solve helper; AES-GCM nonce reuse emits a GHASH/forbidden-attack scaffold; Poly1305 key reuse emits a Sage algebra helper; RSA low-exponent exact roots, prime moduli, close-prime Fermat factors, common-modulus pairs, shared-prime moduli, and broadcast e=3 cases recover flags and emit direct replay scripts. |
 | Forensics | Re-runs transforms on decoded mail/PowerShell content and recovers nested base64 flags. |
 | Pwn | Recognizes source-level `printf(user_input)` format string sinks and emits a pwntools probe/write harness. |
 | Pwn | Recognizes ret2win source patterns and records crash harness, cyclic offset, and pwntools payload template guidance. |

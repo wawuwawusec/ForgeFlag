@@ -24,6 +24,20 @@ class CryptoSolver:
 
     def solve(self, context: SolverContext) -> SolverResult:
         text = "\n".join(_text_inputs(context))
+        primitive_pattern = _primitive_misuse_pattern(text)
+        if primitive_pattern:
+            finding = Finding(
+                challenge_id=context.challenge.challenge_id,
+                solver=self.name,
+                finding="Identified crypto primitive misuse pattern",
+                evidence=primitive_pattern,
+                hypothesis=_primitive_hypothesis(primitive_pattern["pattern"]),
+                confidence=0.72,
+                next_action=_primitive_next_action(primitive_pattern["pattern"]),
+            )
+            context.notebook.add_finding(finding)
+            return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
+
         hash_summary = hash_summary_from_text(text)
         if hash_summary["candidates"]:
             finding = Finding(
@@ -77,20 +91,6 @@ class CryptoSolver:
                 (finding,),
                 tuple(str(flag) for flag in python_random_xor["flags"]),
             )
-
-        primitive_pattern = _primitive_misuse_pattern(text)
-        if primitive_pattern:
-            finding = Finding(
-                challenge_id=context.challenge.challenge_id,
-                solver=self.name,
-                finding="Identified crypto primitive misuse pattern",
-                evidence=primitive_pattern,
-                hypothesis=_primitive_hypothesis(primitive_pattern["pattern"]),
-                confidence=0.72,
-                next_action=_primitive_next_action(primitive_pattern["pattern"]),
-            )
-            context.notebook.add_finding(finding)
-            return SolverResult(self.name, context.challenge.challenge_id, "ok", (finding,))
 
         classical_recovery = _classical_crypto_recovery(text)
         if classical_recovery["flags"]:
@@ -197,6 +197,14 @@ def _classical_crypto_recovery(text: str) -> dict[str, object]:
 
 def _primitive_misuse_pattern(text: str) -> dict[str, object] | None:
     lowered = text.lower()
+    if ("mode_gcm" in lowered or "mode gcm" in lowered or "aes-gcm" in lowered or "gcm" in lowered) and (
+        "nonce" in lowered or "iv" in lowered
+    ) and ("tag" in lowered or "ghash" in lowered or "forbidden" in lowered):
+        return {
+            "pattern": "aes_gcm_nonce_reuse",
+            "evidence_terms": _matched_terms(lowered, ("AES-GCM", "GCM", "nonce", "tag", "GHASH", "forbidden")),
+            "source_lines": _matching_lines(text, ("gcm", "nonce", "iv", "tag", "ghash", "forbidden")),
+        }
     if ("mode_ctr" in lowered or "mode ctr" in lowered or "ctr" in lowered) and "nonce" in lowered:
         return {
             "pattern": "aes_ctr_nonce_reuse",
@@ -230,6 +238,8 @@ def _matching_lines(text: str, terms: tuple[str, ...], limit: int = 8) -> list[s
 
 
 def _primitive_hypothesis(pattern: object) -> str:
+    if pattern == "aes_gcm_nonce_reuse":
+        return "The text indicates AES-GCM reused a nonce, which can break confidentiality and expose GHASH/tag-forgery algebra."
     if pattern == "aes_ctr_nonce_reuse":
         return "The text indicates AES CTR was used with a repeated nonce, which can reuse the stream-cipher keystream."
     if pattern == "poly1305_one_time_key_reuse":
@@ -238,6 +248,8 @@ def _primitive_hypothesis(pattern: object) -> str:
 
 
 def _primitive_next_action(pattern: object) -> str:
+    if pattern == "aes_gcm_nonce_reuse":
+        return "Collect reused nonce/IV, AAD, ciphertexts, and tags; compare ciphertext XORs, then model GHASH equations before attempting a bounded forbidden attack or tag forgery."
     if pattern == "aes_ctr_nonce_reuse":
         return "Collect ciphertexts, nonce, and known plaintext cribs; XOR ciphertexts to recover keystream bytes and replay the derivation."
     if pattern == "poly1305_one_time_key_reuse":

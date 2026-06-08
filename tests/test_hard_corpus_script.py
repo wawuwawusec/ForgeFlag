@@ -49,6 +49,10 @@ class HardCorpusScriptTest(unittest.TestCase):
         self.assertEqual(len(fermat_cases), 1)
         self.assertEqual(fermat_cases[0]["expected_flag"], "flag{hard_rsa_fermat}")
         self.assertIn("fermat_factor", fermat_cases[0]["required_evidence"])
+        gcm_cases = [case for case in cases if case["challenge_id"] == "hard-crypto-aes-gcm-reuse"]
+        self.assertEqual(len(gcm_cases), 1)
+        self.assertIsNone(gcm_cases[0]["expected_flag"])
+        self.assertIn("GHASH", gcm_cases[0]["required_evidence"])
         ret2win_cases = [case for case in cases if case["challenge_id"] == "hard-pwn-ret2win-source"]
         self.assertEqual(len(ret2win_cases), 1)
         self.assertIn("cyclic", ret2win_cases[0]["required_evidence"])

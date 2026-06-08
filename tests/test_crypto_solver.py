@@ -362,6 +362,31 @@ print(enc)
         self.assertEqual(finding.evidence["pattern"], "poly1305_one_time_key_reuse")
         self.assertIn("algebra", finding.next_action.lower())
 
+    def test_crypto_solver_identifies_aes_gcm_nonce_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-gcm-reuse",
+                    category=ChallengeCategory.CRYPTO,
+                    description=(
+                        "AES-GCM nonce was reused for two ciphertext/tag pairs. "
+                        "Recover GHASH authentication subkey with forbidden attack style algebra.\n"
+                        "c1 = 0011223344556677, tag1 = 8899aabbccddeeff0011223344556677\n"
+                        "c2 = 1021324354657687, tag2 = 9988ffeeddccbbaa7766554433221100\n"
+                    ),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-gcm-reuse")
+            finding = next(f for f in notebook.findings_for("crypto-gcm-reuse") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(finding.finding, "Identified crypto primitive misuse pattern")
+        self.assertEqual(finding.evidence["pattern"], "aes_gcm_nonce_reuse")
+        self.assertIn("tag", finding.next_action.lower())
+        self.assertIn("ghash", finding.next_action.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

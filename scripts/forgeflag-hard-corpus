@@ -97,6 +97,21 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    crypto_gcm = WORKDIR / "aes-gcm-reuse.txt"
+    crypto_gcm.write_text(
+        "\n".join(
+            [
+                "HackTricks/CryptoHack-style AEAD misuse pattern.",
+                "cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)",
+                "The same nonce was reused for two ciphertext/tag pairs.",
+                "c1 = 0011223344556677, tag1 = 8899aabbccddeeff0011223344556677",
+                "c2 = 1021324354657687, tag2 = 9988ffeeddccbbaa7766554433221100",
+                "Goal: identify GHASH algebra and forbidden attack workflow before guessing a flag.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     poly1305 = WORKDIR / "poly1305-otm.txt"
     poly1305.write_text(
         "Poly1305 one-time MAC key was reused across messages. Recovering the key requires algebra over the MAC equations.\n",
@@ -258,6 +273,7 @@ def build_fixtures() -> dict[str, Path]:
         "web_source": web_source,
         "web_route_source": web_route_source,
         "crypto_ctr": crypto_ctr,
+        "crypto_gcm": crypto_gcm,
         "poly1305": poly1305,
         "rsa_low_exponent": rsa_low_exponent,
         "rsa_prime_modulus": rsa_prime_modulus,
@@ -319,6 +335,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["CTR", "nonce", "keystream"],
             "source_url": "https://github.com/DownUnderCTF/Challenges_2024_Public",
             "improvement_hint": "CryptoSolver/LLM should classify AES mode misuse and propose XOR crib workflow.",
+        },
+        {
+            "challenge_id": "hard-crypto-aes-gcm-reuse",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "AES GCM nonce reuse",
+            "description": "CryptoHack/HackTricks-style AEAD misuse: reused GCM nonce requires ciphertext XOR triage plus GHASH/tag algebra.",
+            "attachments": [fixtures["crypto_gcm"]],
+            "active_probe": False,
+            "expected_flag": None,
+            "required_evidence": ["AES-GCM", "nonce", "GHASH", "forbidden attack"],
+            "source_url": "https://book.hacktricks.wiki/en/crypto-and-stego/crypto-ctfs-tricks.html",
+            "improvement_hint": "CryptoSolver/LLM should classify GCM nonce reuse and emit a GHASH forbidden-attack replay scaffold.",
         },
         {
             "challenge_id": "hard-crypto-poly1305-reuse",
