@@ -462,6 +462,50 @@ Solver lesson:
 - ForensicsSolver should recover local ZIP entries even when the central directory or EOCD is missing.
 - The report should preserve the recovered filenames, CRC check result, and any decoded tag or flag from recovered text.
 
+### Chrome Profile History Leak URL
+
+Signal:
+
+- Windows user profile extract contains Chrome `User Data/Default/History`, `Bookmarks`, `Cookies`, `Login Data`, and PowerShell PSReadLine.
+- The statement gives a suspected leak date and user, but the profile has no obvious desktop/downloaded payload.
+- Chrome History contains a late or suspicious external URL, often with query parameters such as `tag`, `payload`, `data`, `token`, or `src`.
+- The suspicious parameter is Base64 or another transform-friendly encoding.
+
+Shortest path:
+
+```bash
+unzip OSPREY-WS-042_plandau_extract.zip -d extract
+sqlite3 -header -column \
+  extract/Users/plandau/AppData/Local/Google/Chrome/'User Data'/Default/History \
+  "select datetime((last_visit_time/1000000)-11644473600,'unixepoch') as t,
+          visit_count, typed_count, url, title
+   from urls order by last_visit_time;"
+```
+
+In the Osprey profile case, the suspicious URL was an external paste mirror upload:
+
+```text
+https://paste-mirror-q4.example.invalid/upload?tag=U1ZJVVNDR3tvc3ByZXlfY2hyb21lX2hpc3RvcnlfbGVha191cmx9&src=oc
+```
+
+Decode the `tag` parameter:
+
+```bash
+printf '%s' 'U1ZJVVNDR3tvc3ByZXlfY2hyb21lX2hpc3RvcnlfbGVha191cmx9' | base64 -d
+```
+
+Flag:
+
+```text
+SVIUSCG{osprey_chrome_history_leak_url}
+```
+
+Solver lesson:
+
+- ForensicsSolver should parse Chrome History timestamps with the WebKit epoch conversion.
+- Browser profile triage should scan URL query parameters and form-like fields with transform candidates, not only page titles.
+- The write-up should preserve the suspicious timestamp, URL host/path, query parameter name, and exact decoder.
+
 ### JPEG COM Base64 Flag
 
 Signal:

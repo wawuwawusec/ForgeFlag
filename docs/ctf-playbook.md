@@ -84,7 +84,7 @@ ForgeFlag next additions:
 - For images, inspect PNG chunks/IHDR/CRC/trailing data, JPEG comments/APP markers, palettes, alpha channel, bit planes, dimensions, and visual anomalies.
 - For archives and documents, inspect comments, embedded files, relationship graphs, encryption state, macros, object streams, and suspicious filenames.
 - If a ZIP is missing the end-of-central-directory record, parse local file headers (`PK\x03\x04`) and recover each stored/deflated stream by filename, compressed size, and CRC before attempting heavier repair.
-- For disk/memory/log cases, build a timeline and search for deleted files, credentials, shell history, process/network artifacts, and malware staging.
+- For disk/memory/log cases, build a timeline and search for deleted files, credentials, shell history, process/network artifacts, malware staging, and browser profile databases such as Chrome History/Cookies/Downloads; scan suspicious URL query parameters with reversible transforms.
 - Treat stego as forensics first: metadata, appended data, embedded files, then content-level extraction such as LSB/spectrogram/DTMF/zero-width text.
 
 ForgeFlag next additions:
