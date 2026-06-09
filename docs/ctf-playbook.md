@@ -68,6 +68,7 @@ ForgeFlag next additions:
 - For XOR, check known plaintext from flag format, repeated-key clues, equal-length ciphertexts, and nonce/keystream reuse.
 - For AES/stream modes, collect IV/nonce/counter and look for CTR reuse, CBC padding oracles, ECB block repetition, and GCM nonce misuse.
 - For RSA, extract all integers and test prime `n`, known factors, shared factors, small exponent, bad padding, broadcast, partial key leakage, and Coppersmith-style hints.
+- For matrix or linear-algebra ciphers, turn the stated transform into equations over unknown matrix entries. If modular inversion fails under `mod n`, compute `gcd(bad_pivot, n)` before abandoning the route; CTF authors often hide a useful factor in composite moduli.
 - For hashes, fingerprint first, then decide whether lookup or bounded cracking is justified.
 
 ForgeFlag next additions:
@@ -82,6 +83,7 @@ ForgeFlag next additions:
 - Run file, strings, metadata, archive listing, and magic-byte checks before extraction.
 - For images, inspect PNG chunks/IHDR/CRC/trailing data, JPEG comments/APP markers, palettes, alpha channel, bit planes, dimensions, and visual anomalies.
 - For archives and documents, inspect comments, embedded files, relationship graphs, encryption state, macros, object streams, and suspicious filenames.
+- If a ZIP is missing the end-of-central-directory record, parse local file headers (`PK\x03\x04`) and recover each stored/deflated stream by filename, compressed size, and CRC before attempting heavier repair.
 - For disk/memory/log cases, build a timeline and search for deleted files, credentials, shell history, process/network artifacts, and malware staging.
 - Treat stego as forensics first: metadata, appended data, embedded files, then content-level extraction such as LSB/spectrogram/DTMF/zero-width text.
 
@@ -96,6 +98,8 @@ ForgeFlag next additions:
 - Search for direct flag markers and then protocol-specific carriers: DNS queries/TXT, HTTP requests/objects, TCP streams, SMTP/FTP payloads, TLS SNI/certs, ICMP payloads, and unusual ports.
 - For DNS exfiltration, group by base domain, preserve label order, try Base32/Base64/hex on labels, and reconstruct split payloads.
 - For HTTP, extract URLs, hosts, cookies, auth headers, uploaded/downloaded objects, forms, and compressed/encoded bodies.
+- For beacon-like HTTP, separate browser noise from scripted traffic by User-Agent, interval, repeated paths, and form fields. If Base64-decoded payloads share a long prefix, crib likely JSON headers to recover reused XOR keystreams before trying heavier crypto.
+- For "wrong place" or Around-the-World clues, compare the claimed host/CDN naming with the actual destination IP, ASN, WHOIS, and GeoIP country/city. Preserve both the protocol evidence and the geolocation source.
 - For encrypted or custom protocols, look for keys in attachments, reused IV/nonces, predictable headers, and cleartext control channels.
 
 ForgeFlag next additions:
@@ -110,6 +114,7 @@ ForgeFlag next additions:
 - If strings expose a candidate, preserve it as the shortest path; otherwise identify validation functions, input reads, compare loops, and decode routines.
 - Use Ghidra/IDA/r2 for decompilation and control-flow pivots; rename variables and functions as constraints become clear.
 - Watch for encoded strings, little-endian constants, table lookups, XOR loops, custom VMs, anti-debug checks, and packers such as UPX.
+- For stripped prompt binaries, pair prompt/success/failure strings with nearby `strlen`, `fgets`, and byte-compare loops. Invert simple byte formulas such as `(input[i] ^ key) + i == table[i]` directly from `.rodata`.
 - Convert recovered checks into a small solver script rather than hand-solving inside the UI.
 
 ForgeFlag next additions:

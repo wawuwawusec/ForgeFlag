@@ -178,13 +178,16 @@ Reproduction strategy:
 
 - Recover the change-of-basis matrix `A` up to scalar using equations `M A = A C mod n`.
 - Stack linear equations from known pairs over `Z/nZ`.
+- If Gaussian elimination over `mod n` hits a non-invertible pivot, compute `gcd(pivot, n)`. A non-trivial factor can let the solve continue over a prime field.
+- Work modulo the recovered prime factor first. If the plaintext chunks are much smaller than the prime, residues can be read directly as integers without full CRT reconstruction.
 - Use the recovered `A` to decrypt live matrices: `M = A C A^-1 mod n`.
 - Decode each plaintext matrix entry into bytes according to the provided chunk size.
 
 Solver lesson:
 
 - CryptoSolver should detect conjugation equations and produce a modular linear algebra solve script.
-- For composite `n`, prefer Sage or CRT-aware solving when ordinary modular inverse steps fail.
+- For composite `n`, bad-pivot GCD is a useful first move before Sage/CRT-aware solving.
+- If only one plaintext matrix position carries printable chunks, score entries by printable byte ratio and flag-format prefix before choosing the decode path.
 
 ## Traffic Cases
 
@@ -249,6 +252,36 @@ Solver lesson:
 
 - Store stream IDs, exported object paths, hashes, previews, and recovered flag candidates.
 - The write-up should include the exact stream ID or object filename.
+
+### Beacon Host Mismatch And Reused XOR
+
+Signal:
+
+- HTTP capture is mostly normal browsing, but one host has scripted User-Agent traffic, regular polling, and repeated API paths.
+- The Host header looks like CDN or telemetry infrastructure, while the destination IP belongs to an unrelated ASN or country.
+- Form bodies carry Base64 fields such as `cfg` or `data`; decoded blobs share a long identical prefix.
+
+Reproduction strategy:
+
+```bash
+tshark -r capture.pcap -Y http.request \
+  -T fields -e frame.number -e ip.src -e ip.dst -e http.host -e http.request.method -e http.request.uri -e http.user_agent
+tshark -r capture.pcap \
+  -Y 'http.request && http.host == "suspicious.example" && http.file_data' \
+  -T fields -e frame.number -e http.request.uri -e http.file_data
+```
+
+Then:
+
+- Decode URL-form bodies and Base64 values without converting `+` into spaces.
+- Crib common JSON prefixes such as `{"id":"...` against identical ciphertext prefixes. In the SAR-style finance beacon case, this recovered the repeating XOR key `Ar3s_C2!`.
+- Decrypt config/result records, then compare declared C2/stage hosts with the actual IP's WHOIS or GeoIP result.
+- For Around-the-World style answers, use the real destination country/city rather than the claimed CDN or region string.
+
+Solver lesson:
+
+- TrafficSolver should group HTTP requests by `(host, dst_ip, user_agent)`, score periodic scripted beacons separately from browser traffic, and try known-plaintext repeating-XOR on Base64 form fields with shared prefixes.
+- GeoIP/WHOIS evidence should be recorded as a first-class finding when the challenge clue asks where traffic really goes.
 
 ## Reverse Cases
 
@@ -317,12 +350,14 @@ Reproduction strategy:
 - Run `strings` to identify success/failure prompts.
 - Disassemble around `strlen`, compare loops, or encoded constants.
 - Look for XOR/add/sub tables in `.rodata`.
-- Reconstruct the expected phrase with a Python script rather than brute forcing.
+- Reconstruct the expected phrase with a Python script rather than brute forcing. For a check like `((input[i] ^ 0x13) + i) & 0xff == table[i]`, invert each byte as `input[i] = ((table[i] - i) & 0xff) ^ 0x13`.
+- Verify statically by reapplying the recovered formula to the candidate phrase; dynamic execution is optional when the host architecture or container image is unavailable.
 
 Solver lesson:
 
 - ReverseSolver should pair prompt strings with nearby validation logic in disassembly.
-- IDA/Ghidra MCP should be the next tool when symbols are stripped and the phrase is not directly printable.
+- ReverseSolver should emit the inverse byte formula, `.rodata` table bytes, and recovered phrase in the write-up.
+- IDA/Ghidra MCP should be the next tool when symbols are stripped and the compare loop is not clear from linear disassembly.
 
 ### Packed Or UPX-Marked Binary
 
@@ -344,6 +379,42 @@ Solver lesson:
 - ReverseSolver should detect packer indicators and record the next safe step before treating missing strings as a dead end.
 
 ## Forensics And Misc Cases
+
+### Truncated ZIP With Missing EOCD
+
+Signal:
+
+- `file` identifies a ZIP archive, but `zipinfo` or `unzip -l` reports "End-of-central-directory signature not found".
+- Hex view still shows local file headers such as `PK\x03\x04`, filenames, compressed sizes, uncompressed sizes, and CRC fields.
+
+Reproduction:
+
+```python
+import binascii
+import struct
+import zlib
+
+data = open("archive.zip", "rb").read()
+offset = 0
+while True:
+    start = data.find(b"PK\x03\x04", offset)
+    if start < 0:
+        break
+    _, _, _, method, _, _, crc, csize, usize, nlen, xlen = struct.unpack_from("<IHHHHHIIIHH", data, start)
+    name = data[start + 30 : start + 30 + nlen].decode()
+    body_start = start + 30 + nlen + xlen
+    body = data[body_start : body_start + csize]
+    plain = zlib.decompress(body, -15) if method == 8 else body
+    assert len(plain) == usize
+    assert (binascii.crc32(plain) & 0xFFFFFFFF) == crc
+    print(name, plain)
+    offset = body_start + csize
+```
+
+Solver lesson:
+
+- ForensicsSolver should recover local ZIP entries even when the central directory or EOCD is missing.
+- The report should preserve the recovered filenames, CRC check result, and any decoded tag or flag from recovered text.
 
 ### JPEG COM Base64 Flag
 
@@ -613,6 +684,209 @@ Solver lesson:
 - For deterministic services, split the solve into offline parts: ask the user for small transcripts such as encrypted flag plus all-zero ciphertext.
 - Keep remote exploit scripts non-interactive first (`id`, `whoami`, `cat flag.txt`) before trying to hold a shell.
 
+## Recent USCyberGames Hands-On Cases
+
+These cases came from live user-provided targets and artifacts. Keep the exact flags as solved-case references, but convert the techniques into small local fixtures before adding solver coverage.
+
+### Vertex 3D Labs: Encoded STL Backup
+
+Category:
+
+- Web-assisted forensics / 3D asset stego.
+
+Signal:
+
+- The page describes a 3D mesh processing server.
+- Response headers leak `X-Archived-Path: /assets_production_system_v3/bak/file_backup.sys`.
+- Page copy mentions Windows-native encoded backup blocks.
+- The backup looks like a PEM certificate but is actually `certutil -encode` style Base64.
+
+Shortest path:
+
+```bash
+curl -sS https://target/assets_production_system_v3/bak/file_backup.sys -o file_backup.sys
+python3 - <<'PY'
+from pathlib import Path
+import base64
+s = Path("file_backup.sys").read_text()
+b64 = "".join(line.strip() for line in s.splitlines() if "CERTIFICATE" not in line and line.strip())
+Path("model.stl").write_bytes(base64.b64decode(b64))
+PY
+```
+
+Then render the binary STL from a top/orthographic view. The flag was visible as raised geometry:
+
+```text
+SVIBGR{n3v3r_d1sm1ss_th3_f1n3_4rts}
+```
+
+Solver lesson:
+
+- WebSolver should preserve response headers and promote leaked archive paths.
+- ForensicsSolver/MiscSolver should recognize PEM-wrapped data that decodes to `OpenSCAD Model`/binary STL.
+- 3D assets need cheap visual render previews, especially top/front/side orthographic projections.
+
+### Wire Text: Multi-Space Morse In A Familiar Rant
+
+Category:
+
+- Misc text stego / Morse transform.
+
+Signal:
+
+- Challenge mentions wire, silence/signal, "What hath God wrought", and four words.
+- File text is a recognizable rant, but spacing between words is abnormal.
+- Only 2, 3, and 4 spaces appear between tokens.
+
+Shortest path:
+
+```python
+from pathlib import Path
+import re
+
+s = Path("wire.txt").read_text()
+runs = [len(m.group()) for m in re.finditer(r" +", s)]
+
+# 2 spaces = dot, 4 spaces = dash, 3 spaces = letter separator.
+groups, cur = [], ""
+for n in runs:
+    if n == 3:
+        groups.append(cur)
+        cur = ""
+    elif n == 2:
+        cur += "."
+    elif n == 4:
+        cur += "-"
+if cur:
+    groups.append(cur)
+```
+
+Decoded text:
+
+```text
+SVIBGR.M0RS3_C0D3_1S_C00L$
+```
+
+Final flag:
+
+```text
+SVIBGR{M0RS3_C0D3_1S_C00L}
+```
+
+Solver lesson:
+
+- Transform triage should include whitespace-run histograms, not only visible characters.
+- If decoded Morse uses punctuation as delimiters and the statement gives a flag format, map the punctuation back to braces only after verifying the prefix/body.
+
+### Souvenirs Postcard: JPEG FFD9 Appended ZIP
+
+Category:
+
+- Forensics / appended archive.
+
+Signal:
+
+- JPEG postcard has ordinary metadata and image content.
+- `strings` reveals `postcards/*.txt` near the tail.
+- `binwalk` shows a ZIP archive immediately after JPEG EOI `FFD9`.
+
+Shortest path:
+
+```bash
+binwalk souvenirs.jpg
+cp souvenirs.jpg souvenirs.zip
+unzip souvenirs.zip -d out
+cat out/postcards/04_oman.txt
+```
+
+Flag:
+
+```text
+SVIUSCG{p0stc4rds_h1dd3n_p4st_th3_FFD9_h0r1z0n}
+```
+
+Solver lesson:
+
+- JPEG triage should always check bytes after the last `FFD9`.
+- If a ZIP is appended, list entries first and rank text files by title/order rather than dumping binary noise.
+- Write-up wording should explicitly say "copy/offset-extract the appended ZIP, then read the relevant entry".
+
+### Intern-Net: Client-Side Bcrypt Hash As Session Token
+
+Category:
+
+- Web auth logic / insecure client-side authentication.
+
+Signal:
+
+- Login page loads `bcrypt.min.js`.
+- `/static/js/login.js` retrieves `/api/auth/hash`, verifies the password client-side, and sets `auth_token = base64(hash)`.
+- Ordinary registration gives an intern account and reveals a locked Senior Intern announcement.
+- Public posts mention `Alex Rivera`, the Senior Intern coordinator.
+
+Shortest path:
+
+```bash
+curl -sS -X POST https://target/api/auth/hash \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alex.rivera"}'
+```
+
+Then Base64-encode the returned bcrypt hash and set it as the `auth_token` cookie before visiting `/announcements`.
+
+Flag:
+
+```text
+SVIUSCG{8bb1e559044d7df7f3fac04d124b1e63}
+```
+
+Solver lesson:
+
+- WebSolver should fetch same-origin auth JavaScript and flag client-side password verification, exposed hash lookup, and hash-as-token patterns.
+- It should enumerate likely usernames only from in-scope page evidence such as author names and email addresses.
+- Report the bug as auth bypass/IDOR-like token forgery, not password cracking.
+
+### Lingual Janet: Sandbox Load-Order File Read Side Channel
+
+Category:
+
+- Web sandbox / language interpreter.
+
+Status:
+
+- Paused before full flag recovery, but the core primitive was verified.
+
+Signal:
+
+- Go server writes user Janet code to a temp file, then runs `janet sandbox.janet temp-file`.
+- `sandbox.janet` executes `(dofile player-file)` before removing `dofile`, `require`, and `import`.
+- Dangerous OS/network functions are removed, but `slurp`/`file/read` remain available.
+- The flag path is provided as `/flag.txt`.
+- Janet stdout is consumed by the game as move directions, so printing the flag does not appear directly in the HTTP response.
+
+Verified primitive:
+
+```janet
+(def flag (slurp "/flag.txt"))
+(defn move [state]
+  :right)
+```
+
+This loaded successfully remotely, and a first side-channel attempt recovered the first byte `S`.
+
+Planned shortest path:
+
+- Read `/flag.txt` at Janet load time.
+- Encode one bit or one comparison result per tick by returning `:left` or `:right`.
+- Observe the first SSE frame or position changes from `/stream/<session_id>`.
+- Prefer one long session that leaks many bits rather than many `/start` requests, because repeated TLS connections were unstable.
+
+Solver lesson:
+
+- WebSolver should parse provided server/source attachments for interpreter load order and sandbox removal timing.
+- Sandbox cases need output-channel analysis: stdout, stderr, files, timing, game state, and SSE fields can all be exfiltration paths.
+- Post-run Critic should record "read primitive works but output channel is consumed" as a blocker with a side-channel rerun plan.
+
 ## ForgeFlag Backlog From These Cases
 
 - Add static JS fetch and comment/string extraction for same-origin scripts.
@@ -620,6 +894,11 @@ Solver lesson:
 - Add image metadata transform decoding to both ForensicsSolver and MiscSolver.
 - Add ZIP container subtype detection for Krita/OpenDocument style archives.
 - Add SVG text coordinate extraction.
+- Add certutil/PEM-wrapped binary decoding and STL orthographic render previews.
+- Add whitespace-run stego analysis before generic text transforms.
+- Add JPEG EOI appended ZIP extraction hints to image write-ups.
+- Add Web auth JavaScript checks for exposed bcrypt hashes and hash-as-token cookies.
+- Add sandbox source triage for interpreter load order, leftover file APIs, and side-channel output routes.
 - Add CTR fixed nonce exploit script generation.
 - Add modular matrix conjugation solve script generation.
 - Improve PwnSolver deep triage: unsafe scanf, stack variable overwrite, heap chunk adjacency, imported `system`, and generated non-interactive command execution exploit.
