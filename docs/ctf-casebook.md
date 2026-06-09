@@ -253,6 +253,52 @@ Solver lesson:
 - Store stream IDs, exported object paths, hashes, previews, and recovered flag candidates.
 - The write-up should include the exact stream ID or object filename.
 
+### Internal Web App Pivot To Business Data
+
+Signal:
+
+- PCAP captures east-west traffic from a workstation to an internal web app.
+- Requests use an internal host and nonstandard port, such as `nas-maritime-01.wabashmarine.local:8088`.
+- The same service account and Basic Auth header appear across short HTTP sessions.
+- Early endpoints reveal identity, index files, and business records rather than a direct exploit payload.
+
+Shortest path:
+
+```bash
+tshark -r wabash_nas_pivot_2026-04-18.pcap -q -z conv,tcp
+tshark -r wabash_nas_pivot_2026-04-18.pcap -q -z follow,tcp,ascii,0
+tshark --export-objects http,out -r wabash_nas_pivot_2026-04-18.pcap
+```
+
+Observed chain:
+
+```text
+10.42.18.42:FIN-WS-07 -> 10.42.7.18:NAS-MARITIME-01:8088
+GET /api/v1/sessions/whoami
+GET /api/v1/dispatch/index
+GET /api/v1/dispatch/dispatch_2026-04-18.txt
+GET /api/v1/personnel/index
+GET /api/v1/personnel/crew_manifests_q2_2026.csv
+```
+
+The dispatch identified vessel `WAB-2207`. The Q2 crew manifest row for that vessel's `Master` contained a Base64 value in the `notes` field:
+
+```text
+U1ZJVVNDR3t3YWJhc2hfZmlud3NfcGl2b3RfbmFzX21hcml0aW1lXzAxfQ==
+```
+
+Decoded flag:
+
+```text
+SVIUSCG{wabash_finws_pivot_nas_maritime_01}
+```
+
+Solver lesson:
+
+- TrafficSolver should reconstruct HTTP object chains and preserve the business clue that caused each next request.
+- For CSV/JSON HTTP objects, parse fields and apply transforms to suspicious cells such as `notes`, `comment`, `metadata`, `token`, and `payload`.
+- Write-ups for pivot captures should name source, destination, account, endpoint sequence, and the exact field that carried the flag.
+
 ### Beacon Host Mismatch And Reused XOR
 
 Signal:
