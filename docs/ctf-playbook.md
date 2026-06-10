@@ -53,6 +53,7 @@ These cards are the distilled "what to try next" logic ForgeFlag should graduall
 - Check obvious routes: `/robots.txt`, `/sitemap.xml`, `/admin`, `/login`, `/api`, `/flag`, static JS bundles, source maps.
 - Classify bug class before payloads: SQL/NoSQL injection, command/code injection, SSTI, path traversal/LFI/RFI, file upload, IDOR, auth logic, SSRF, XXE, GraphQL, JWT/session, XSS/prototype pollution.
 - If source code is provided, inspect routes, middleware, template rendering, deserialization, upload paths, and environment variable reads.
+- For signed cookies or URL parameters, classify the MAC construction. `MD5(secret || data)` and `SHA1(secret || data)` are prefix MACs: if the secret leaks in source, directly re-sign forged data; otherwise try hash length extension and append an overriding parameter such as `&role=admin`.
 - If an API returns option lists or commands, treat hidden command discovery as a high-priority branch.
 
 ForgeFlag next additions:
@@ -165,6 +166,7 @@ Common first moves:
 - Look for obvious flags in the response before fuzzing.
 - If active probing is enabled, run a small route wordlist such as `robots.txt`, `admin`, `login`, `flag`, and routes discovered from links/forms.
 - For deeper work, classify the bug class before acting: SQL injection, command injection, SSTI, JWT/session confusion, SSRF, path traversal, upload handling, or API option leakage.
+- For homegrown session signatures, inspect whether the code uses HMAC. Raw `hash(secret || data)` means either direct re-signing if the secret leaked, or length extension if only a valid signed guest token is available.
 
 ForgeFlag coverage today:
 

