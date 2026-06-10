@@ -146,7 +146,7 @@ ForgeFlag next additions:
 - Preserve examples and derive a deterministic solver for input-output tasks.
 - For pathfinding/game puzzles, parse the map, identify graph state, and choose BFS/Dijkstra/A* or dynamic programming.
 - For sandbox tasks, inspect blacklists, exposed builtins/imports, serialization boundaries, object traversal, and exception leakage.
-- For audio, inspect waveform, spectrogram, DTMF tones, Morse, sample LSB, and metadata. For melody/notation prompts, segment monophonic notes into MIDI/note names, then test note letters, scale degrees, staff positions, and tiny binary alphabets from the post-calibration tail.
+- For audio, inspect waveform, spectrogram, DTMF tones, Morse, sample LSB, and metadata. For melody/notation prompts, segment events after calibration. If events are monophonic, test note letters, scale degrees, staff positions, and tiny binary alphabets; if events are chords, score simultaneous natural notes and try note-set bitmasks as 7-bit ASCII.
 
 ForgeFlag next additions:
 

@@ -1397,87 +1397,87 @@ Solver lesson:
 - If a ZIP is appended, list entries first and rank text files by title/order rather than dumping binary noise.
 - Write-up wording should explicitly say "copy/offset-extract the appended ZIP, then read the relevant entry".
 
-### Notation Audio: Melody-To-Bits
+### Notation Audio: Chord Bitmask ASCII
 
 Category:
 
-- Misc / audio notation cipher.
+- Crypto / audio notation cipher.
 
 Signal:
 
 - WAV is ordinary mono PCM with no appended data, no useful `strings`, and no sample-LSB hit.
-- The melody is a single-note sequence: first C-major scale up/down, then a C-major arpeggio, then a short high-structure tail.
-- The tail uses only `G`, `B`, and one `F`, suggesting those notes carry a small alphabet or marker rather than normal music.
+- The first section is a C-major scale up/down, then a C-major arpeggio. Treat that as a calibration header for note names.
+- Silence detection shows the payload after the long pause is a sequence of equal-length events.
+- Each payload event is a chord, not a monophonic note. The simultaneously present notes from `C D E F G A B` form a 7-bit ASCII mask.
 
 Shortest path:
 
 ```python
-import math
-from pathlib import Path
-
 import numpy as np
 import soundfile as sf
 
 y, sr = sf.read("notation.wav")
-y = np.asarray(y, dtype=float)
-win = int(sr * 0.01)
-rms = np.array([np.sqrt(np.mean(y[i:i + win] ** 2)) for i in range(0, len(y) - win, win)])
-mask = rms > rms.max() * 0.1
+if y.ndim > 1:
+    y = y[:, 0]
+y = y.astype(float)
 
-segments = []
-inside = False
-for i, active in enumerate(mask):
-    if active and not inside:
-        start = i
-        inside = True
-    if inside and not active:
-        segments.append((start * win, i * win))
-        inside = False
+# Payload starts after the second long silence. The short silences split chords.
+silences = [
+    (7.322086, 8.100249), (8.396327, 8.480249), (8.775465, 8.860295),
+    (9.158186, 9.240249), (9.537211, 9.620249), (9.916327, 10.000295),
+    (10.295193, 10.380249), (10.676848, 10.760181), (11.057324, 11.140317),
+    (11.437800, 11.520295), (11.817483, 11.900204), (12.198050, 12.280272),
+    (12.577029, 12.660249), (12.956417, 13.040204), (13.337392, 13.420181),
+    (13.717143, 13.800204), (14.098254, 14.180204), (14.477279, 14.560204),
+    (14.857279, 14.940295), (15.237483, 15.320249), (15.617211, 15.700181),
+    (15.997143, 16.080295), (16.377483, 16.460204), (16.757279, 16.840181),
+    (17.137143, 17.220249), (17.517211, 17.601111), (17.897370, 17.981111),
+    (18.277370, 18.360227), (18.658209, 18.740181), (19.038209, 19.119705),
+]
+windows = [(silences[i][1], silences[i + 1][0]) for i in range(len(silences) - 1)]
 
-notes = []
-names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-for a, b in segments:
-    if b - a < sr * 0.04:
-        continue
-    s = y[a + int((b - a) * 0.1): b - int((b - a) * 0.1)]
-    s = s - np.mean(s)
-    n = 1
-    while n < len(s) * 8:
-        n *= 2
-    spec = np.abs(np.fft.rfft(s * np.hanning(len(s)), n=n))
-    freqs = np.fft.rfftfreq(n, 1 / sr)
-    keep = (freqs > 80) & (freqs < 1000)
-    freq = freqs[keep][np.argmax(spec[keep])]
-    midi = round(69 + 12 * math.log2(freq / 440.0))
-    notes.append(names[midi % 12])
+notes = [
+    ("C", 261.625565), ("D", 293.664768), ("E", 329.627557),
+    ("F", 349.228231), ("G", 391.995436), ("A", 440.0), ("B", 493.883301),
+]
 
-tail = "".join(notes)[-29:]
-rot13 = tail.translate(str.maketrans(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-    "NOPQRSTUVWXYZABCDEFGHIJKLM",
-))
-bits = rot13.split("S", 1)[1].replace("T", "0").replace("O", "1")
-payload = bits[3:-3]
-print("".join(chr(64 + int(payload[i:i + 5], 2)) for i in range(0, len(payload), 5)))
+out = []
+for start, end in windows:
+    a, b = int((start + 0.03) * sr), int((end - 0.03) * sr)
+    segment = y[a:b] - np.mean(y[a:b])
+    segment *= np.hanning(len(segment))
+    t = np.arange(len(segment)) / sr
+    scores = []
+    for name, freq in notes:
+        wave = np.exp(-2j * np.pi * freq * t)
+        scores.append((name, abs(np.dot(segment, wave)) ** 2))
+    peak = max(score for _, score in scores)
+    value = 0
+    for bit, (name, score) in enumerate(scores):
+        if score > peak * 0.65:
+            value |= 1 << bit
+    out.append(chr(value))
+
+print("".join(out))
 ```
 
 Decoded message:
 
 ```text
-UCSF
+SVIUSCG{b1n4ry_mus1c_1s_c00l}
 ```
 
 Final flag:
 
 ```text
-SVIUSCG{UCSF}
+SVIUSCG{b1n4ry_mus1c_1s_c00l}
 ```
 
 Solver lesson:
 
-- AudioSolver should add monophonic note segmentation: RMS windows, FFT peak-to-MIDI, and note-name output before trying heavier stego tools.
-- Music-themed audio tasks may use the first scale/arpeggio as a calibration header; inspect only the post-calibration tail for payload.
-- Try note-letter transforms such as ROT13 and small alphabets (`G/B/F`, `T/O/S`) before assuming the hidden data is in sample bytes.
+- AudioSolver should distinguish monophonic melodies from chord events. If several calibrated note frequencies appear with similar energy in one time window, decode the event as a note-set bitmask.
+- Music-themed audio tasks may use the first scale/arpeggio as a calibration header; use that order to assign bit positions.
+- Before trying heavy stego, run silence detection, segment events, score the seven natural-note frequencies, and try C-to-B / B-to-C bit orders as 7-bit ASCII.
 
 ### Intern-Net: Client-Side Bcrypt Hash As Session Token
 
