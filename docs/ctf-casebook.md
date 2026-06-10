@@ -160,6 +160,7 @@ Signals and first moves:
 - Common modulus: combine ciphertexts with extended gcd on exponents.
 - Shared prime: `gcd(n1, n2)`.
 - Broadcast e=3: CRT then exact cube root.
+- Related messages with small `e`: run Franklin-Reiter polynomial GCD when ciphertexts encrypt affine-related plaintexts such as `m` and `m + 1`.
 - Leaked high bits of `p`: set `p = p_high + x`, bound `x` by the number of unknown low bits, and use Coppersmith small roots modulo the unknown factor.
 
 Solver lesson:
@@ -203,6 +204,39 @@ Solver lesson:
 - Check whether the leak is already shifted into position by counting trailing zero bits on `p_high`.
 - Use `beta=0.5` for roots modulo a balanced RSA prime factor, not `beta=1`.
 - After factoring, strip PKCS#1 v1.5 padding by finding the zero separator after the random nonzero padding.
+
+### RSA Franklin-Reiter Related Message
+
+Signal:
+
+- Same RSA modulus and small public exponent, commonly `e = 3`.
+- Two ciphertexts encrypt related plaintexts such as `m` and `m + 1`, `m + a`, or another known affine transform.
+- The challenge may include distracting partial-key material, but the related-message path does not need factoring.
+
+Reproduction:
+
+```sage
+R.<x> = PolynomialRing(Zmod(N))
+f = x^e - c1
+g = (x + 1)^e - c2
+h = gcd(f, g).monic()
+m = Integer(-h[0]) % N
+print(int(m).to_bytes((m.nbits() + 7) // 8, "big"))
+```
+
+If Sage's polynomial `gcd` fails over the composite ring because a leading coefficient is not invertible, take `gcd(coefficient, N)`; that failure can itself reveal a factor.
+
+Solved sample:
+
+```text
+SVIUSCG{c0pp3r5m1th_fr4nkl1n_r3173r_ch41n3d}
+```
+
+Solver lesson:
+
+- Test related-message attacks before spending time on partial private-key recovery when two ciphertexts share a modulus.
+- For affine relation `m2 = a*m + b`, use `gcd(x^e - c1, (a*x + b)^e - c2)`.
+- The recovered monic linear factor is `x - m`; decode `m` directly as bytes.
 
 ### Bounded Grammar MD5 Hash Crack
 
@@ -461,6 +495,80 @@ Solver lesson:
 
 - TrafficSolver should group HTTP requests by `(host, dst_ip, user_agent)`, score periodic scripted beacons separately from browser traffic, and try known-plaintext repeating-XOR on Base64 form fields with shared prefixes.
 - GeoIP/WHOIS evidence should be recorded as a first-class finding when the challenge clue asks where traffic really goes.
+
+Observed case: `portion2.pcap`
+
+The capture was about two hours of outbound web traffic from `10.10.13.37`. Most browser traffic used a Chrome user-agent, but one destination dominated scripted polling:
+
+```text
+10.10.13.37 -> 185.93.187.42
+Host: telemetry-edge-eu.cdnflare-stat.net
+User-Agent: python-requests/2.25.1
+Paths: /api/5f3a9c11d4e84b2a/hello, /api/5f3a9c11d4e84b2a/idle, /api/5f3a9c11d4e84b2a/result
+```
+
+Shortest path:
+
+```bash
+tshark -r portion2.pcap -Y http.request \
+  -T fields -E separator=$'\t' \
+  -e frame.number -e frame.time_relative -e ip.src -e ip.dst \
+  -e http.host -e http.request.method -e http.request.uri -e http.user_agent
+
+tshark -r portion2.pcap \
+  -Y 'http.host == "telemetry-edge-eu.cdnflare-stat.net" && http.request.method == "POST"' \
+  -T fields -E separator=$'\t' \
+  -e frame.number -e tcp.stream -e http.request.uri -e http.file_data
+```
+
+Decode the form body manually so Base64 `+` characters are not converted to spaces. The `cfg` and `data` values Base64-decode to ciphertexts with an identical prefix. Cribbing the first blob against `{"id":"5f3a9c11d4e84b2a"` recovers the repeating XOR key:
+
+```text
+Ar3s_C2!
+```
+
+Decrypting with that key gives the implant configuration:
+
+```json
+{
+  "id": "5f3a9c11d4e84b2a",
+  "campaign": "RAVENGLASS",
+  "host": "WIN-DSK-FIN03",
+  "user": "j.dvorak",
+  "os": "Windows 10.0.19045",
+  "c2": "http://ctfchallenge.on-forge.com",
+  "port": 80,
+  "task_path": "/api/v2/tasks",
+  "exfil_path": "/api/v2/upload",
+  "interval": 60,
+  "jitter": 0.25,
+  "stage": "http://http://ctfchallenge.on-forge.com:80/update/manifest.json",
+  "note": "key reused for stage manifest"
+}
+```
+
+The short result posts decrypt to idle/ok records such as:
+
+```json
+{"id":"5f3a9c11d4e84b2a","r":"idle"}
+{"id":"5f3a9c11d4e84b2a","r":"ok"}
+```
+
+There is no embedded `SVI...{...}` string in the capture or exported HTTP objects. The answer evidence is the mismatch itself: the implant claims `ctfchallenge.on-forge.com`, while the observed traffic is to `185.93.187.42` with Host `telemetry-edge-eu.cdnflare-stat.net`. WHOIS/GeoIP identify the real destination as `AS44863 STARNET TC LLC`, `UA`, Kharkiv/Berestyn area.
+
+Likely submit values for CTF platforms that wrap derived answers in a flag:
+
+```text
+SVIUSCG{kharkiv_ukraine}
+SVIUSCG{berestyn_ukraine}
+SVIUSCG{ravenglass_kharkiv_ukraine}
+```
+
+Solver lesson:
+
+- When a traffic challenge asks where the host is "really" talking, prioritize the actual destination IP and ASN/GeoIP over the HTTP Host, DNS name, or decrypted configuration's declared C2.
+- Do not stop at identifying the noisy domain; decrypt the beacon config to recover campaign, infected host, user, declared C2, and staging path.
+- Record whether the flag was directly embedded or inferred from the IOC question so the UI can display confidence and candidate submissions separately.
 
 ## Reverse Cases
 
