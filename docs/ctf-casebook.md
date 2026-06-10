@@ -753,6 +753,35 @@ Solver lesson:
 - ReverseSolver should emit the inverse byte formula, `.rodata` table bytes, and recovered phrase in the write-up.
 - IDA/Ghidra MCP should be the next tool when symbols are stripped and the compare loop is not clear from linear disassembly.
 
+### Self-Decrypting Bytecode VM With S-Box Constraints
+
+Signal:
+
+- ELF is stripped, statically linked, and has very small `.text`.
+- `.rodata` begins with a jump table and contains a 256-byte substitution table plus short `yes`/`no` strings.
+- `.data` looks like bytecode rather than normal initialized data.
+- VM dispatch reads opcodes from `.data`, stores input in `.bss`, and includes an opcode that XOR-decrypts following bytecode with a state byte derived from prior input.
+
+Reproduction strategy:
+
+- Reconstruct the VM opcode semantics from the jump table handlers.
+- Emulate the bytecode, but treat self-decrypting opcodes as phase boundaries.
+- Solve early state-updating checks concretely when each block pins one input byte and rolls the VM state through the S-box.
+- After decrypting later phases, translate check-only blocks into constraints. For 4-byte S-box relations, a small CSP over the flag charset can be faster than generic SMT.
+- Verify the recovered input with a VM emulator when the host cannot execute the Linux ELF directly.
+
+Solved sample:
+
+```text
+SVIUSCG{by3_buddy_h0p3_yu0_f1nd_y0ur_d4d}
+```
+
+Solver lesson:
+
+- Do not linear-disassemble encrypted VM bytecode; the correct opcode stream may depend on runtime state.
+- Structural decoding keys that reach an early success can be decoys if they do not match the VM state computed from input.
+- Keep the final solve script self-contained: parse sections, emulate enough VM to recover/decrypt phases, solve constraints, and verify by re-running the VM semantics.
+
 ### Packed Or UPX-Marked Binary
 
 Signal:
@@ -1367,6 +1396,88 @@ Solver lesson:
 - JPEG triage should always check bytes after the last `FFD9`.
 - If a ZIP is appended, list entries first and rank text files by title/order rather than dumping binary noise.
 - Write-up wording should explicitly say "copy/offset-extract the appended ZIP, then read the relevant entry".
+
+### Notation Audio: Melody-To-Bits
+
+Category:
+
+- Misc / audio notation cipher.
+
+Signal:
+
+- WAV is ordinary mono PCM with no appended data, no useful `strings`, and no sample-LSB hit.
+- The melody is a single-note sequence: first C-major scale up/down, then a C-major arpeggio, then a short high-structure tail.
+- The tail uses only `G`, `B`, and one `F`, suggesting those notes carry a small alphabet or marker rather than normal music.
+
+Shortest path:
+
+```python
+import math
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+
+y, sr = sf.read("notation.wav")
+y = np.asarray(y, dtype=float)
+win = int(sr * 0.01)
+rms = np.array([np.sqrt(np.mean(y[i:i + win] ** 2)) for i in range(0, len(y) - win, win)])
+mask = rms > rms.max() * 0.1
+
+segments = []
+inside = False
+for i, active in enumerate(mask):
+    if active and not inside:
+        start = i
+        inside = True
+    if inside and not active:
+        segments.append((start * win, i * win))
+        inside = False
+
+notes = []
+names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+for a, b in segments:
+    if b - a < sr * 0.04:
+        continue
+    s = y[a + int((b - a) * 0.1): b - int((b - a) * 0.1)]
+    s = s - np.mean(s)
+    n = 1
+    while n < len(s) * 8:
+        n *= 2
+    spec = np.abs(np.fft.rfft(s * np.hanning(len(s)), n=n))
+    freqs = np.fft.rfftfreq(n, 1 / sr)
+    keep = (freqs > 80) & (freqs < 1000)
+    freq = freqs[keep][np.argmax(spec[keep])]
+    midi = round(69 + 12 * math.log2(freq / 440.0))
+    notes.append(names[midi % 12])
+
+tail = "".join(notes)[-29:]
+rot13 = tail.translate(str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "NOPQRSTUVWXYZABCDEFGHIJKLM",
+))
+bits = rot13.split("S", 1)[1].replace("T", "0").replace("O", "1")
+payload = bits[3:-3]
+print("".join(chr(64 + int(payload[i:i + 5], 2)) for i in range(0, len(payload), 5)))
+```
+
+Decoded message:
+
+```text
+UCSF
+```
+
+Final flag:
+
+```text
+SVIUSCG{UCSF}
+```
+
+Solver lesson:
+
+- AudioSolver should add monophonic note segmentation: RMS windows, FFT peak-to-MIDI, and note-name output before trying heavier stego tools.
+- Music-themed audio tasks may use the first scale/arpeggio as a calibration header; inspect only the post-calibration tail for payload.
+- Try note-letter transforms such as ROT13 and small alphabets (`G/B/F`, `T/O/S`) before assuming the hidden data is in sample bytes.
 
 ### Intern-Net: Client-Side Bcrypt Hash As Session Token
 

@@ -118,6 +118,7 @@ ForgeFlag next additions:
 - Watch for encoded strings, little-endian constants, table lookups, XOR loops, custom VMs, anti-debug checks, and packers such as UPX.
 - For stripped prompt binaries, pair prompt/success/failure strings with nearby `strlen`, `fgets`, and byte-compare loops. Invert simple byte formulas such as `(input[i] ^ key) + i == table[i]` directly from `.rodata`.
 - For small embedded ROMs or firmware carved from another file, parse the container header, carve the executable segment, and look for repeated memory-write instruction patterns. Graphics challenges often draw the flag directly into framebuffer/VRAM with fixed-width bitmap glyphs.
+- For stripped static binaries with tiny `.text` and large `.data`, check for bytecode VMs: a jump table in `.rodata`, an instruction stream in `.data`, and a read buffer in `.bss`. If a VM opcode self-decrypts later bytecode using runtime state, emulate the VM and solve constraints in phases instead of linear-disassembling the encrypted bytes.
 - Convert recovered checks into a small solver script rather than hand-solving inside the UI.
 
 ForgeFlag next additions:
@@ -145,7 +146,7 @@ ForgeFlag next additions:
 - Preserve examples and derive a deterministic solver for input-output tasks.
 - For pathfinding/game puzzles, parse the map, identify graph state, and choose BFS/Dijkstra/A* or dynamic programming.
 - For sandbox tasks, inspect blacklists, exposed builtins/imports, serialization boundaries, object traversal, and exception leakage.
-- For audio, inspect waveform, spectrogram, DTMF tones, Morse, sample LSB, and metadata.
+- For audio, inspect waveform, spectrogram, DTMF tones, Morse, sample LSB, and metadata. For melody/notation prompts, segment monophonic notes into MIDI/note names, then test note letters, scale degrees, staff positions, and tiny binary alphabets from the post-calibration tail.
 
 ForgeFlag next additions:
 
