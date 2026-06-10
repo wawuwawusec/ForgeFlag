@@ -67,9 +67,10 @@ ForgeFlag next additions:
 - Peel reversible layers safely: Base encodings, hex, URL/HTML, compression markers, binary/octal/decimal ASCII, ROT/Caesar, Morse, and common separators.
 - For XOR, check known plaintext from flag format, repeated-key clues, equal-length ciphertexts, and nonce/keystream reuse.
 - For AES/stream modes, collect IV/nonce/counter and look for CTR reuse, CBC padding oracles, ECB block repetition, and GCM nonce misuse.
-- For RSA, extract all integers and test prime `n`, known factors, shared factors, small exponent, bad padding, broadcast, partial key leakage, and Coppersmith-style hints.
+- For RSA, extract all integers and test prime `n`, known factors, shared factors, small exponent, bad padding, broadcast, partial key leakage, and Coppersmith-style hints. If the high bits of a 1024-bit prime are known and the unknown low bits are below roughly `N^1/4`, recover the low bits with a univariate Coppersmith lattice and then factor with `gcd(p_high + x, n)`.
 - For matrix or linear-algebra ciphers, turn the stated transform into equations over unknown matrix entries. If modular inversion fails under `mod n`, compute `gcd(bad_pivot, n)` before abandoning the route; CTF authors often hide a useful factor in composite moduli.
-- For hashes, fingerprint first, then decide whether lookup or bounded cracking is justified.
+- For hashes, fingerprint first, then decide whether lookup or bounded cracking is justified. If the scheme is custom and intentionally expensive, use the stated password grammar to generate a precise candidate set and verify it with compiled/native code instead of a slow scripting loop.
+- For custom hash wrappers with a known candidate grammar, strip the wrapper to the raw digest and generate the bounded Cartesian product yourself before reaching for cracking rigs. Preserve tricky normalization variants for domain terms with punctuation, spaces, symbols, or gender markers.
 
 ForgeFlag next additions:
 
@@ -81,10 +82,10 @@ ForgeFlag next additions:
 
 - Identify the real container first; extensions lie often in CTFs.
 - Run file, strings, metadata, archive listing, and magic-byte checks before extraction.
-- For images, inspect PNG chunks/IHDR/CRC/trailing data, JPEG comments/APP markers, palettes, alpha channel, bit planes, dimensions, and visual anomalies.
+- For images, inspect PNG chunks/IHDR/CRC/trailing data, JPEG comments/APP markers, embedded thumbnails, palettes, alpha channel, bit planes, dimensions, and visual anomalies. If appended data starts with a console/firmware/game header, pivot into light reverse engineering instead of treating it as generic stego.
 - For archives and documents, inspect comments, embedded files, relationship graphs, encryption state, macros, object streams, and suspicious filenames.
 - If a ZIP is missing the end-of-central-directory record, parse local file headers (`PK\x03\x04`) and recover each stored/deflated stream by filename, compressed size, and CRC before attempting heavier repair.
-- For disk/memory/log cases, build a timeline and search for deleted files, credentials, shell history, process/network artifacts, malware staging, and browser profile databases such as Chrome History/Cookies/Downloads; scan suspicious URL query parameters with reversible transforms.
+- For disk/memory/log cases, build a timeline and search for deleted files, credentials, shell history, process/network artifacts, malware staging, and browser profile databases such as Chrome History/Cookies/Downloads; scan suspicious URL query parameters with reversible transforms. For Linux memory snapshots, if ps/env/lsof/sockets are clean but a named process is suspicious, enumerate its VMAs and dump anonymous, heap, stack, and especially `rwx` mappings.
 - Treat stego as forensics first: metadata, appended data, embedded files, then content-level extraction such as LSB/spectrogram/DTMF/zero-width text.
 
 ForgeFlag next additions:
@@ -115,6 +116,7 @@ ForgeFlag next additions:
 - Use Ghidra/IDA/r2 for decompilation and control-flow pivots; rename variables and functions as constraints become clear.
 - Watch for encoded strings, little-endian constants, table lookups, XOR loops, custom VMs, anti-debug checks, and packers such as UPX.
 - For stripped prompt binaries, pair prompt/success/failure strings with nearby `strlen`, `fgets`, and byte-compare loops. Invert simple byte formulas such as `(input[i] ^ key) + i == table[i]` directly from `.rodata`.
+- For small embedded ROMs or firmware carved from another file, parse the container header, carve the executable segment, and look for repeated memory-write instruction patterns. Graphics challenges often draw the flag directly into framebuffer/VRAM with fixed-width bitmap glyphs.
 - Convert recovered checks into a small solver script rather than hand-solving inside the UI.
 
 ForgeFlag next additions:

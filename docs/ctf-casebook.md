@@ -160,11 +160,144 @@ Signals and first moves:
 - Common modulus: combine ciphertexts with extended gcd on exponents.
 - Shared prime: `gcd(n1, n2)`.
 - Broadcast e=3: CRT then exact cube root.
+- Leaked high bits of `p`: set `p = p_high + x`, bound `x` by the number of unknown low bits, and use Coppersmith small roots modulo the unknown factor.
 
 Solver lesson:
 
 - CryptoSolver should normalize numbered fields such as `n1/e1/c1`, `n2/e2/c2`, and unnumbered `n/e/c`.
 - Every recovered RSA case should produce a replayable solve script, not only a finding.
+
+### RSA Prime High-Bits Coppersmith
+
+Signal:
+
+- RSA modulus is normal-sized, such as 2048 bits with 1024-bit primes.
+- The challenge leaks the upper portion of one prime and says the lower bits were zeroed.
+- The unknown suffix is smaller than the Coppersmith bound, typically below `N^1/4` for a balanced RSA factor.
+- Padding may be randomized, so the route is factor recovery, not direct plaintext structure.
+
+Reproduction:
+
+```sage
+PR.<x> = PolynomialRing(Zmod(n))
+f = x + p_high
+roots = f.small_roots(X=2^unknown_bits, beta=0.5, epsilon=0.02)
+for r in roots:
+    p = gcd(p_high + Integer(r), n)
+    if 1 < p < n and n % p == 0:
+        q = n // p
+        d = inverse_mod(e, (p - 1) * (q - 1))
+        m = power_mod(c, d, n)
+```
+
+If Sage's automatic `small_roots` parameters fail near the boundary, construct the lattice manually from `N^(m-i) f(x)^i` and `x^j f(x)^m`, substitute `x * X`, LLL-reduce it, and recover integer roots from the short vector polynomials.
+
+Solved sample:
+
+```text
+SVIUSCG{c0pp3rsm1th_wh1sp3rs_4cr0ss_th3_l4tt1c3}
+```
+
+Solver lesson:
+
+- Check whether the leak is already shifted into position by counting trailing zero bits on `p_high`.
+- Use `beta=0.5` for roots modulo a balanced RSA prime factor, not `beta=1`.
+- After factoring, strip PKCS#1 v1.5 padding by finding the zero separator after the random nonzero padding.
+
+### Bounded Grammar MD5 Hash Crack
+
+Signal:
+
+- Challenge defines a custom hash wrapper such as `$oak$<version>$<hex digest>`.
+- The password format is fully specified, for example `SVIUSCG{<nature>_<gen1_pokemon>}`.
+- The candidate space is tiny enough to enumerate directly.
+
+Reproduction:
+
+```python
+import hashlib
+
+target = "753a7277c956277fc6a3bb8e31822b25"
+natures = ["hardy", "lonely", "brave", "adamant", "..."]
+pokemon = ["bulbasaur", "ivysaur", "venusaur", "..."]
+
+for nature in natures:
+    for mon in pokemon:
+        candidate = f"SVIUSCG{{{nature}_{mon}}}"
+        if hashlib.md5(candidate.encode()).hexdigest() == target:
+            print(candidate)
+```
+
+Solver lesson:
+
+- CryptoSolver should treat custom wrappers as formatting around the digest unless the statement defines extra hashing steps.
+- Domain wordlists should include normalization variants for punctuation-heavy names such as `Farfetch'd`, `Mr. Mime`, and Nidoran gender markers.
+
+### Expensive Custom Hash With Structured Domain Grammar
+
+Signal:
+
+- A custom hash format is provided, such as `$oak$<version>$<salt>$<hex digest>`.
+- The exact hashing scheme is in source, but each verification is deliberately expensive.
+- The password grammar is strongly bounded by domain data, for example:
+
+```text
+SVIUSCG{<nature>_<gen1_pokemon>_<move>_<crc32hex>}
+crc32hex = crc32("<nature>_<gen1_pokemon>_<move>")
+```
+
+Reproduction strategy:
+
+1. Parse the custom hash to extract version, salt, and digest.
+2. Generate candidates from authoritative domain lists instead of brute-forcing text:
+   - 25 Pokemon natures.
+   - Gen 1 Pokemon names.
+   - Moves learnable by each Pokemon, preferably `red-blue` / `yellow` for strict Gen 1 learnsets.
+3. Compute the CRC32 suffix over the inner string before wrapping it as the flag candidate.
+4. Reimplement the verifier in a compiled language or optimized native path, then run candidates in parallel.
+
+Candidate generation:
+
+```python
+import json
+import zlib
+
+natures = "hardy lonely brave adamant naughty bold docile relaxed impish lax timid hasty serious jolly naive modest mild quiet bashful rash calm gentle sassy careful quirky".split()
+learnsets = json.load(open("oakhash_strict.json"))  # [(pokemon, [moves...])]
+
+with open("candidates.txt", "w") as out:
+    for nature in natures:
+        for pokemon, moves in learnsets:
+            for move in moves:
+                inner = f"{nature}_{pokemon}_{move}"
+                crc = f"{zlib.crc32(inner.encode()) & 0xffffffff:08x}"
+                out.write(f"SVIUSCG{{{inner}_{crc}}}\n")
+```
+
+Solved sample:
+
+```text
+$oak$2$oak-lab-v3$59af26a7a32dd987cb1dd08d4c889c97d8145967a4a4134ae2ea89e703557d1f
+SVIUSCG{quirky_eevee_tackle_780deef6}
+```
+
+Verification:
+
+```bash
+python3 oakhash.py 'SVIUSCG{quirky_eevee_tackle_780deef6}' oak-lab-v3
+```
+
+Output:
+
+```text
+59af26a7a32dd987cb1dd08d4c889c97d8145967a4a4134ae2ea89e703557d1f
+```
+
+Solver lesson:
+
+- CryptoSolver should detect expensive custom hashes and avoid pure Python candidate loops when the verifier runs thousands of iterations per candidate.
+- Domain-constrained CTF password formats often crack faster by improving candidate correctness than by adding hardware.
+- If an external dataset is needed, cache it and record the exact normalization used for names and moves.
 
 ### Matrix Conjugation Over Mod n
 
@@ -505,6 +638,125 @@ Solver lesson:
 - ForensicsSolver should parse Chrome History timestamps with the WebKit epoch conversion.
 - Browser profile triage should scan URL query parameters and form-like fields with transform candidates, not only page titles.
 - The write-up should preserve the suspicious timestamp, URL host/path, query parameter name, and exact decoder.
+
+### Full-Size JPEG Thumbnail Reveal
+
+Signal:
+
+- `exiftool` shows `Thumbnail Image` data even when GPS/comment metadata is empty.
+- The thumbnail has the same dimensions as the main JPEG, or looks suspiciously large for a normal camera thumbnail.
+- The visible main image has a natural obstruction, blur, crack, or overlay that may hide text.
+
+Reproduction:
+
+```bash
+exiftool -b -ThumbnailImage challenge.jpg > thumb.jpg
+file thumb.jpg
+```
+
+If the thumbnail does not immediately reveal the text, compare it with the main image:
+
+```python
+from PIL import Image, ImageChops, ImageOps
+
+main = Image.open("challenge.jpg").convert("RGB")
+thumb = Image.open("thumb.jpg").convert("RGB")
+diff = ImageOps.autocontrast(ImageChops.difference(main, thumb))
+diff.save("thumbnail_diff.png")
+```
+
+Solver lesson:
+
+- ForensicsSolver should extract embedded JPEG thumbnails and scan/render them as separate images.
+- When main and thumbnail dimensions match, generate a difference preview because the thumbnail may contain an earlier or edited image layer with the flag still visible.
+
+### Linux Injector Anonymous VMA Cache
+
+Signal:
+
+- A Linux memory snapshot and matching Volatility3 ISF/symbol file are provided.
+- The suspicious process has a dull command line, no useful environment variables, and no meaningful open files or sockets.
+- `linux.proc.Maps` shows an anonymous `rwx` mapping or other small anonymous region in that process.
+
+Reproduction:
+
+```bash
+zstd -d stonehaven_hp_dump.raw.zst -o dump.raw
+mkdir -p symbols/linux
+gzip -cd linux-debian-6.1.0-42.json.gz > symbols/linux/linux-debian-6.1.0-42.json
+
+vol -f dump.raw -s symbols linux.pslist.PsList
+vol -q -f dump.raw -s symbols linux.psaux.PsAux | rg mal_inject
+vol -q -f dump.raw -s symbols linux.envars.Envars --pid 82
+vol -q -f dump.raw -s symbols linux.lsof.Lsof --pid 82
+vol -q -f dump.raw -s symbols linux.proc.Maps --pid 82
+vol -q -f dump.raw -s symbols -o dumps linux.proc.Maps --pid 82 --dump --address 0x7f1bbcb8c000
+strings -a -n 4 dumps/pid.82.vma.0x7f1bbcb8c000-0x7f1bbcb8d000.dmp
+```
+
+In the solved sample, the `rwx` anonymous page contained a Base64 flag:
+
+```text
+U1ZJVVNDR3tzdG9uZWhhdmVuX2dsYXNzX2hlcm9uX3N0Z185ZjFhMzN9
+SVIUSCG{stonehaven_glass_heron_stg_9f1a33}
+```
+
+Solver lesson:
+
+- For Linux memory cases, confirm the kernel banner and symbol match before deeper plugins.
+- Treat clean `psaux`, `envars`, `lsof`, and socket output as a clue to inspect VMA contents rather than as a dead end.
+- Small anonymous `rwx` pages are high-signal; dump them first, then scan heap and stack if needed.
+
+### JPEG-Appended Nintendo DS ROM Bitmap Text
+
+Signal:
+
+- `file` reports a normal JPEG, but the physical file continues well past the JPEG EOI marker `ff d9`.
+- `strings` near the trailer shows a console-style title or game code, such as `USCG CTF` / `USCG01`.
+- Carving from the trailer yields a valid Nintendo DS ROM image.
+
+Reproduction:
+
+```python
+from pathlib import Path
+
+data = Path("nintendo-ds.jpg").read_bytes()
+eoi = data.index(b"\xff\xd9") + 2
+tail = data[eoi:]
+nds_start = tail.index(b"USCG CTF")
+rom = tail[nds_start:]
+Path("carved.nds").write_bytes(rom)
+```
+
+Then parse the NDS header to carve ARM9 code and reconstruct framebuffer writes:
+
+```python
+from pathlib import Path
+
+rom = Path("carved.nds").read_bytes()
+arm9_off = int.from_bytes(rom[0x20:0x24], "little")
+arm9_size = int.from_bytes(rom[0x2c:0x30], "little")
+arm9 = rom[arm9_off:arm9_off + arm9_size]
+
+points = []
+pos = 0
+for i in range(4, len(arm9) - 4, 4):
+    if arm9[i:i + 4] == bytes.fromhex("b060c3e1") and arm9[i - 3:i] == bytes.fromhex("3083e2"):
+        pos += arm9[i - 4]
+        points.append(pos // 2)
+```
+
+Render those points at a 256-pixel NDS screen width and split the first five rows into 4x5 bitmap glyphs. In the solved sample, the rendered text was:
+
+```text
+SVIUSCG{WHICH_EMULATOR_DID_YOU_USE?}
+```
+
+Solver lesson:
+
+- Image forensics should report exact EOI and trailer offsets, then run `file`/`strings` on carved trailers.
+- If a trailer is a ROM or firmware image, switch from stego extraction to format-aware reverse triage.
+- ReverseSolver should recognize repeated `add pointer, immediate; store halfword` patterns as framebuffer drawing and generate a small renderer over likely screen widths such as 256 for Nintendo DS.
 
 ### JPEG COM Base64 Flag
 
