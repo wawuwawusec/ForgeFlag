@@ -24,7 +24,7 @@ ForgeFlag has accumulated these stable pattern families across local fixtures, W
 | Category | Historical Patterns To Keep |
 | --- | --- |
 | Web | visible flags, hidden same-origin routes, static JS leaks, response headers/cookies, source-derived framework routes, API option leaks, JWT/session hints, SSRF hints, path traversal hints, LFI-to-artifact chains, status-feed object filtering |
-| Crypto | reversible encodings, Caesar/ROT/Morse/ASCII forms, XOR and supplied-key classical ciphers, AES-CTR nonce reuse, AES-GCM nonce reuse, Poly1305 key reuse, RSA known factors, low exponent, prime modulus, Fermat close primes, common modulus, shared prime, broadcast e=3, modular matrix conjugation |
+| Crypto | reversible encodings, Caesar/ROT/Morse/ASCII forms, XOR and supplied-key classical ciphers, unknown-key substitution/Vigenere hybrids, AES-CTR nonce reuse, AES-GCM nonce reuse, Poly1305 key reuse, RSA known factors, low exponent, prime modulus, Fermat close primes, common modulus, shared prime, broadcast e=3, modular matrix conjugation |
 | Forensics | raw strings, archives and comments, mail/PowerShell base64, PNG text chunks, PNG trailing data, IHDR height mismatch repair, independent/extra IDAT zlib payloads, JPEG comments/APP markers, encoded image metadata |
 | Traffic | HTTP payload flags, DNS split label exfiltration, TCP stream follow-up, HTTP object export, SMTP/FTP/IRC-style streams, AntSword/JSP webshell command/output reconstruction |
 | Reverse | static strings, packed/UPX markers, encoded string tables, custom protocol reassembly, esolang word mapping, stripped ELF phrase recovery |
@@ -91,6 +91,64 @@ Solver lesson:
 - For multi-stage cases, source-derived Web evidence should be allowed to route into ReverseSolver or ForensicsSolver when an artifact path is discovered.
 
 ## Crypto Cases
+
+### Substitution Plus Unknown Vigenere
+
+Signal:
+
+- Source encrypts alphabetic characters only, preserving case and punctuation.
+- Each plaintext letter first passes through a single shuffled alphabet, then receives a periodic shift.
+- Vigenere key length is small but unknown, such as `15..20`.
+- Ciphertext is long natural English with normal word spacing, so frequency analysis is viable.
+
+Shortest path:
+
+```python
+from collections import Counter
+
+ct = open("ciphertext.txt").read()
+letters = [ord(c.lower()) - 97 for c in ct if c.isalpha()]
+
+for L in range(15, 21):
+    ics = []
+    for r in range(L):
+        bucket = letters[r::L]
+        counts = Counter(bucket)
+        n = len(bucket)
+        ics.append(sum(v * (v - 1) for v in counts.values()) / (n * (n - 1)))
+    print(L, sum(ics) / L)
+```
+
+The highest average IC identified period `20`. For each position bucket, align its letter-frequency vector to bucket zero by trying all 26 shifts and maximizing dot-product overlap. Subtracting those relative shifts converts the problem into a monoalphabetic substitution. The resulting text begins:
+
+```text
+Ji nbuj uj s xiop exsuonmtn.
+```
+
+That solves as:
+
+```text
+So this is a long plaintext.
+```
+
+The substitution map for this sample was:
+
+```text
+a->k b->h c->y d->c e->p f->b g->u h->m i->o j->s k->r l->q m->e
+n->t o->n p->g q->f r->v s->a t->x u->i v->d w->w x->l y->z z->j
+```
+
+Decoded flag:
+
+```text
+SVIUSCG{those_who_dont_learn_history_alskdfjghmenwncirut}
+```
+
+Solver lesson:
+
+- For `substitution -> Vigenere` hybrids, do not brute-force the shuffled alphabet and key together. Estimate the period with IC, align periodic frequency buckets, then solve one monoalphabetic substitution.
+- Preserve alphabetic-position counting exactly; punctuation and braces do not advance the Vigenere index in this scheme.
+- A readable flag prefix does not guarantee the whole flag content is English. Treat random-looking suffixes as valid if the full surrounding plaintext decrypts consistently.
 
 ### AES-CTR Keystream Reuse
 
@@ -237,6 +295,55 @@ Solver lesson:
 - Test related-message attacks before spending time on partial private-key recovery when two ciphertexts share a modulus.
 - For affine relation `m2 = a*m + b`, use `gcd(x^e - c1, (a*x + b)^e - c2)`.
 - The recovered monic linear factor is `x - m`; decode `m` directly as bytes.
+
+### Tiny-Key Custom 24-Bit Block Cipher
+
+Signal:
+
+- Source defines a homemade byte/bit permutation over small fixed-size chunks.
+- The key is small enough to search, such as `secrets.token_bytes(4)`.
+- The flag prefix gives multiple complete known plaintext blocks.
+- The round includes data-dependent rotates or shifts, so direct algebra is more annoying than exact simulation.
+
+Reproduction:
+
+```python
+def enc3(block, key, index):
+    a, b, c = block
+    kint = int.from_bytes(key, "big")
+    for _ in range(8):
+        hk = (kint >> ((index % 8) * 8)) & 0xff
+        th = (a << 16) | (b << 8) | (c ^ hk)
+        r = th & 7
+        rh = ((th >> r) | (th << (24 - r))) & 0xffffff
+        a, b, c = (rh >> 16) & 0xff, (rh >> 8) & 0xff, rh & 0xff
+        kint = ((kint >> 3) | (kint << 61)) & ((1 << 64) - 1)
+    return bytes([a, b, c])
+```
+
+Use the known prefix blocks, such as `SVI` and `USC`, to brute-force the 32-bit key in optimized code. Then invert each round by trying all rotate counts:
+
+```python
+def inv_round(y, hk):
+    out = []
+    for r in range(8):
+        th = ((y << r) | (y >> (24 - r))) & 0xffffff
+        if (th & 7) == r:
+            out.append(bytes([(th >> 16) & 0xff, (th >> 8) & 0xff, (th & 0xff) ^ hk]))
+    return out
+```
+
+Solved sample:
+
+```text
+SVIUSCG{m4dryg4_1s_s3cur3_r1ght}
+```
+
+Solver lesson:
+
+- Known plaintext can make a tiny-key custom cipher cheaper to brute-force than to symbolically solve.
+- Data-dependent rotations may be many-to-one when inverted; keep candidate sets instead of assuming uniqueness.
+- Always re-encrypt the chosen plaintext with the recovered key to confirm the flag.
 
 ### Bounded Grammar MD5 Hash Crack
 
