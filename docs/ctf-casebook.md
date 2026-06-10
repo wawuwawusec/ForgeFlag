@@ -1523,33 +1523,34 @@ Category:
 Signal:
 
 - Flask source stores `session` as hex-encoded `key=value&...` data and `sig` as `MD5(SECRET || session_data)`.
-- `SECRET = b"secret_change_me"` is hardcoded in the distributed source.
+- `SECRET = b"secret_change_me"` is hardcoded in the distributed local source, but the remote instance uses a different secret while keeping the same 16-byte length.
 - The app parses session data into a dict and admin access only checks whether `role=admin`.
 
 Shortest path:
 
 ```python
-import hashlib
+known = bytes.fromhex("757365723d74726176656c657226726f6c653d6775657374")
+orig_sig = "f480cfbe48129b3fd5af75d2a8685ec9"
+append = b"&role=admin"
 
-secret = b"secret_change_me"
-session = b"user=traveler&role=admin"
-print("session=" + session.hex())
-print("sig=" + hashlib.md5(secret + session).hexdigest())
+# MD5 length extension with secret length 16:
+# forged = known || md5_padding(16 + len(known)) || append
+# sig = md5_continue(orig_sig, append, bytes_before=len(secret || known || glue))
 ```
 
-Set the two cookies, then visit `/`:
+Set the forged cookies, then visit `/`:
 
 ```text
-session=757365723d74726176656c657226726f6c653d61646d696e
-sig=5af63a8a3f72db1a9c41d57a9aa2bf05
+session=757365723d74726176656c657226726f6c653d677565737480000000000000000000000000000000400100000000000026726f6c653d61646d696e
+sig=8e52e8dd80991faae5e602e55b566b66
 ```
 
-If the remote build hides the secret but still signs `MD5(secret || data)`, use MD5 length extension against a normal cookie such as `user=<name>&role=guest`, append `&role=admin`, hex-encode the extended bytes, and use the forged digest as `sig`.
+The first part decodes to `user=traveler&role=guest`, then MD5 glue padding, then `&role=admin`. The parser overwrites the earlier `role=guest` with the later admin role.
 
-Local test flag:
+Flag:
 
 ```text
-SVIUSCG{t3st_fl4g}
+SVIUSCG{05403eadb4b6099f834a824f93e8e3d3}
 ```
 
 Solver lesson:
