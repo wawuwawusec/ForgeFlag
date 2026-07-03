@@ -51,6 +51,26 @@ def rsactftool_attack(
     return runner.run("RsaCtfTool", args, timeout_seconds=30)
 
 
+def objdump_disassemble(path: str, scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("objdump", ["-d", "-M", "intel", path], timeout_seconds=30)
+
+
+def objdump_section_dump(path: str, section: str = ".rodata", scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("objdump", ["-s", "-j", _section_name_literal(section), path], timeout_seconds=20)
+
+
+def readelf_sections(path: str, scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("readelf", ["-S", path], timeout_seconds=20)
+
+
+def radare2_info(path: str, scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("radare2", ["-2", "-q", "-c", "iI; izz~{}", path], timeout_seconds=20)
+
+
 def hashcat_dictionary_attack(
     hash_path: str,
     wordlist_path: str,
@@ -88,6 +108,27 @@ def binwalk_scan(path: str, scope: ScopePolicy | None = None) -> ToolResult:
 def exiftool_read(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     runner = ToolRunner(scope or ScopePolicy())
     return runner.run("exiftool", [path])
+
+
+def foremost_carve(path: str, output_dir: str, scope: ScopePolicy | None = None) -> ToolResult:
+    destination = Path(output_dir).expanduser().resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("foremost", ["-q", "-i", path, "-o", str(destination)], timeout_seconds=30)
+
+
+def yara_scan(
+    path: str,
+    rules: dict[str, str] | None = None,
+    output_dir: str | None = None,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    destination = Path(output_dir or _tool_temp_dir() or tempfile.mkdtemp(prefix="forgeflag-yara-")).expanduser().resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    rule_path = destination / "forgeflag-yara-rules.yar"
+    rule_path.write_text(_yara_rules(rules or {"flag_text": "flag{", "svi_flag": "SVI"}), encoding="utf-8")
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("yara", [str(rule_path), path], timeout_seconds=20)
 
 
 def steghide_info(path: str, passphrase: str = "", scope: ScopePolicy | None = None) -> ToolResult:
@@ -459,6 +500,25 @@ def _tshark_contains_literal(value: str) -> str:
 def _tool_search_literal(value: str) -> str:
     cleaned = "".join(char for char in value if char.isprintable() and char not in {"\x00", "\n", "\r"})
     return cleaned[:80] or "pop rdi; ret"
+
+
+def _section_name_literal(value: str) -> str:
+    cleaned = "".join(char for char in value.strip() if char.isalnum() or char in {"_", "-", "."})
+    return cleaned[:80] or ".rodata"
+
+
+def _yara_rules(rules: dict[str, str]) -> str:
+    strings: list[str] = []
+    for index, (name, value) in enumerate(rules.items()):
+        identifier = "".join(char if char.isalnum() or char == "_" else "_" for char in name.strip()) or f"needle_{index}"
+        literal = "".join(char for char in value if char.isprintable() and char not in {"\x00", "\n", "\r"})
+        if not literal:
+            continue
+        escaped = literal.replace("\\", "\\\\").replace('"', '\\"')
+        strings.append(f"        ${identifier[:40]} = \"{escaped[:120]}\" ascii wide nocase")
+    if not strings:
+        strings.append('        $flag_text = "flag{" ascii wide nocase')
+    return "rule ForgeFlag_Triage_Needles {\n    strings:\n" + "\n".join(strings) + "\n    condition:\n        any of them\n}\n"
 
 
 def _bounded_wordlist(words: tuple[str, ...], limit: int = 256) -> tuple[str, ...]:

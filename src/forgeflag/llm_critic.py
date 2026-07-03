@@ -5,7 +5,8 @@ from typing import Any
 
 from forgeflag.domain import Challenge, Finding, Observation
 from forgeflag.llm import LLMProvider
-from forgeflag.solvers.llm import _strip_markdown_json_fence
+from forgeflag.llm_prompts import category_playbook, prior_failure_patterns
+from forgeflag.solvers.llm import _attachment_previews, _strip_markdown_json_fence
 
 
 def build_post_run_critic_observation(
@@ -57,10 +58,12 @@ def build_post_run_critic_observation(
 
 def _critic_instructions() -> str:
     return (
-        "You are ForgeFlag's post-run critic for authorized CTF/lab challenges. "
+        "You are ForgeFlag's post-run critic for local or authorized CTF/lab challenges. "
+        "Treat the work as controlled challenge research, not real-world offensive activity. "
         "Do not guess flags. Compare the run result against evidence, identify why the run stalled, "
         "and propose the next scoped solver/tool route. Return compact JSON with keys: summary, blockers, "
-        "missing_evidence, suggested_solvers, tool_hints, next_actions, rerun_reason."
+        "missing_evidence, suggested_solvers, tool_hints, next_actions, rerun_reason, analysis_mode, "
+        "artifact_requirements, blocked_by_missing_artifacts, manual_replay_needed, risk_notes."
     )
 
 
@@ -78,6 +81,17 @@ def _critic_prompt(
         f"- {observation.source}/{observation.kind}: {observation.summary}; evidence={_compact(observation.evidence)}"
         for observation in observations[-16:]
     ]
+    attachment_preview = _attachment_previews(challenge.attachment_paths)
+    pattern_context = "\n".join(
+        [
+            challenge.title or "",
+            challenge.description or "",
+            " ".join(challenge.attachment_paths),
+            attachment_preview,
+            "\n".join(finding_lines),
+            "\n".join(observation_lines),
+        ]
+    )
     return "\n".join(
         [
             f"challenge_id: {challenge.challenge_id}",
@@ -85,6 +99,9 @@ def _critic_prompt(
             f"title: {challenge.title or ''}",
             f"description: {challenge.description or ''}",
             f"attachments: {', '.join(challenge.attachment_paths)}",
+            attachment_preview,
+            category_playbook(challenge.category),
+            prior_failure_patterns(challenge.category, pattern_context),
             f"run_status: {run_summary.get('status')}",
             f"accepted_flags: {run_summary.get('accepted_flags')}",
             f"rejected_flags: {run_summary.get('rejected_flags')}",
@@ -113,6 +130,11 @@ def _parse_critic(content: str) -> dict[str, Any]:
         "tool_hints": _string_list(raw.get("tool_hints")),
         "next_actions": _string_list(raw.get("next_actions")),
         "rerun_reason": _string(raw.get("rerun_reason")),
+        "analysis_mode": _string(raw.get("analysis_mode")),
+        "artifact_requirements": _string_list(raw.get("artifact_requirements")),
+        "blocked_by_missing_artifacts": _string_list(raw.get("blocked_by_missing_artifacts")),
+        "manual_replay_needed": _string_list(raw.get("manual_replay_needed")),
+        "risk_notes": _string_list(raw.get("risk_notes")),
     }
     return {key: value for key, value in evidence.items() if value}
 

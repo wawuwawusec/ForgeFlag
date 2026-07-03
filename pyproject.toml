@@ -9,7 +9,7 @@ description = "A scoped multi-agent CTF competition assistant architecture."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "ForgeFlag Team" }]
-dependencies = []
+dependencies = ["capstone>=5", "cryptography>=41", "Pillow>=10", "python-registry>=1.3", "z3-solver>=4.12"]
 
 [project.optional-dependencies]
 mcp = ["mcp[cli]>=1.0,<2"]

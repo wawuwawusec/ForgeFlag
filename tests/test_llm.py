@@ -10,9 +10,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
-from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, LLMConfig, RunConfig
+from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, Finding, LLMConfig, RunConfig
 from forgeflag.llm import LLMResponse, OpenAIResponsesProvider, ZhipuChatCompletionsProvider
-from forgeflag.llm_prompts import category_playbook
+from forgeflag.llm_prompts import category_playbook, prior_failure_patterns
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.solvers.llm import LLMSolver
@@ -176,6 +176,32 @@ class ZhipuChatCompletionsProviderTest(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 2)
         sleep.assert_called_once_with(2)
 
+    def test_generate_retries_transient_timeout_before_succeeding(self) -> None:
+        response_payload = {"choices": [{"message": {"content": "timeout recovered"}}]}
+        fake_response = Mock()
+        fake_response.__enter__ = Mock(return_value=fake_response)
+        fake_response.__exit__ = Mock(return_value=None)
+        fake_response.read.return_value = json.dumps(response_payload).encode("utf-8")
+
+        with (
+            patch("forgeflag.llm.request.urlopen", side_effect=[TimeoutError("read operation timed out"), fake_response]) as urlopen,
+            patch("forgeflag.llm.time.sleep") as sleep,
+        ):
+            provider = ZhipuChatCompletionsProvider(
+                LLMConfig(
+                    provider="zhipu",
+                    model="glm-5.1",
+                    api_key="zhipu-test",
+                    max_retries=1,
+                    retry_initial_seconds=0,
+                )
+            )
+            result = provider.generate("You are ForgeFlag.", "Solve this scoped CTF challenge.")
+
+        self.assertEqual(result.content, "timeout recovered")
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_not_called()
+
     def test_generate_enters_cooldown_after_retry_budget_is_exhausted(self) -> None:
         first = _http_error(429, {"error": {"message": "Too Many Requests"}})
         second = _http_error(429, {"error": {"message": "Too Many Requests"}})
@@ -207,12 +233,12 @@ class ZhipuChatCompletionsProviderTest(unittest.TestCase):
 class LLMSolverTest(unittest.TestCase):
     def test_category_playbooks_cover_core_ctf_categories(self) -> None:
         expectations = {
-            ChallengeCategory.WEB: ("WebSolver", "/robots.txt"),
+            ChallengeCategory.WEB: ("WebSolver", "/robots.txt", "authorized CTF web challenge"),
             ChallengeCategory.CRYPTO: ("CryptoSolver", "RSA"),
-            ChallengeCategory.FORENSICS: ("ForensicsSolver", "PNG chunks/IHDR/CRC"),
+            ChallengeCategory.FORENSICS: ("ForensicsSolver", "PNG chunks/IHDR/CRC", "foremost", "yara"),
             ChallengeCategory.TRAFFIC: ("TrafficSolver", "protocol hierarchy"),
-            ChallengeCategory.REVERSE: ("ReverseSolver", "IDA/Ghidra/r2"),
-            ChallengeCategory.PWN: ("PwnSolver", "checksec"),
+            ChallengeCategory.REVERSE: ("ReverseSolver", "IDA/Ghidra/r2", "objdump", "readelf", "radare2", "local artifact analysis"),
+            ChallengeCategory.PWN: ("PwnSolver", "checksec", "proof-of-solve harness"),
             ChallengeCategory.MISC: ("MiscSolver", "QR/barcode"),
         }
 
@@ -220,8 +246,22 @@ class LLMSolverTest(unittest.TestCase):
             with self.subTest(category=category.value):
                 prompt = category_playbook(category)
                 self.assertIn("category_playbook:", prompt)
+                self.assertIn("scope_context: ForgeFlag is for local or authorized CTF/lab research", prompt)
                 for fragment in required_fragments:
                     self.assertIn(fragment, prompt)
+
+    def test_prior_failure_patterns_include_prng_and_stream_cipher_lessons(self) -> None:
+        prompt = prior_failure_patterns(
+            ChallengeCategory.CRYPTO,
+            "source uses random.seed, LCG next = (a*x+b)%n, MT19937 getrandbits, LFSR taps, and missing key sidecar",
+        )
+
+        self.assertIn("prior_failure_patterns:", prompt)
+        self.assertIn("Do not accept source literal flags without replay evidence", prompt)
+        self.assertIn("LCG", prompt)
+        self.assertIn("MT19937", prompt)
+        self.assertIn("LFSR", prompt)
+        self.assertIn("sidecar", prompt)
 
     def test_llm_solver_records_strategy_finding_when_provider_is_enabled(self) -> None:
         class FakeProvider:
@@ -257,6 +297,132 @@ class LLMSolverTest(unittest.TestCase):
         self.assertEqual(findings[0].finding, "Generated LLM solve strategy")
         self.assertIn("run strings", findings[0].evidence["strategy"])
 
+    def test_llm_solver_prompt_includes_bounded_text_attachment_preview(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def __init__(self) -> None:
+                self.prompt = ""
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.prompt = prompt
+                return LLMResponse(content='{"summary":"Inspect the LFSR source."}', raw={"id": "fake-response"})
+
+        provider = FakeProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "BM.py"
+            source.write_text("class lfsr:\\n    def next(self):\\n        return output\\n", encoding="utf-8")
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="llm-attachment-preview",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(source),),
+                )
+            )
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(provider)],
+            ).run_challenge("llm-attachment-preview")
+
+        self.assertIn("attachment_previews:", provider.prompt)
+        self.assertIn("BM.py", provider.prompt)
+        self.assertIn("class lfsr", provider.prompt)
+        self.assertIn("def next", provider.prompt)
+
+    def test_llm_solver_prompt_includes_tail_of_long_text_attachment(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def __init__(self) -> None:
+                self.prompt = ""
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.prompt = prompt
+                return LLMResponse(content='{"summary":"Inspect tail output."}', raw={"id": "fake-response"})
+
+        provider = FakeProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "long_challenge.py"
+            source.write_text(
+                "class LongChallenge:\\n    pass\\n"
+                + ("# filler\\n" * 500)
+                + "# ciphertext_tail = 123456789\\n# flag_prefix = flag{\\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="llm-long-attachment-preview",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(source),),
+                )
+            )
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(provider)],
+            ).run_challenge("llm-long-attachment-preview")
+
+        self.assertIn("class LongChallenge", provider.prompt)
+        self.assertIn("ciphertext_tail", provider.prompt)
+        self.assertIn("[middle omitted", provider.prompt)
+
+    def test_llm_solver_prompt_includes_prior_failure_patterns_from_attachment(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def __init__(self) -> None:
+                self.prompt = ""
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.prompt = prompt
+                return LLMResponse(content='{"summary":"Plan PRNG replay."}', raw={"id": "fake-response"})
+
+        provider = FakeProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "easy_random.py"
+            source.write_text(
+                "import random\n"
+                "seed = 3277\n"
+                "x = (a * x + b) % n\n"
+                "bits = random.getrandbits(32)  # MT19937 style output\n"
+                "# lfsr taps and missing key sidecar are important\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="llm-prior-failure-patterns",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(source),),
+                )
+            )
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(provider)],
+            ).run_challenge("llm-prior-failure-patterns")
+
+        self.assertIn("prior_failure_patterns:", provider.prompt)
+        self.assertIn("Do not accept source literal flags without replay evidence", provider.prompt)
+        self.assertIn("LCG", provider.prompt)
+        self.assertIn("MT19937", provider.prompt)
+        self.assertIn("sidecar", provider.prompt)
+
     def test_llm_solver_records_structured_plan_when_model_returns_json(self) -> None:
         class FakeProvider:
             name = "fake"
@@ -291,6 +457,48 @@ class LLMSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["plan"]["suggested_solvers"], ["TrafficSolver"])
         self.assertEqual(observations[0].kind, "llm_solver_plan")
         self.assertEqual(observations[0].evidence["suggested_solvers"], ["TrafficSolver"])
+
+    def test_llm_solver_records_operational_plan_fields_when_model_returns_json(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                return LLMResponse(
+                    content=json.dumps(
+                        {
+                            "summary": "Recover PRNG state before accepting a candidate.",
+                            "analysis_mode": "prng_stream_replay",
+                            "artifact_requirements": ["source file tail", "output sidecar"],
+                            "blocked_by_missing_artifacts": ["key"],
+                            "manual_replay_needed": ["Run known-seed replay and compare generated bytes."],
+                            "risk_notes": ["Source literal flag is only a clue until replay passes."],
+                        }
+                    ),
+                    raw={"id": "fake-response"},
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-operational-plan", category=ChallengeCategory.CRYPTO))
+
+            Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(FakeProvider())],
+            ).run_challenge("llm-operational-plan")
+            finding = notebook.findings_for("llm-operational-plan")[0]
+            observations = notebook.observations_for("llm-operational-plan")
+
+        plan = finding.evidence["plan"]
+        self.assertEqual(plan["analysis_mode"], "prng_stream_replay")
+        self.assertEqual(plan["artifact_requirements"], ["source file tail", "output sidecar"])
+        self.assertEqual(plan["blocked_by_missing_artifacts"], ["key"])
+        self.assertEqual(plan["manual_replay_needed"], ["Run known-seed replay and compare generated bytes."])
+        self.assertEqual(plan["risk_notes"], ["Source literal flag is only a clue until replay passes."])
+        self.assertEqual(observations[0].evidence["analysis_mode"], "prng_stream_replay")
+        self.assertEqual(observations[0].evidence["blocked_by_missing_artifacts"], ["key"])
 
     def test_llm_solver_parses_planner_v2_markdown_json(self) -> None:
         class FakeProvider:
@@ -335,6 +543,71 @@ class LLMSolverTest(unittest.TestCase):
         self.assertEqual(finding.next_action, "Run tshark flag scan.")
         self.assertEqual(observations[0].evidence["expected_evidence"], ["flag-like token in packet bytes"])
         self.assertEqual(observations[0].evidence["fallback_plan"], ["List TCP streams if direct scan misses."])
+
+    def test_llm_solver_promotes_model_flag_candidates_into_verifier_flow(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                return LLMResponse(
+                    content=json.dumps(
+                        {
+                            "summary": "Recovered the flag from the provided local artifact preview.",
+                            "hypotheses": ["The attachment contains enough arithmetic evidence to solve directly."],
+                            "flag_candidates": ["flag{llm_candidate_promotion}"],
+                            "expected_evidence": ["candidate derived from local attachment preview"],
+                        }
+                    ),
+                    raw={"id": "fake-response"},
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="llm-promotes-flag",
+                    category=ChallengeCategory.MISC,
+                    description="Local CTF puzzle whose arithmetic can be solved from the prompt.",
+                )
+            )
+
+            summary = Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(FakeProvider())],
+            ).run_challenge("llm-promotes-flag")
+            finding = next(finding for finding in notebook.findings_for("llm-promotes-flag") if finding.solver == "LLMSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{llm_candidate_promotion}"])
+        self.assertEqual(finding.evidence["plan"]["flag_candidates"], ["flag{llm_candidate_promotion}"])
+
+    def test_llm_solver_extracts_flag_candidate_from_plain_text_strategy(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                return LLMResponse(
+                    content="I replayed the local artifact arithmetic and derived flag{llm_plaintext_candidate}.",
+                    raw={"id": "fake-response"},
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-plain-flag", category=ChallengeCategory.MISC))
+
+            summary = Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(FakeProvider())],
+            ).run_challenge("llm-plain-flag")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{llm_plaintext_candidate}"])
 
     def test_llm_solver_falls_back_when_planner_v2_json_is_invalid(self) -> None:
         class FakeProvider:
@@ -469,8 +742,10 @@ class LLMSolverTest(unittest.TestCase):
 
             def __init__(self) -> None:
                 self.prompt = ""
+                self.instructions = ""
 
             def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.instructions = instructions
                 self.prompt = prompt
                 return LLMResponse(content="Web planning text.", raw={"id": "fake-response"})
 
@@ -493,6 +768,9 @@ class LLMSolverTest(unittest.TestCase):
             ).run_challenge("llm-web-prompt")
 
         self.assertIn("category_playbook:", provider.prompt)
+        self.assertIn("scope_context: ForgeFlag is for local or authorized CTF/lab research", provider.prompt)
+        self.assertIn("authorized CTF web challenge", provider.prompt)
+        self.assertIn("controlled challenge research", provider.instructions)
         self.assertIn("response capture", provider.prompt)
         self.assertIn("/robots.txt", provider.prompt)
         self.assertIn("SQL/NoSQL injection", provider.prompt)
@@ -639,7 +917,20 @@ class LLMSolverTest(unittest.TestCase):
             enabled = True
 
             def generate(self, instructions: str, prompt: str) -> LLMResponse:
-                return LLMResponse(content='{"summary":"Use extra solver","suggested_solvers":["ExtraSolver"]}')
+                return LLMResponse(
+                    content=json.dumps(
+                        {
+                            "summary": "Use extra solver",
+                            "analysis_mode": "traffic_resync",
+                            "suggested_solvers": ["ExtraSolver"],
+                            "expected_evidence": ["stream payload replay"],
+                            "artifact_requirements": ["original pcap"],
+                            "blocked_by_missing_artifacts": ["exported TCP stream"],
+                            "manual_replay_needed": ["Run stream extraction and verify the candidate."],
+                            "risk_notes": ["Do not trust a direct strings hit without packet evidence."],
+                        }
+                    )
+                )
 
         class ExtraSolver:
             name = "ExtraSolver"
@@ -671,11 +962,70 @@ class LLMSolverTest(unittest.TestCase):
                 observation for observation in notebook.observations_for("llm-dispatch")
                 if observation.kind == "llm_action_queue"
             )
+            trace = [
+                observation for observation in notebook.observations_for("llm-dispatch")
+                if observation.kind == "solve_trace_step" and observation.source == "ExtraSolver"
+            ][0]
 
         self.assertEqual([row["solver"] for row in summary["solvers"]], ["LLMSolver", "ExtraSolver"])
         self.assertEqual(action_queue.evidence["requested_solvers"], ["ExtraSolver"])
         self.assertEqual(action_queue.evidence["queued_solvers"], ["ExtraSolver"])
         self.assertEqual(action_queue.evidence["unknown_solvers"], [])
+        self.assertEqual(action_queue.evidence["analysis_mode"], "traffic_resync")
+        self.assertEqual(action_queue.evidence["artifact_requirements"], ["original pcap"])
+        self.assertEqual(action_queue.evidence["blocked_by_missing_artifacts"], ["exported TCP stream"])
+        self.assertEqual(action_queue.evidence["manual_replay_needed"], ["Run stream extraction and verify the candidate."])
+        self.assertEqual(action_queue.evidence["risk_notes"], ["Do not trust a direct strings hit without packet evidence."])
+        self.assertEqual(trace.evidence["llm_plan"]["analysis_mode"], "traffic_resync")
+        self.assertEqual(trace.evidence["llm_plan"]["artifact_requirements"], ["original pcap"])
+        self.assertEqual(trace.evidence["llm_plan"]["blocked_by_missing_artifacts"], ["exported TCP stream"])
+        self.assertEqual(trace.evidence["llm_plan"]["manual_replay_needed"], ["Run stream extraction and verify the candidate."])
+        self.assertEqual(trace.evidence["llm_plan"]["risk_notes"], ["Do not trust a direct strings hit without packet evidence."])
+
+    def test_manager_records_llm_action_queue_for_manual_guidance_without_solver_suggestion(self) -> None:
+        class FakeProvider:
+            name = "fake"
+            model = "fake-model"
+            enabled = True
+
+            def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                return LLMResponse(
+                    content=json.dumps(
+                        {
+                            "summary": "The source references a missing output file.",
+                            "analysis_mode": "missing_sidecar_replay",
+                            "next_actions": ["Locate output.txt or rerun the challenge generator."],
+                            "artifact_requirements": ["output.txt"],
+                            "blocked_by_missing_artifacts": ["output.txt"],
+                            "manual_replay_needed": ["Recreate the local generator output before accepting any flag."],
+                            "risk_notes": ["Do not submit the commented flag literal."],
+                        }
+                    )
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-manual-guidance", category=ChallengeCategory.CRYPTO))
+
+            summary = Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="fake", model="fake-model", api_key="unused")),
+                solvers=[LLMSolver(FakeProvider())],
+            ).run_challenge("llm-manual-guidance")
+            action_queue = next(
+                observation for observation in notebook.observations_for("llm-manual-guidance")
+                if observation.kind == "llm_action_queue"
+            )
+
+        self.assertEqual(summary["solvers"], [{"solver": "LLMSolver", "status": "ok", "findings": 1}])
+        self.assertEqual(action_queue.summary, "LLM provided manual guidance without changing the solver queue")
+        self.assertEqual(action_queue.evidence["requested_solvers"], [])
+        self.assertEqual(action_queue.evidence["analysis_mode"], "missing_sidecar_replay")
+        self.assertEqual(action_queue.evidence["next_actions"], ["Locate output.txt or rerun the challenge generator."])
+        self.assertEqual(action_queue.evidence["artifact_requirements"], ["output.txt"])
+        self.assertEqual(action_queue.evidence["blocked_by_missing_artifacts"], ["output.txt"])
+        self.assertEqual(action_queue.evidence["manual_replay_needed"], ["Recreate the local generator output before accepting any flag."])
+        self.assertEqual(action_queue.evidence["risk_notes"], ["Do not submit the commented flag literal."])
 
     def test_manager_continues_when_runtime_llm_config_is_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
@@ -691,9 +1041,36 @@ class LLMSolverTest(unittest.TestCase):
         self.assertEqual(summary["status"], "completed")
         self.assertIn({"solver": "LLMSolver", "status": "config_error", "findings": 1}, summary["solvers"])
         self.assertIn({"solver": "MiscSolver", "status": "placeholder", "findings": 1}, summary["solvers"])
+        self.assertEqual(summary["llm_status"]["enabled"], True)
+        self.assertEqual(summary["llm_status"]["status"], "config_error")
+        self.assertEqual(summary["llm_status"]["provider"], "zhipu")
+        self.assertEqual(summary["llm_status"]["model"], "glm-5.1")
         llm_finding = next(finding for finding in findings if finding.solver == "LLMSolver")
         self.assertEqual(llm_finding.finding, "LLM planning unavailable")
         self.assertIn("ZAI_API_KEY", llm_finding.evidence["error"])
+
+    def test_manager_does_not_report_stale_llm_error_when_llm_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(Challenge(challenge_id="llm-stale-error", category=ChallengeCategory.MISC))
+            notebook.add_finding(
+                Finding(
+                    challenge_id="llm-stale-error",
+                    solver="LLMSolver",
+                    finding="LLM planning unavailable",
+                    evidence={"error": "The read operation timed out"},
+                    confidence=0.2,
+                )
+            )
+
+            summary = Manager(
+                notebook,
+                RunConfig(llm_config=LLMConfig(provider="disabled")),
+            ).run_challenge("llm-stale-error")
+
+        self.assertEqual(summary["llm_status"]["enabled"], False)
+        self.assertEqual(summary["llm_status"]["status"], "disabled")
+        self.assertNotIn("error", summary["llm_status"])
 
     def test_manager_records_post_run_critic_when_llm_run_stalls_without_flag(self) -> None:
         class CriticProvider:
@@ -703,8 +1080,10 @@ class LLMSolverTest(unittest.TestCase):
 
             def __init__(self) -> None:
                 self.prompts: list[str] = []
+                self.instructions: list[str] = []
 
             def generate(self, instructions: str, prompt: str) -> LLMResponse:
+                self.instructions.append(instructions)
                 self.prompts.append(prompt)
                 if "post-run critic" in instructions:
                     return LLMResponse(
@@ -743,8 +1122,17 @@ class LLMSolverTest(unittest.TestCase):
 
         provider = CriticProvider()
         with tempfile.TemporaryDirectory() as tmp:
-            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
-            notebook.add_challenge(Challenge(challenge_id="critic-stalled", category=ChallengeCategory.MISC))
+            root = Path(tmp)
+            attachment = root / "stalled.png.txt"
+            attachment.write_text("PNG header notes\n" + ("metadata only\n" * 300) + "tail clue: inspect extra IDAT\n", encoding="utf-8")
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="critic-stalled",
+                    category=ChallengeCategory.MISC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
 
             summary = Manager(
                 notebook,
@@ -759,7 +1147,12 @@ class LLMSolverTest(unittest.TestCase):
         self.assertEqual(critic.evidence["missing_evidence"], ["IDAT payload decode result"])
         self.assertIn("Parse PNG chunks", critic.evidence["next_actions"][0])
         self.assertEqual(len(provider.prompts), 2)
+        self.assertIn("controlled challenge research", provider.instructions[1])
         self.assertIn("run_status: completed", provider.prompts[1])
+        self.assertIn("attachment_previews:", provider.prompts[1])
+        self.assertIn("tail clue: inspect extra IDAT", provider.prompts[1])
+        self.assertIn("category_playbook:", provider.prompts[1])
+        self.assertIn("prior_failure_patterns:", provider.prompts[1])
 
     def test_manager_skips_post_run_critic_after_flag_found(self) -> None:
         class CountingProvider:

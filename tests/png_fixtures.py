@@ -93,3 +93,53 @@ def png_with_rgb_lsb_payload(payload: str, *, width: int = 64, height: int = 8) 
         + chunk(b"IDAT", zlib.compress(b"".join(rows)))
         + chunk(b"IEND", b"")
     )
+
+
+def bmp_with_bgr_lsb_payload(payload: str, *, width: int = 64, height: int = 8) -> bytes:
+    return _bmp_with_lsb_payload(payload, width=width, height=height, include_padding=False)
+
+
+def bmp_with_full_row_lsb_payload(payload: str, *, width: int = 63, height: int = 8) -> bytes:
+    return _bmp_with_lsb_payload(payload, width=width, height=height, include_padding=True)
+
+
+def _bmp_with_lsb_payload(payload: str, *, width: int, height: int, include_padding: bool) -> bytes:
+    bits = []
+    for byte in payload.encode("ascii") + b"\x00":
+        bits.extend((byte >> bit) & 1 for bit in range(8))
+    row_stride = ((width * 24 + 31) // 32) * 4
+    pixel_bytes = bytearray(row_stride * height)
+    capacity = len(pixel_bytes) if include_padding else width * height * 3
+    if len(bits) > capacity:
+        raise ValueError("payload does not fit in BMP LSB capacity")
+    write_indexes = []
+    for row in range(height):
+        row_start = row * row_stride
+        row_width = row_stride if include_padding else width * 3
+        write_indexes.extend(range(row_start, row_start + row_width))
+    for offset, bit in enumerate(bits):
+        pixel_bytes[write_indexes[offset]] = 0xFE | bit
+    for offset in range(len(pixel_bytes)):
+        if pixel_bytes[offset] == 0:
+            pixel_bytes[offset] = 0xFE
+    for offset in write_indexes[len(bits) :]:
+        pixel_bytes[offset] = 0xFE
+
+    pixel_offset = 54
+    file_size = pixel_offset + len(pixel_bytes)
+    file_header = b"BM" + struct.pack("<IHHI", file_size, 0, 0, pixel_offset)
+    dib_header = struct.pack(
+        "<IiiHHIIiiII",
+        40,
+        width,
+        height,
+        1,
+        24,
+        0,
+        len(pixel_bytes),
+        2835,
+        2835,
+        0,
+        0,
+    )
+    return file_header + dib_header + bytes(pixel_bytes)

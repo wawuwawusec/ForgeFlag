@@ -214,6 +214,28 @@ class CliTest(unittest.TestCase):
         self.assertTrue(all("traffic" in row["categories"] for row in payload))
         self.assertIn("Wireshark", {row["name"] for row in payload})
 
+    def test_hints_command_lists_recommended_analysis_hints_by_category(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = main(["hints", "--category", "traffic"])
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload)
+        self.assertTrue(all(row["category"] == "traffic" for row in payload))
+        self.assertIn("traffic-http-webshell-delimited-flag", {row["id"] for row in payload})
+        self.assertIn("traffic-data-uri-image", {row["id"] for row in payload})
+        self.assertIn("solver_supported", {row["status"] for row in payload})
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = main(["hints", "--category", "crypto"])
+
+        crypto_payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(all(row["category"] == "crypto" for row in crypto_payload))
+        self.assertIn("crypto-python-random-prime-offset", {row["id"] for row in crypto_payload})
+
     def test_agents_command_lists_subagent_roster(self) -> None:
         output = io.StringIO()
         with redirect_stdout(output):
@@ -222,11 +244,16 @@ class CliTest(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["coordinator"]["id"], "forgeflag-manager")
+        self.assertEqual(payload["coordinator"]["team_type"], "manager")
+        self.assertIn("benchmark status", payload["coordinator"]["deliverables"])
         self.assertEqual(payload["subagent_work_policy"]["max_parallel"], 1)
         self.assertTrue(payload["subagent_work_policy"]["prefer_local_verification"])
         self.assertIn("ChallengeTriageAgent", {row["name"] for row in payload["agents"]})
         self.assertIn("BrowserPlayerQAAgent", {row["name"] for row in payload["agents"]})
         self.assertIn("EvidenceJudgeAgent", {row["name"] for row in payload["agents"]})
+        browser_agent = next(row for row in payload["agents"] if row["name"] == "BrowserPlayerQAAgent")
+        self.assertEqual(browser_agent["team_type"], "enabling")
+        self.assertEqual(browser_agent["reports_to"], "forgeflag-manager")
 
 
 if __name__ == "__main__":

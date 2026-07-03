@@ -75,6 +75,12 @@ def _rationale_for(result: SolverResult, prior_observations: tuple[Observation, 
         actions = plan.get("next_actions")
         if isinstance(actions, list) and actions:
             return str(actions[0])
+        blocked = plan.get("blocked_by_missing_artifacts")
+        if isinstance(blocked, list) and blocked:
+            return f"Collect missing artifact or evidence: {blocked[0]}"
+        manual = plan.get("manual_replay_needed")
+        if isinstance(manual, list) and manual:
+            return str(manual[0])
         expected = plan.get("expected_evidence")
         if isinstance(expected, list) and expected:
             return f"Collect expected evidence: {expected[0]}"
@@ -98,11 +104,16 @@ def _matching_llm_plan(
         if isinstance(suggested, list) and solver_name in suggested:
             return {
                 "summary": observation.summary,
+                "analysis_mode": str(observation.evidence.get("analysis_mode") or ""),
                 "suggested_solvers": suggested,
                 "next_actions": _string_list(observation.evidence.get("next_actions")),
                 "tool_hints": _string_list(observation.evidence.get("tool_hints")),
                 "expected_evidence": _string_list(observation.evidence.get("expected_evidence")),
+                "artifact_requirements": _string_list(observation.evidence.get("artifact_requirements")),
+                "blocked_by_missing_artifacts": _string_list(observation.evidence.get("blocked_by_missing_artifacts")),
+                "manual_replay_needed": _string_list(observation.evidence.get("manual_replay_needed")),
                 "fallback_plan": _string_list(observation.evidence.get("fallback_plan")),
+                "risk_notes": _string_list(observation.evidence.get("risk_notes")),
             }
     return {}
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
+from forgeflag.ctf_scope import pwn_ctf_scope_evidence
 from forgeflag.flags import extract_flags
 from forgeflag.ida import DisabledIDAAdapter, IDAAdapter, IDAAnalysis
 from forgeflag.solvers.base import SolverContext
@@ -32,7 +33,10 @@ class PwnSolver:
             challenge_id=context.challenge.challenge_id,
             solver=self.name,
             finding="Pwn solver placeholder registered",
-            evidence={"planned_adapters": ["checksec", "ida-mcp", "gdb", "pwntools", "ropper"]},
+            evidence={
+                "planned_adapters": ["checksec", "ida-mcp", "gdb", "pwntools", "ropper"],
+                "ctf_scope": pwn_ctf_scope_evidence(),
+            },
             hypothesis="Future implementation should reproduce crashes and generate exploit workspaces.",
             confidence=0.4,
             next_action="Implement binary triage and crash reproduction harness.",
@@ -54,6 +58,7 @@ class PwnSolver:
                 "tool_status": result.status,
                 "transcript": transcript[:1000],
                 "flag_candidates": list(flags),
+                "ctf_scope": pwn_ctf_scope_evidence(),
             },
             hypothesis=_service_hypothesis(result.status, flags),
             confidence=0.78 if flags else (0.55 if result.status == "success" else 0.25),
@@ -79,7 +84,7 @@ class PwnSolver:
                     challenge_id=context.challenge.challenge_id,
                     solver=self.name,
                     finding="Pwn attachment unavailable",
-                    evidence={"attachment_path": attachment_path, "error": str(exc)},
+                    evidence={"attachment_path": attachment_path, "error": str(exc), "ctf_scope": pwn_ctf_scope_evidence()},
                     hypothesis="The binary attachment must exist before local pwn triage can run.",
                     confidence=0.2,
                     next_action="Check the attachment path and rerun.",
@@ -112,6 +117,7 @@ class PwnSolver:
                 "tool_statuses": {label: result.status for label, result in labeled_results},
                 "tool_samples": {label: _tool_sample(result) for label, result in labeled_results},
                 "flag_candidates": list(flags),
+                "ctf_scope": pwn_ctf_scope_evidence(),
             }
             evidence.update(workflow_evidence)
             finding = Finding(
@@ -146,7 +152,7 @@ class PwnSolver:
                     challenge_id=context.challenge.challenge_id,
                     solver=self.name,
                     finding="Pwn attachment unavailable",
-                    evidence={"attachment_path": attachment_path, "error": str(exc)},
+                    evidence={"attachment_path": attachment_path, "error": str(exc), "ctf_scope": pwn_ctf_scope_evidence()},
                     hypothesis="The binary attachment must exist before IDA MCP analysis can run.",
                     confidence=0.2,
                     next_action="Check the attachment path and rerun.",
@@ -166,6 +172,7 @@ class PwnSolver:
                     "artifact": resolved,
                     "ida_mcp": _analysis_evidence(analysis),
                     "flag_candidates": list(flags),
+                    "ctf_scope": pwn_ctf_scope_evidence(),
                 },
                 hypothesis=_hypothesis(analysis, flags),
                 confidence=0.82 if flags else 0.66,
@@ -229,6 +236,7 @@ def _binary_workflow_evidence(labeled_results) -> dict[str, object]:
     primary_symbol = symbols[0]
     return {
         "workflow_guess": "ret2win",
+        "ctf_scope": pwn_ctf_scope_evidence(),
         "workflow_evidence": {
             "symbols": symbols,
             "dangerous_calls": unsafe_calls,
@@ -259,6 +267,7 @@ def _ftp_heap_format_string_evidence(text: str) -> dict[str, object]:
     login_input = "".join(chr(ord(char) - 1) for char in password)
     return {
         "workflow_guess": "ftp_heap_format_string",
+        "ctf_scope": pwn_ctf_scope_evidence(),
         "workflow_evidence": {
             "service_style": "ftp-like heap file store",
             "credential_transform": "username bytes are incremented by one before strcmp against sysbdmin",
@@ -273,6 +282,7 @@ def _ftp_heap_format_string_evidence(text: str) -> dict[str, object]:
 def _ftp_heap_format_string_exploit_plan(login_input: str) -> dict[str, object]:
     return {
         "workflow": "ftp_heap_format_string",
+        "ctf_scope": "proof-of-solve harness for a local or authorized CTF service",
         "login_input": login_input,
         "format_offset": 7,
         "leak": (
@@ -313,6 +323,7 @@ def _source_vulnerability_finding(context: SolverContext, resolved: str) -> Find
                 "source_sample": "\n".join(
                     _matching_source_lines(source, tuple(dict.fromkeys((*unsafe_calls, *ret2win_symbols))))
                 ),
+                "ctf_scope": pwn_ctf_scope_evidence(),
                 "exploit_plan": _ret2win_exploit_plan(primary_symbol),
             },
             hypothesis=(
@@ -336,6 +347,7 @@ def _source_vulnerability_finding(context: SolverContext, resolved: str) -> Find
             "pattern": "format string",
             "dangerous_calls": ["printf"],
             "source_sample": "\n".join(_matching_source_lines(source, ("printf", "fgets", "scanf"))),
+            "ctf_scope": pwn_ctf_scope_evidence(),
             "exploit_plan": _format_string_exploit_plan(),
         },
         hypothesis="User-controlled data appears to reach printf as the format argument, which is a format string vulnerability.",
@@ -387,6 +399,7 @@ def _dangerous_symbol_mentions(text: str) -> list[str]:
 def _ret2win_exploit_plan(symbol: str) -> dict[str, object]:
     return {
         "workflow": "ret2win",
+        "ctf_scope": "proof-of-solve harness for a local or authorized CTF binary",
         "symbol": symbol,
         "crash_harness": (
             "Run the binary locally or against the remote service with a pwntools script, send cyclic(512), "
@@ -401,6 +414,7 @@ def _ret2win_exploit_plan(symbol: str) -> dict[str, object]:
 def _format_string_exploit_plan() -> dict[str, object]:
     return {
         "workflow": "format_string",
+        "ctf_scope": "proof-of-solve harness for a local or authorized CTF binary/service",
         "offset_probe": "%p." * 24,
         "offset_strategy": "Send numbered `%p` probes, identify controlled stack words, then set FMT_OFFSET.",
         "leak_strategy": "Use `%s` or `%p` with a known address once the stack offset is confirmed.",
@@ -439,10 +453,10 @@ def _local_next_action(flags: tuple[str, ...], workflow_evidence: dict[str, obje
     if flags:
         return "Send candidates to Verifier and preserve local tool outputs as replay evidence."
     if workflow_evidence and workflow_evidence.get("workflow_guess") == "ftp_heap_format_string":
-        return "Use the pwn3 format-string plan: log in with the transformed username, leak printf@got, write printf@got to system, then get a /bin/sh payload file."
+        return "Use the pwn3 proof-of-solve plan inside the authorized challenge service: confirm offset evidence, then replay the bounded harness."
     if workflow_evidence and workflow_evidence.get("workflow_guess") == "ret2win":
         return "Crash with a cyclic pattern, compute the offset, then send padding plus the win-style symbol address with pwntools."
-    return "Use checksec results to choose exploit strategy, then generate a pwntools workspace."
+    return "Use checksec results to choose the proof-of-solve strategy, then generate a pwntools workspace."
 
 
 def _service_hypothesis(status: str, flags: tuple[str, ...]) -> str:
@@ -450,7 +464,7 @@ def _service_hypothesis(status: str, flags: tuple[str, ...]) -> str:
         return "A scoped TCP service interaction returned a flag-like token in the initial transcript."
     if status == "success":
         return "The service is reachable and produced a transcript suitable for pwntools follow-up."
-    return "The scoped service interaction did not complete, so exploit workflow needs target or scope correction."
+    return "The scoped service interaction did not complete, so the proof-of-solve workflow needs target or scope correction."
 
 
 def _service_next_action(status: str, flags: tuple[str, ...]) -> str:
@@ -472,4 +486,4 @@ def _hypothesis(analysis: IDAAnalysis, flags: tuple[str, ...]) -> str:
 def _next_action(flags: tuple[str, ...]) -> str:
     if flags:
         return "Send candidates to Verifier and preserve IDA MCP tool outputs as replay evidence."
-    return "Pivot into checksec, dangerous function callers, decompiled input paths, and exploit harness setup."
+    return "Pivot into checksec, dangerous function callers, decompiled input paths, and proof-of-solve harness setup."

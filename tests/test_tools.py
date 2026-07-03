@@ -15,8 +15,13 @@ from forgeflag.safety import ScopePolicy
 from forgeflag.tools.ctf import (
     file_identify,
     ffuf_route_discovery,
+    foremost_carve,
     hashcat_dictionary_attack,
     john_dictionary_attack,
+    objdump_disassemble,
+    objdump_section_dump,
+    radare2_info,
+    readelf_sections,
     ropgadget_scan,
     ropper_scan,
     rsactftool_attack,
@@ -30,6 +35,7 @@ from forgeflag.tools.ctf import (
     tshark_follow_tcp_stream,
     tshark_tcp_streams,
     tshark_traffic_analysis,
+    yara_scan,
 )
 from forgeflag.tools.runner import ToolRunner, _docker_arg
 
@@ -42,6 +48,16 @@ class ToolRunnerTest(unittest.TestCase):
         nmap = next(row for row in inventory if row["name"] == "nmap_tcp_basic")
         self.assertEqual(nmap["category"], "recon")
         self.assertTrue(nmap["active_network"])
+
+    def test_inventory_contains_reverse_and_forensics_orbstack_wrappers(self) -> None:
+        inventory = ToolRunner(ScopePolicy()).inventory()
+        names = {row["name"] for row in inventory}
+
+        self.assertIn("objdump", names)
+        self.assertIn("readelf", names)
+        self.assertIn("radare2", names)
+        self.assertIn("foremost", names)
+        self.assertIn("yara", names)
 
     def test_inventory_does_not_treat_missing_pyenv_shim_as_available(self) -> None:
         def fake_which(command: str) -> str | None:
@@ -68,10 +84,11 @@ class ToolRunnerTest(unittest.TestCase):
                 return "/usr/local/bin/docker"
             return None
 
-        completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"[]", stderr=b"")
+        inspect_completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"[]", stderr=b"")
+        probe_completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"ropper\n", stderr=b"")
         with patch.dict("os.environ", {"FORGEFLAG_TOOL_DOCKER_IMAGE": "forgeflag-ctf:test"}):
             with patch("forgeflag.tools.runner.shutil.which", side_effect=fake_which):
-                with patch("forgeflag.tools.runner.subprocess.run", return_value=completed):
+                with patch("forgeflag.tools.runner.subprocess.run", side_effect=[inspect_completed, probe_completed]):
                     inventory = ToolRunner(ScopePolicy()).inventory()
 
         ropper = next(row for row in inventory if row["name"] == "ropper")
@@ -79,6 +96,24 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertFalse(ropper["host_available"])
         self.assertTrue(ropper["docker_available"])
         self.assertEqual(ropper["source"], "docker")
+
+    def test_inventory_requires_command_to_exist_inside_docker_image(self) -> None:
+        def fake_which(command: str) -> str | None:
+            if command == "docker":
+                return "/usr/local/bin/docker"
+            return None
+
+        inspect_completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"[]", stderr=b"")
+        probe_completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"", stderr=b"")
+        with patch.dict("os.environ", {"FORGEFLAG_TOOL_DOCKER_IMAGE": "forgeflag-ctf:test"}):
+            with patch("forgeflag.tools.runner.shutil.which", side_effect=fake_which):
+                with patch("forgeflag.tools.runner.subprocess.run", side_effect=[inspect_completed, probe_completed]):
+                    inventory = ToolRunner(ScopePolicy()).inventory()
+
+        ropgadget = next(row for row in inventory if row["name"] == "ROPgadget")
+        self.assertFalse(ropgadget["available"])
+        self.assertFalse(ropgadget["docker_available"])
+        self.assertEqual(ropgadget["source"], "missing")
 
     def test_inventory_loads_project_docker_env_when_environment_is_unset(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -96,13 +131,14 @@ class ToolRunnerTest(unittest.TestCase):
                     return "/usr/local/bin/docker"
                 return None
 
-            completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"[]", stderr=b"")
+            inspect_completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"[]", stderr=b"")
+            probe_completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"RsaCtfTool\n", stderr=b"")
             previous_cwd = Path.cwd()
             try:
                 os.chdir(root)
                 with patch.dict("os.environ", {}, clear=True):
                     with patch("forgeflag.tools.runner.shutil.which", side_effect=fake_which):
-                        with patch("forgeflag.tools.runner.subprocess.run", return_value=completed):
+                        with patch("forgeflag.tools.runner.subprocess.run", side_effect=[inspect_completed, probe_completed]):
                             inventory = ToolRunner(ScopePolicy()).inventory()
             finally:
                 os.chdir(previous_cwd)
@@ -121,7 +157,9 @@ class ToolRunnerTest(unittest.TestCase):
                 return "/usr/local/bin/docker"
             return None
 
-        completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"ok\n", stderr=b"")
+        inspect_completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"[]", stderr=b"")
+        probe_completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"ropper\n", stderr=b"")
+        run_completed = subprocess.CompletedProcess(args=["docker"], returncode=0, stdout=b"ok\n", stderr=b"")
         with patch.dict(
             "os.environ",
             {
@@ -130,12 +168,16 @@ class ToolRunnerTest(unittest.TestCase):
             },
         ):
             with patch("forgeflag.tools.runner.shutil.which", side_effect=fake_which):
-                with patch("forgeflag.tools.runner.subprocess.run", return_value=completed) as run:
+                with patch(
+                    "forgeflag.tools.runner.subprocess.run",
+                    side_effect=[inspect_completed, probe_completed, run_completed],
+                ) as run:
                     result = ToolRunner(ScopePolicy()).run("ropper", ["--file", str(artifact), "--nocolor"])
 
         self.assertEqual(result.status, "success")
-        argv = run.call_args.args[0]
+        argv = run.call_args_list[-1].args[0]
         self.assertIn("forgeflag-ctf:test", argv)
+        self.assertIn("PATH=/opt/forgeflag-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", argv)
         self.assertIn("/workspace/artifact.bin", argv)
         self.assertIn("--file", argv)
 
@@ -411,6 +453,88 @@ class ToolRunnerTest(unittest.TestCase):
             ["--publickey", "/tmp/pub.pem", "--uncipherfile", "/tmp/cipher.bin"],
             timeout_seconds=30,
         )
+
+    def test_objdump_disassemble_uses_intel_syntax_and_path(self) -> None:
+        expected = ToolResult(tool="objdump", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = objdump_disassemble("/tmp/rev")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with("objdump", ["-d", "-M", "intel", "/tmp/rev"], timeout_seconds=30)
+
+    def test_objdump_section_dump_sanitizes_section_name(self) -> None:
+        expected = ToolResult(tool="objdump", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = objdump_section_dump("/tmp/rev", section=".rodata\nbad")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with("objdump", ["-s", "-j", ".rodatabad", "/tmp/rev"], timeout_seconds=20)
+
+    def test_readelf_sections_uses_section_listing(self) -> None:
+        expected = ToolResult(tool="readelf", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = readelf_sections("/tmp/rev")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with("readelf", ["-S", "/tmp/rev"], timeout_seconds=20)
+
+    def test_radare2_info_runs_quiet_analysis_command(self) -> None:
+        expected = ToolResult(tool="radare2", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = radare2_info("/tmp/rev")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with("radare2", ["-2", "-q", "-c", "iI; izz~{}", "/tmp/rev"], timeout_seconds=20)
+
+    def test_foremost_carve_uses_output_directory(self) -> None:
+        expected = ToolResult(tool="foremost", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = foremost_carve("/tmp/blob", "/tmp/out")
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "foremost",
+            ["-q", "-i", "/tmp/blob", "-o", str(Path("/tmp/out").resolve())],
+            timeout_seconds=30,
+        )
+
+    def test_yara_scan_writes_bounded_rule_file(self) -> None:
+        expected = ToolResult(tool="yara", target=None, status="success")
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "blob.bin"
+            artifact.write_bytes(b"flag{demo}")
+            with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+                runner = Mock()
+                runner.run.return_value = expected
+                runner_cls.return_value = runner
+
+                result = yara_scan(str(artifact), {"flag_text": "flag{"}, output_dir=tmp)
+
+        self.assertIs(result, expected)
+        call_args = runner.run.call_args.args
+        self.assertEqual(call_args[0], "yara")
+        self.assertEqual(call_args[1][1], str(artifact))
+        self.assertTrue(call_args[1][0].endswith("forgeflag-yara-rules.yar"))
 
     def test_hashcat_dictionary_attack_uses_mode_and_wordlist(self) -> None:
         expected = ToolResult(tool="hashcat", target=None, status="success")

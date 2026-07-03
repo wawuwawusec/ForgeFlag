@@ -14,6 +14,11 @@ class AgentIdentity:
     name: str
     mission: str
     responsibilities: tuple[str, ...] = ()
+    team_type: str = "stream-aligned"
+    reports_to: str = "forgeflag-manager"
+    cadence: str = "per challenge"
+    success_metrics: tuple[str, ...] = ()
+    deliverables: tuple[str, ...] = ()
     categories: tuple[str, ...] = ("*",)
     solvers: tuple[str, ...] = ()
     tools: tuple[str, ...] = ()
@@ -31,6 +36,11 @@ class AgentIdentity:
             "name": self.name,
             "mission": self.mission,
             "responsibilities": list(self.responsibilities),
+            "team_type": self.team_type,
+            "reports_to": self.reports_to,
+            "cadence": self.cadence,
+            "success_metrics": list(self.success_metrics),
+            "deliverables": list(self.deliverables),
             "categories": list(self.categories),
             "solvers": list(self.solvers),
             "tools": list(self.tools),
@@ -41,12 +51,23 @@ class AgentIdentity:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> AgentIdentity:
+    def from_dict(
+        cls,
+        payload: dict[str, Any],
+        *,
+        team_type_default: str = "stream-aligned",
+        reports_to_default: str = "forgeflag-manager",
+    ) -> AgentIdentity:
         return cls(
             id=str(payload.get("id") or ""),
             name=str(payload.get("name") or ""),
             mission=str(payload.get("mission") or ""),
             responsibilities=tuple(_string_list(payload.get("responsibilities"))),
+            team_type=str(payload.get("team_type") or team_type_default),
+            reports_to=str(payload.get("reports_to") if payload.get("reports_to") is not None else reports_to_default),
+            cadence=str(payload.get("cadence") or "per challenge"),
+            success_metrics=tuple(_string_list(payload.get("success_metrics"))),
+            deliverables=tuple(_string_list(payload.get("deliverables"))),
             categories=tuple(_string_list(payload.get("categories")) or ["*"]),
             solvers=tuple(_string_list(payload.get("solvers"))),
             tools=tuple(_string_list(payload.get("tools"))),
@@ -164,18 +185,20 @@ class AgentRoster:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> AgentRoster:
         coordinator_raw = payload.get("coordinator")
+        default = default_agent_roster()
         coordinator = (
-            AgentIdentity.from_dict(coordinator_raw)
+            _identity_from_dict_with_defaults(coordinator_raw, default.coordinator)
             if isinstance(coordinator_raw, dict)
-            else default_agent_roster().coordinator
+            else default.coordinator
         )
+        default_agents = {agent.id: agent for agent in default.agents}
         agents = tuple(
-            AgentIdentity.from_dict(item)
+            _identity_from_dict_with_defaults(item, default_agents.get(str(item.get("id") or "")))
             for item in payload.get("agents", [])
             if isinstance(item, dict)
         )
         if "agents" not in payload:
-            agents = default_agent_roster().agents
+            agents = default.agents
         policy_raw = payload.get("subagent_work_policy")
         policy = (
             SubagentWorkPolicy.from_dict(policy_raw)
@@ -189,6 +212,27 @@ class AgentRoster:
             subagent_work_policy=policy,
             warnings=tuple(_string_list(payload.get("warnings"))),
         )
+
+
+def _identity_from_dict_with_defaults(payload: dict[str, Any], fallback: AgentIdentity | None) -> AgentIdentity:
+    if fallback is None:
+        return AgentIdentity.from_dict(payload)
+    merged = dict(payload)
+    for field_name in (
+        "team_type",
+        "reports_to",
+        "cadence",
+        "success_metrics",
+        "deliverables",
+    ):
+        if field_name not in merged:
+            value = getattr(fallback, field_name)
+            merged[field_name] = list(value) if isinstance(value, tuple) else value
+    return AgentIdentity.from_dict(
+        merged,
+        team_type_default=fallback.team_type,
+        reports_to_default=fallback.reports_to,
+    )
 
 
 def agent_roster_path_for_db(db_path: str | Path) -> Path:
@@ -235,6 +279,21 @@ def default_agent_roster() -> AgentRoster:
             "Preserve solver evidence, observations, verification status, and write-up data.",
             "Keep active probing within explicit scope.",
         ),
+        team_type="manager",
+        reports_to="",
+        cadence="continuous",
+        success_metrics=(
+            "held-out pass rate",
+            "hard evidence score",
+            "browser UI flow rate",
+            "scope safety rate",
+        ),
+        deliverables=(
+            "prioritized improvement backlog",
+            "accepted flag summary",
+            "reproducible write-up",
+            "benchmark status",
+        ),
         solvers=("ReconSolver", "LLMSolver", "WebSolver", "CryptoSolver", "ReverseSolver", "PwnSolver", "ForensicsSolver", "TrafficSolver", "MiscSolver", "InfraSolver"),
     )
     agents = (
@@ -243,6 +302,10 @@ def default_agent_roster() -> AgentRoster:
             name="ChallengeTriageAgent",
             mission="Read the statement, metadata, and attachment summary to correct category routing before deep solving.",
             responsibilities=("Classify the challenge.", "Identify suspicious attachment types.", "Choose the first specialist route."),
+            team_type="stream-aligned",
+            cadence="per challenge",
+            success_metrics=("correct category routing", "first-pass solver fit"),
+            deliverables=("triage summary", "solver route recommendation"),
             solvers=("ReconSolver",),
             playbooks=("docs/ctf-playbook.md",),
         ),
@@ -251,6 +314,10 @@ def default_agent_roster() -> AgentRoster:
             name="LLMRoutePlannerAgent",
             mission="Use the configured LLM to produce hypotheses, tool routes, and expected evidence without guessing flags.",
             responsibilities=("Generate Planner v2 JSON.", "Suggest exact ForgeFlag solver names.", "Explain missing evidence and fallback routes."),
+            team_type="enabling",
+            cadence="when deterministic routing stalls",
+            success_metrics=("valid planner json", "useful fallback route", "no unsupported flag claims"),
+            deliverables=("hypothesis plan", "expected evidence list", "fallback actions"),
             solvers=("LLMSolver",),
             playbooks=("src/forgeflag/llm_prompts.py", "docs/ctf-playbook.md"),
             llm=True,
@@ -260,6 +327,10 @@ def default_agent_roster() -> AgentRoster:
             name="WebExploitAgent",
             mission="Analyze scoped Web challenges for routes, API leaks, JWT/session bugs, SSRF, and path traversal evidence.",
             responsibilities=("Inspect source routes and sinks.", "Probe allowlisted targets only when active probing is enabled.", "Extract flags from response bodies, headers, and cookies."),
+            team_type="stream-aligned",
+            cadence="per web challenge",
+            success_metrics=("web flag acceptance", "source evidence completeness", "active probe scope compliance"),
+            deliverables=("route evidence", "source sink notes", "scoped request transcript"),
             categories=("web",),
             solvers=("WebSolver",),
             tools=("http_probe", "ffuf", "nmap_tcp_basic"),
@@ -270,6 +341,10 @@ def default_agent_roster() -> AgentRoster:
             name="CryptoMathAgent",
             mission="Recognize crypto primitives and produce reproducible recovery routes for encodings, XOR, RSA, AES misuse, oracle, and lattice-style tasks.",
             responsibilities=("Run bounded transform candidates.", "Summarize RSA and hash parameters.", "Recommend Sage/RsaCtfTool/Z3 when deterministic recovery is not yet implemented."),
+            team_type="complicated-subsystem",
+            cadence="per crypto or math-heavy misc challenge",
+            success_metrics=("crypto flag acceptance", "parameter extraction quality", "scripted replay coverage"),
+            deliverables=("primitive classification", "recovery script", "math-tool recommendation"),
             categories=("crypto", "misc"),
             solvers=("CryptoSolver", "MiscSolver"),
             tools=("RsaCtfTool", "hashcat", "john"),
@@ -278,26 +353,38 @@ def default_agent_roster() -> AgentRoster:
             id="binary-agent",
             name="BinaryAgent",
             mission="Handle reverse and pwn binaries with static triage, exploit-pattern recognition, and IDA/Ghidra route suggestions.",
-            responsibilities=("Run file/strings/checksec/gadget triage.", "Identify ret2win and format-string patterns.", "Prepare crash harness and pwntools template hints."),
+            responsibilities=("Run file/strings/objdump/readelf/radare2/checksec/gadget triage.", "Identify ret2win and format-string patterns.", "Prepare crash harness and pwntools template hints."),
+            team_type="complicated-subsystem",
+            cadence="per reverse or pwn challenge",
+            success_metrics=("binary flag acceptance", "local artifact evidence", "harness replay coverage"),
+            deliverables=("static triage", "validation logic notes", "bounded exploit harness"),
             categories=("reverse", "pwn"),
             solvers=("ReverseSolver", "PwnSolver"),
-            tools=("file", "strings", "checksec", "ROPgadget", "ropper", "ida-mcp"),
+            tools=("file", "strings", "objdump", "readelf", "radare2", "checksec", "ROPgadget", "ropper", "ida-mcp"),
             playbooks=("docs/tool-containers.md",),
         ),
         AgentIdentity(
             id="forensics-agent",
             name="ForensicsAgent",
             mission="Triage files, images, archives, metadata, macros, scripts, and stego-style evidence.",
-            responsibilities=("Inspect file metadata and strings.", "Detect PNG/JPEG/archive clues.", "Promote extracted artifacts and flags into notebook evidence."),
+            responsibilities=("Inspect file metadata and strings.", "Detect PNG/JPEG/archive clues.", "Run carving and YARA follow-up when broad triage stalls.", "Promote extracted artifacts and flags into notebook evidence."),
+            team_type="stream-aligned",
+            cadence="per forensics or file-heavy misc challenge",
+            success_metrics=("artifact extraction rate", "forensics flag acceptance", "evidence hash coverage"),
+            deliverables=("artifact inventory", "extraction notes", "flag candidate evidence"),
             categories=("forensics", "misc"),
             solvers=("ForensicsSolver", "MiscSolver"),
-            tools=("file", "strings", "binwalk", "exiftool"),
+            tools=("file", "strings", "binwalk", "exiftool", "foremost", "yara"),
         ),
         AgentIdentity(
             id="traffic-agent",
             name="TrafficAgent",
             mission="Reconstruct PCAP evidence across HTTP, DNS, SMTP, FTP, IRC-style streams, and exported objects.",
             responsibilities=("Summarize flows and protocols.", "Decode DNS/HTTP exfil patterns.", "Shortlist TCP streams and exported objects for flag recovery."),
+            team_type="stream-aligned",
+            cadence="per traffic or pcap-backed challenge",
+            success_metrics=("traffic flag acceptance", "stream reconstruction coverage", "exported artifact replay"),
+            deliverables=("flow summary", "stream shortlist", "extracted artifact evidence"),
             categories=("traffic", "forensics"),
             solvers=("TrafficSolver", "ForensicsSolver"),
             tools=("tshark", "tshark_dns_summary", "tshark_tcp_streams", "tshark_http_requests", "tshark_http_object_export"),
@@ -307,6 +394,10 @@ def default_agent_roster() -> AgentRoster:
             name="EvidenceJudgeAgent",
             mission="Accept only evidence-backed flags, reject unsupported candidates, and keep the shortest reproducible discovery path.",
             responsibilities=("Verify candidates from findings.", "Record rejected candidates.", "Ensure Write-up focuses on solving idea and reproduction steps."),
+            team_type="enabling",
+            cadence="every run",
+            success_metrics=("accepted flag evidence coverage", "rejected candidate clarity", "write-up replay completeness"),
+            deliverables=("verification decision", "rejected candidate log", "reproducible write-up"),
             solvers=("Verifier", "ReportBuilder"),
             playbooks=("src/forgeflag/report.py", "src/forgeflag/verifier.py"),
         ),
@@ -315,6 +406,10 @@ def default_agent_roster() -> AgentRoster:
             name="BrowserPlayerQAAgent",
             mission="Operate ForgeFlag through the Web UI like a CTF player and catch UX or workflow regressions.",
             responsibilities=("Create challenges through visible controls.", "Upload attachments and run selected challenges.", "Inspect Summary and Write-up before deleting cleanup fixtures."),
+            team_type="enabling",
+            cadence="after UI or workflow changes",
+            success_metrics=("browser UI flow rate", "workflow regression count", "write-up visibility"),
+            deliverables=("browser benchmark result", "UI regression note", "player workflow finding"),
             solvers=(),
             tools=("playwright",),
             playbooks=("scripts/forgeflag-web-player-benchmark", "docs/web-player-benchmark.md"),

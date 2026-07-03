@@ -112,6 +112,8 @@ def analyze_image_stego_hints(path: Path) -> dict[str, Any] | None:
         return _analyze_png_stego_hints(data)
     if data.startswith(b"\xff\xd8"):
         return _analyze_jpeg_stego_hints(data)
+    if data.startswith(b"BM"):
+        return _analyze_bmp_stego_hints(data)
     return None
 
 
@@ -122,6 +124,8 @@ def _magic_format(data: bytes) -> str | None:
         return "jpeg"
     if data.startswith((b"GIF87a", b"GIF89a")):
         return "gif"
+    if data.startswith(b"BM"):
+        return "bmp"
     if data.startswith(b"PK\x03\x04") or data.startswith(b"PK\x05\x06") or data.startswith(b"PK\x07\x08"):
         return "zip"
     if data.startswith(b"\x1f\x8b"):
@@ -297,6 +301,126 @@ def _analyze_jpeg_stego_hints(data: bytes) -> dict[str, Any] | None:
         "markers": markers[:120],
         **({"trailing_data": trailing_data} if trailing_data else {}),
     }
+
+
+def _analyze_bmp_stego_hints(data: bytes) -> dict[str, Any] | None:
+    decoded = _decode_bmp_pixels(data)
+    if not decoded:
+        return None
+    width, height, bit_depth, channels, rows, full_rows = decoded
+    lsb_candidates = _extract_bmp_lsb_candidates(channels, rows, full_rows, bottom_up=height > 0)
+    if not lsb_candidates:
+        return None
+    return {
+        "format": "bmp",
+        "width": width,
+        "height": abs(height),
+        "bit_depth": bit_depth,
+        "lsb_candidates": lsb_candidates,
+    }
+
+
+def _decode_bmp_pixels(data: bytes) -> tuple[int, int, int, int, list[bytes], list[bytes]] | None:
+    if len(data) < 54 or not data.startswith(b"BM"):
+        return None
+    pixel_offset = struct.unpack_from("<I", data, 10)[0]
+    dib_size = struct.unpack_from("<I", data, 14)[0]
+    if dib_size < 40 or pixel_offset >= len(data):
+        return None
+    width = struct.unpack_from("<i", data, 18)[0]
+    height = struct.unpack_from("<i", data, 22)[0]
+    planes = struct.unpack_from("<H", data, 26)[0]
+    bit_depth = struct.unpack_from("<H", data, 28)[0]
+    compression = struct.unpack_from("<I", data, 30)[0]
+    if width <= 0 or height == 0 or planes != 1 or compression != 0 or bit_depth not in {24, 32}:
+        return None
+    absolute_height = abs(height)
+    channels = bit_depth // 8
+    row_stride = ((width * bit_depth + 31) // 32) * 4
+    pixel_end = pixel_offset + row_stride * absolute_height
+    if pixel_end > len(data):
+        return None
+    rows: list[bytes] = []
+    full_rows: list[bytes] = []
+    for row_index in range(absolute_height):
+        row_start = pixel_offset + row_index * row_stride
+        full_rows.append(data[row_start : row_start + row_stride])
+        rows.append(data[row_start : row_start + width * channels])
+    return width, height, bit_depth, channels, rows, full_rows
+
+
+def _extract_bmp_lsb_candidates(
+    channels: int,
+    file_rows: list[bytes],
+    full_file_rows: list[bytes],
+    *,
+    bottom_up: bool,
+) -> list[dict[str, Any]]:
+    row_orders = {"file": file_rows}
+    full_row_orders = {"file": full_file_rows}
+    if bottom_up:
+        row_orders["visual"] = list(reversed(file_rows))
+        full_row_orders["visual"] = list(reversed(full_file_rows))
+    channel_orders = ("bgr", "rgb", "bgra", "rgba", "b", "g", "r", "a")
+    channel_map = {"b": 0, "g": 1, "r": 2, "a": 3}
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for coordinate_order, rows in row_orders.items():
+        raw = b"".join(rows)
+        for channel_order in channel_orders:
+            indexes = [channel_map[channel] for channel in channel_order]
+            if any(index >= channels for index in indexes):
+                continue
+            bits = []
+            for pixel_offset in range(0, len(raw), channels):
+                for index in indexes:
+                    bits.append((raw[pixel_offset + index]) & 1)
+            for bit_order in ("lsb", "msb"):
+                payload = _pack_bits(bits, bit_order)
+                for text, decoders, flags in _lsb_text_hits(payload):
+                    key = f"{coordinate_order}:{channel_order}:{bit_order}:{text}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    candidates.append(
+                        {
+                            "recipe": f"b1,{channel_order},{bit_order},{coordinate_order}",
+                            "bit_plane": 1,
+                            "channel_order": channel_order,
+                            "bit_order": bit_order,
+                            "coordinate_order": coordinate_order,
+                            "text_preview": text[:500],
+                            **({"decoders": decoders} if decoders else {}),
+                            **({"flag_like_strings": list(flags)} if flags else {}),
+                        }
+                    )
+                    if len(candidates) >= 12:
+                        return candidates
+    for coordinate_order, rows in full_row_orders.items():
+        raw = b"".join(rows)
+        bits = [byte & 1 for byte in raw]
+        for bit_order in ("lsb", "msb"):
+            payload = _pack_bits(bits, bit_order)
+            for text, decoders, flags in _lsb_text_hits(payload):
+                key = f"{coordinate_order}:row:{bit_order}:{text}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(
+                    {
+                        "recipe": f"b1,row,{bit_order},{coordinate_order}",
+                        "bit_plane": 1,
+                        "channel_order": "row",
+                        "bit_order": bit_order,
+                        "coordinate_order": coordinate_order,
+                        "text_preview": text[:500],
+                        **({"decoders": decoders} if decoders else {}),
+                        **({"flag_like_strings": list(flags)} if flags else {}),
+                    }
+                )
+                if len(candidates) >= 12:
+                    return candidates
+    return candidates
 
 
 def _jpeg_marker_name(marker: int) -> str:
@@ -508,6 +632,8 @@ def _lsb_text_hits(payload: bytes) -> list[tuple[str, list[str], tuple[str, ...]
 def _looks_like_lsb_text(text: str) -> bool:
     lowered = text.lower()
     if "flag" in lowered or "ctf{" in lowered or re.search(r"&#x[0-9a-f]{2};", lowered):
+        return True
+    if re.fullmatch(r"[0-9a-f]{16,}", text.strip(), flags=re.IGNORECASE):
         return True
     if re.search(r"\b(secret|password|passphrase|hint|decode|base64|xor|key)\b", lowered):
         return True

@@ -2,7 +2,7 @@
 
 ForgeFlag uses a scoped roster instead of an unbounded agent swarm. The goal is to make each role explicit, auditable, and cheap enough to run during CTF work.
 
-The runtime remains `Manager -> Solvers -> Notebook -> Verifier -> Write-up`. The roster adds professional identities and operating contracts on top of existing solvers.
+The runtime remains `Manager -> Solvers -> Notebook -> Verifier -> Write-up`. The roster adds professional identities and operating contracts on top of existing solvers. See [ForgeFlag Team Operating Model](team-operating-model.md) for the manager/team cadence and metrics.
 
 ## Commands
 
@@ -61,24 +61,27 @@ For example, disabling `WebExploitAgent` removes `WebSolver` from Web challenge 
 
 ## Default Roles
 
-| Role | Purpose |
-| --- | --- |
-| `ForgeFlagManager` | Coordinates scoped solving, shared evidence, verification, and write-up generation. |
-| `ChallengeTriageAgent` | Reads statement, metadata, and attachments to correct category routing before deep solving. |
-| `LLMRoutePlannerAgent` | Uses the configured LLM for hypotheses, solver route planning, expected evidence, and fallback actions. |
-| `WebExploitAgent` | Handles scoped Web analysis: routes, source sinks, API leaks, JWT/session, SSRF, path traversal, and allowlisted probing. |
-| `CryptoMathAgent` | Handles crypto primitive recognition, encoding transforms, XOR/Vigenere/RSA/hash triage, and external math-tool recommendations. |
-| `BinaryAgent` | Handles Reverse and Pwn triage: strings, checksec, gadgets, ret2win, format string, IDA/Ghidra routes, and exploit templates. |
-| `ForensicsAgent` | Handles local artifact triage, images, archives, metadata, stego hints, scripts, and evidence promotion. |
-| `TrafficAgent` | Handles PCAP reconstruction across DNS, HTTP, SMTP, FTP, IRC-style streams, TCP streams, and exported objects. |
-| `EvidenceJudgeAgent` | Accepts only evidence-backed flags, tracks rejected candidates, and keeps reproduction-focused write-ups. |
-| `BrowserPlayerQAAgent` | Uses the Web UI like a CTF player via `scripts/forgeflag-web-player-benchmark` to catch workflow regressions. |
+| Role | Team type | Cadence | Purpose |
+| --- | --- | --- | --- |
+| `ForgeFlagManager` | manager | continuous | Coordinates scoped solving, shared evidence, verification, write-up generation, benchmark status, and improvement backlog. |
+| `ChallengeTriageAgent` | stream-aligned | per challenge | Reads statement, metadata, and attachments to correct category routing before deep solving. |
+| `LLMRoutePlannerAgent` | enabling | when deterministic routing stalls | Uses the configured LLM for hypotheses, solver route planning, expected evidence, and fallback actions. |
+| `WebExploitAgent` | stream-aligned | per web challenge | Handles scoped Web analysis: routes, source sinks, API leaks, JWT/session, SSRF, path traversal, and allowlisted probing. |
+| `CryptoMathAgent` | complicated-subsystem | per crypto or math-heavy misc challenge | Handles crypto primitive recognition, encoding transforms, XOR/Vigenere/RSA/hash triage, and external math-tool recommendations. |
+| `BinaryAgent` | complicated-subsystem | per reverse or pwn challenge | Handles Reverse and Pwn triage: strings, `objdump`/`readelf`, radare2 hints, checksec, gadgets, ret2win, format string, IDA/Ghidra routes, and exploit templates. |
+| `ForensicsAgent` | stream-aligned | per forensics or file-heavy misc challenge | Handles local artifact triage, images, archives, metadata, stego hints, carving/YARA follow-up, scripts, and evidence promotion. |
+| `TrafficAgent` | stream-aligned | per traffic or pcap-backed challenge | Handles PCAP reconstruction across DNS, HTTP, SMTP, FTP, IRC-style streams, TCP streams, and exported objects. |
+| `EvidenceJudgeAgent` | enabling | every run | Accepts only evidence-backed flags, tracks rejected candidates, and keeps reproduction-focused write-ups. |
+| `BrowserPlayerQAAgent` | enabling | after UI or workflow changes | Uses the Web UI like a CTF player via `scripts/forgeflag-web-player-benchmark` to catch workflow regressions. |
+
+Each role now exposes `team_type`, `reports_to`, `cadence`, `success_metrics`, and `deliverables` through `forgeflag agents`, `/api/agents`, run summaries, and the Web UI Agent tab.
 
 ## Web UI
 
 The Agent tab shows:
 
 - configured subagent identities from `/api/agents`
+- team type, reporting line, collaboration cadence, success metrics, and deliverables
 - the active `subagent_work_policy`, including serial execution and 429 circuit breaker settings
 - agents that participated in the latest run summary
 - LLM planning cards

@@ -7,7 +7,18 @@ from typing import Any
 import zipfile
 
 
-INTERESTING_NAME_MARKERS = ("flag", "secret", "key", "password", "hint", "readme")
+INTERESTING_NAME_MARKERS = (
+    "flag",
+    "secret",
+    "key",
+    "password",
+    "cpassword",
+    "groups.xml",
+    "preferences",
+    "policy",
+    "hint",
+    "readme",
+)
 DEFAULT_PREVIEW_BYTES = 64_000
 
 

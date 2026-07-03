@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from forgeflag.analysis_hints import recommended_analysis_hints
 from forgeflag.safety import ScopePolicy
 from forgeflag.tools import ctf
 from forgeflag.tools.runner import ToolRunner
@@ -48,6 +49,11 @@ if FastMCP is not None:
         return ToolRunner(_scope_from_env()).inventory()
 
     @mcp.tool()
+    def analysis_hints(category: str | None = None) -> list[dict[str, Any]]:
+        """List ForgeFlag recommended CTF analysis hints from recent solve patterns."""
+        return recommended_analysis_hints(category)
+
+    @mcp.tool()
     def file_identify(path: str) -> dict[str, Any]:
         """Identify a local challenge artifact with file(1)."""
         return _result_payload(ctf.file_identify(ctf.ensure_existing_file(path), _scope_from_env()))
@@ -71,6 +77,26 @@ if FastMCP is not None:
     def ropper_scan(path: str, search: str = "pop rdi; ret") -> dict[str, Any]:
         """Search gadgets in a local binary challenge artifact with ropper."""
         return _result_payload(ctf.ropper_scan(ctf.ensure_existing_file(path), search, _scope_from_env()))
+
+    @mcp.tool()
+    def objdump_disassemble(path: str) -> dict[str, Any]:
+        """Disassemble a local binary challenge artifact with bounded objdump output."""
+        return _result_payload(ctf.objdump_disassemble(ctf.ensure_existing_file(path), _scope_from_env()))
+
+    @mcp.tool()
+    def objdump_section_dump(path: str, section: str = ".rodata") -> dict[str, Any]:
+        """Dump one local binary section with objdump."""
+        return _result_payload(ctf.objdump_section_dump(ctf.ensure_existing_file(path), section, _scope_from_env()))
+
+    @mcp.tool()
+    def readelf_sections(path: str) -> dict[str, Any]:
+        """List ELF sections for a local binary challenge artifact."""
+        return _result_payload(ctf.readelf_sections(ctf.ensure_existing_file(path), _scope_from_env()))
+
+    @mcp.tool()
+    def radare2_info(path: str) -> dict[str, Any]:
+        """Run bounded radare2 metadata and string inspection for a local artifact."""
+        return _result_payload(ctf.radare2_info(ctf.ensure_existing_file(path), _scope_from_env()))
 
     @mcp.tool()
     def rsactftool_attack(public_key_path: str, cipher_path: str | None = None) -> dict[str, Any]:
@@ -112,6 +138,20 @@ if FastMCP is not None:
     def exiftool_read(path: str) -> dict[str, Any]:
         """Read metadata from a local image, document, or media artifact."""
         return _result_payload(ctf.exiftool_read(ctf.ensure_existing_file(path), _scope_from_env()))
+
+    @mcp.tool()
+    def foremost_carve(path: str, output_dir: str) -> dict[str, Any]:
+        """Carve embedded files from a local artifact into a caller-provided directory."""
+        return _result_payload(ctf.foremost_carve(ctf.ensure_existing_file(path), output_dir, _scope_from_env()))
+
+    @mcp.tool()
+    def yara_scan(
+        path: str,
+        rules: dict[str, str] | None = None,
+        output_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Run a bounded YARA scan against a local artifact using generated rules."""
+        return _result_payload(ctf.yara_scan(ctf.ensure_existing_file(path), rules, output_dir, _scope_from_env()))
 
     @mcp.tool()
     def tshark_pcap_summary(path: str, packet_limit: int = 50) -> dict[str, Any]:

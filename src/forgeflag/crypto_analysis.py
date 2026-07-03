@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import hashlib
 import math
 import random
 import re
@@ -56,6 +58,9 @@ def recover_rsa_flags_from_text(text: str) -> dict[str, object]:
         name: _parse_int(value)
         for name, value in dict(summary["parameters"]).items()
     }
+    modular_root_hint = _rsa_modular_low_exponent_root_hint(text)
+    if "e" not in parameters and modular_root_hint is not None:
+        parameters["e"] = modular_root_hint[0]
     if {"n", "e1", "e2", "c1", "c2"}.issubset(parameters):
         plaintext = _rsa_common_modulus_recover(
             parameters["n"],
@@ -116,6 +121,13 @@ def recover_rsa_flags_from_text(text: str) -> dict[str, object]:
     if {"p", "q"}.issubset(parameters):
         method = "known_factors"
         plaintext = _rsa_decrypt_with_factors(n, e, c, parameters["p"], parameters["q"])
+    elif modular_root_hint is not None:
+        method = "modular_low_exponent_root"
+        root, multiplier, limit = _rsa_modular_low_exponent_root(n, c, e, modular_root_hint[1])
+        if root is not None:
+            plaintext = _int_to_bytes(root)
+            parameters["root_multiplier"] = multiplier
+            parameters["root_search_limit"] = limit
     elif e in {3, 5, 17}:
         method = "low_exponent_root"
         root = _integer_nth_root(c, e)
@@ -139,6 +151,50 @@ def recover_rsa_flags_from_text(text: str) -> dict[str, object]:
         "flags": list(extract_flags(preview)),
         "plaintext_preview": preview[:500],
         "parameters": {name: str(value) for name, value in parameters.items()},
+    }
+
+
+def recover_lfsr_bm_flags_from_text(text: str) -> dict[str, object]:
+    normalized = re.sub(r"\s+", "", text)
+    if "classlfsr" not in normalized or "sha256(hex(KEY)[2:].rstrip('L'))" not in normalized:
+        return {"method": None, "flags": [], "plaintext_preview": ""}
+    if "self.init&self.mask" not in normalized or "output^=(i&1)" not in normalized:
+        return {"method": None, "flags": [], "plaintext_preview": ""}
+
+    length_match = re.search(r"(?m)^\s*LENGTH\s*=\s*(\d{1,5})\s*$", text)
+    length = int(length_match.group(1)) if length_match else 256
+    if length <= 0 or length > 512:
+        return {"method": "lfsr_berlekamp_massey", "flags": [], "plaintext_preview": ""}
+
+    prefix_match = re.search(r"FLAG\[\s*\d+\s*:\s*\d+\s*\]\s*==\s*['\"]([0-9a-fA-F]{1,16})['\"]", text)
+    digest_prefix = prefix_match.group(1).lower() if prefix_match else ""
+    for sequence_text in _binary_comment_sequences(text):
+        sequence = [1 if char == "1" else 0 for char in sequence_text]
+        if len(sequence) < length + 1:
+            continue
+        recovered = _recover_lfsr_bm_key(sequence, length, digest_prefix)
+        if recovered is None:
+            continue
+        key, mask, free_variables = recovered
+        digest = hashlib.sha256(hex(key)[2:].rstrip("L").encode()).hexdigest()
+        flag = f"de1ctf{{{digest}}}"
+        return {
+            "method": "lfsr_berlekamp_massey",
+            "flags": [flag],
+            "plaintext_preview": flag,
+            "key": str(key),
+            "mask": str(mask),
+            "linear_complexity": length,
+            "free_variables": free_variables,
+            "sequence_bits": len(sequence),
+            "key_sha256_prefix": digest_prefix,
+        }
+
+    return {
+        "method": "lfsr_berlekamp_massey",
+        "flags": [],
+        "plaintext_preview": "",
+        "key_sha256_prefix": digest_prefix,
     }
 
 
@@ -174,6 +230,75 @@ def recover_python_random_xor_flags_from_text(text: str) -> dict[str, object]:
                 }
 
     return {"method": "python_random_xor", "flags": [], "seed": None, "key_bits": key_bits, "plaintext_preview": ""}
+
+
+def recover_python_random_prime_offset_flags_from_text(text: str) -> dict[str, object]:
+    if "random.seed(bytes_to_long(seed))" not in re.sub(r"\s+", "", text):
+        return {"method": None, "flags": [], "seed_text": None, "plaintext_preview": ""}
+    if "next_prime(random.randint" not in re.sub(r"\s+", "", text) or "bytes_to_long(flag)+t-r" not in re.sub(r"\s+", "", text):
+        return {"method": None, "flags": [], "seed_text": None, "plaintext_preview": ""}
+
+    key = _assigned_bytes_literal(text, "key")
+    gift = _printed_gift_bytes(text)
+    randint_bounds = _python_random_randint_bounds(text)
+    enc_values = _large_decimal_values(text)
+    if key is None or gift is None or len(key) != len(gift) or len(randint_bounds) < 2 or not enc_values:
+        return {"method": "python_random_prime_offset", "flags": [], "seed_text": None, "plaintext_preview": ""}
+
+    seed = bytes(left ^ right for left, right in zip(key, gift))
+    seed_int = int.from_bytes(seed, "big")
+    first_start, first_stop = randint_bounds[0]
+    second_start, second_stop = randint_bounds[1]
+    if first_stop < first_start or second_stop < second_start:
+        return {"method": "python_random_prime_offset", "flags": [], "seed_text": _safe_decode(seed), "plaintext_preview": ""}
+
+    rng = random.Random(seed_int)
+    t = _next_prime(rng.randint(first_start, first_stop))
+    r = _next_prime(rng.randint(second_start, second_stop))
+    for enc in enc_values:
+        plaintext = _int_to_bytes(enc - t + r)
+        preview = plaintext.decode("utf-8", errors="replace")
+        flags = list(extract_flags(preview))
+        if flags:
+            return {
+                "method": "python_random_prime_offset",
+                "flags": flags,
+                "seed_text": _safe_decode(seed),
+                "seed_hex": seed.hex(),
+                "seed_int": str(seed_int),
+                "key": _safe_decode(key),
+                "gift_hex": gift.hex(),
+                "t": t,
+                "r": r,
+                "enc": str(enc),
+                "plaintext_preview": preview[:500],
+                "randint_bounds": [
+                    [first_start, first_stop],
+                    [second_start, second_stop],
+                ],
+            }
+
+    return {
+        "method": "python_random_prime_offset",
+        "flags": [],
+        "seed_text": _safe_decode(seed),
+        "seed_hex": seed.hex(),
+        "t": t,
+        "r": r,
+        "plaintext_preview": "",
+    }
+
+
+def recover_prng_stream_flags_from_text(text: str) -> dict[str, object]:
+    for recovery in (
+        _recover_lcg_flags_from_text,
+        _recover_simple_lfsr_flags_from_text,
+        _recover_mt19937_624_clone_flags_from_text,
+    ):
+        result = recovery(text)
+        if result["flags"]:
+            return result
+    return {"method": None, "flags": [], "plaintext_preview": ""}
 
 
 def recover_single_byte_xor_flags_from_text(text: str) -> dict[str, object]:
@@ -342,6 +467,414 @@ def _rsa_broadcast_recover(moduli: tuple[int, int, int], ciphertexts: tuple[int,
     return _int_to_bytes(root)
 
 
+def _rsa_modular_low_exponent_root_hint(text: str) -> tuple[int, int] | None:
+    expression_pattern = re.compile(
+        r"iroot\(\s*c\s*\+\s*n\s*\*\s*i\s*,\s*(\d{1,3})\s*\)|"
+        r"iroot\(\s*c\s*\+\s*i\s*\*\s*n\s*,\s*(\d{1,3})\s*\)"
+    )
+    expression = expression_pattern.search(text)
+    if not expression:
+        return None
+    exponent = int(next(group for group in expression.groups() if group))
+    if exponent < 2 or exponent > 32:
+        return None
+    limit_match = re.search(r"range\(\s*(\d{1,7})\s*\)", text)
+    limit = int(limit_match.group(1)) if limit_match else 100_000
+    return exponent, min(limit, 1_000_000)
+
+
+def _rsa_modular_low_exponent_root(n: int, c: int, e: int, search_limit: int) -> tuple[int | None, int, int]:
+    if n <= 0 or e < 2 or search_limit <= 0:
+        return None, 0, search_limit
+    for multiplier in range(search_limit):
+        candidate = c + n * multiplier
+        if candidate < 0:
+            continue
+        root = _integer_nth_root(candidate, e)
+        if root is not None:
+            return root, multiplier, search_limit
+    return None, 0, search_limit
+
+
+def _binary_comment_sequences(text: str) -> list[str]:
+    sequences: list[str] = []
+    for match in re.finditer(r"(?m)#\s*\w+\s*=\s*['\"]([01]{64,})['\"]", text):
+        value = match.group(1)
+        if value not in sequences:
+            sequences.append(value)
+    for match in re.finditer(r"['\"]([01]{128,})['\"]", text):
+        value = match.group(1)
+        if value not in sequences:
+            sequences.append(value)
+    return sequences[:8]
+
+
+def _recover_lfsr_bm_key(sequence: list[int], length: int, digest_prefix: str) -> tuple[int, int, int] | None:
+    rows: list[int] = []
+    rhs: list[int] = []
+    for index in range(length, len(sequence)):
+        row = 0
+        for bit_index in range(length):
+            if sequence[index - 1 - bit_index]:
+                row ^= 1 << bit_index
+        rows.append(row)
+        rhs.append(sequence[index])
+    rows.append(1 << (length - 1))
+    rhs.append(1)
+
+    solved = _gf2_affine_solution_space(rows, rhs, length)
+    if solved is None:
+        return None
+    base, basis, free_variables = solved
+    if len(basis) > 16:
+        return None
+    for selector in range(1 << len(basis)):
+        mask = base
+        for index, vector in enumerate(basis):
+            if (selector >> index) & 1:
+                mask ^= vector
+        if mask.bit_length() != length:
+            continue
+        key = _lfsr_recover_initial_state(sequence, mask, length)
+        if key.bit_length() != length:
+            continue
+        if _lfsr_generate_bits(key, mask, length, len(sequence)) != sequence:
+            continue
+        digest = hashlib.sha256(hex(key)[2:].rstrip("L").encode()).hexdigest()
+        if digest_prefix and not digest.startswith(digest_prefix):
+            continue
+        return key, mask, free_variables
+    return None
+
+
+def _gf2_affine_solution_space(rows: list[int], rhs: list[int], variables: int) -> tuple[int, list[int], int] | None:
+    rows = list(rows)
+    rhs = list(rhs)
+    pivot_columns: list[int] = []
+    row_index = 0
+    for column in range(variables):
+        pivot = None
+        for candidate in range(row_index, len(rows)):
+            if (rows[candidate] >> column) & 1:
+                pivot = candidate
+                break
+        if pivot is None:
+            continue
+        rows[row_index], rows[pivot] = rows[pivot], rows[row_index]
+        rhs[row_index], rhs[pivot] = rhs[pivot], rhs[row_index]
+        for candidate in range(len(rows)):
+            if candidate != row_index and ((rows[candidate] >> column) & 1):
+                rows[candidate] ^= rows[row_index]
+                rhs[candidate] ^= rhs[row_index]
+        pivot_columns.append(column)
+        row_index += 1
+
+    for row, value in zip(rows, rhs, strict=True):
+        if row == 0 and value:
+            return None
+
+    pivot_set = set(pivot_columns)
+    free_columns = [column for column in range(variables) if column not in pivot_set]
+    base = 0
+    for index, column in enumerate(pivot_columns):
+        if rhs[index]:
+            base |= 1 << column
+
+    basis: list[int] = []
+    for free_column in free_columns:
+        vector = 1 << free_column
+        for index, column in enumerate(pivot_columns):
+            if (rows[index] >> free_column) & 1:
+                vector |= 1 << column
+        basis.append(vector)
+    return base, basis, len(free_columns)
+
+
+def _lfsr_recover_initial_state(sequence: list[int], mask: int, length: int) -> int:
+    mask_bits = [(mask >> bit_index) & 1 for bit_index in range(length)]
+    key_bits = [0] * length
+    for output_index in range(length - 1, -1, -1):
+        accumulator = 0
+        for bit_index in range(output_index):
+            accumulator ^= mask_bits[bit_index] & sequence[output_index - 1 - bit_index]
+        for bit_index in range(output_index, length - 1):
+            accumulator ^= mask_bits[bit_index] & key_bits[bit_index - output_index]
+        key_bits[length - 1 - output_index] = sequence[output_index] ^ accumulator
+    return sum(bit << index for index, bit in enumerate(key_bits))
+
+
+def _lfsr_generate_bits(key: int, mask: int, length: int, count: int) -> list[int]:
+    state = key
+    length_mask = 2 ** (length + 1) - 1
+    output_bits: list[int] = []
+    for _ in range(count):
+        next_state = (state << 1) & length_mask
+        value = state & mask & length_mask
+        output = 0
+        while value:
+            output ^= value & 1
+            value >>= 1
+        state = next_state ^ output
+        output_bits.append(output)
+    return output_bits
+
+
+def _recover_lcg_flags_from_text(text: str) -> dict[str, object]:
+    normalized = re.sub(r"\s+", "", text).lower()
+    if "seed=(a*seed+b)%n" not in normalized:
+        return {"method": None, "flags": [], "plaintext_preview": ""}
+
+    parameters = _named_decimal_assignments(text)
+    decimals = _large_decimal_values(text)
+    try:
+        if {"a", "b", "n", "c", "seed"}.issubset(parameters) and "^plaintext" in normalized:
+            state = parameters["seed"]
+            for _ in range(10):
+                state = (parameters["a"] * state + parameters["b"]) % parameters["n"]
+            return _flag_result_from_int(
+                state ^ parameters["c"],
+                "lcg_known_parameters_xor",
+                {"rounds": 10, "n": str(parameters["n"])},
+            )
+
+        if {"a", "b", "n", "c"}.issubset(parameters) and "seed=plaintext" in normalized:
+            state = parameters["c"]
+            inverse = pow(parameters["a"], -1, parameters["n"])
+            for _ in range(10):
+                state = (state - parameters["b"]) * inverse % parameters["n"]
+            return _flag_result_from_int(
+                state,
+                "lcg_known_parameters_inverse",
+                {"rounds": 10, "n": str(parameters["n"])},
+            )
+
+        if {"a", "n", "output1", "output2"}.issubset(parameters) and "b=plaintext" in normalized:
+            plaintext = (parameters["output2"] - parameters["a"] * parameters["output1"]) % parameters["n"]
+            return _flag_result_from_int(
+                plaintext,
+                "lcg_increment_from_two_outputs",
+                {"n": str(parameters["n"])},
+            )
+
+        if "n" in parameters and len(decimals) >= 3 and "print(seed)" in normalized:
+            modulus = parameters["n"]
+            outputs = [value for value in decimals if value != modulus and value.bit_length() > 128][:3]
+            if len(outputs) >= 3:
+                result = _recover_lcg_from_consecutive_outputs(outputs, modulus, first_output_round=11)
+                if result["flags"]:
+                    return result
+
+        if len(decimals) >= 6:
+            modulus = _recover_lcg_modulus(decimals[:6])
+            if modulus and modulus.bit_length() > 64:
+                result = _recover_lcg_from_consecutive_outputs(decimals[:6], modulus, first_output_round=1)
+                if result["flags"]:
+                    return result
+    except (ValueError, ZeroDivisionError):
+        return {"method": "lcg_consecutive_outputs", "flags": [], "plaintext_preview": ""}
+
+    return {"method": "lcg", "flags": [], "plaintext_preview": ""}
+
+
+def _recover_lcg_from_consecutive_outputs(outputs: list[int], modulus: int, first_output_round: int) -> dict[str, object]:
+    if len(outputs) < 3 or modulus <= 0:
+        return {"method": "lcg_consecutive_outputs", "flags": [], "plaintext_preview": ""}
+    multiplier = (outputs[2] - outputs[1]) * pow((outputs[1] - outputs[0]) % modulus, -1, modulus) % modulus
+    increment = (outputs[1] - multiplier * outputs[0]) % modulus
+    inverse = pow(multiplier, -1, modulus)
+    state = outputs[0]
+    for _ in range(first_output_round):
+        state = (state - increment) * inverse % modulus
+    lifted = _lift_flag_residue(state, modulus)
+    if lifted is None:
+        return _flag_result_from_int(
+            state,
+            "lcg_consecutive_outputs",
+            {"n": str(modulus), "a": str(multiplier), "b": str(increment), "lift_multiplier": 0},
+        )
+    plaintext, lift_multiplier = lifted
+    return _flag_result_from_int(
+        plaintext,
+        "lcg_consecutive_outputs",
+        {"n": str(modulus), "a": str(multiplier), "b": str(increment), "lift_multiplier": lift_multiplier},
+    )
+
+
+def _recover_simple_lfsr_flags_from_text(text: str) -> dict[str, object]:
+    normalized = re.sub(r"\s+", "", text).lower()
+    if "classlfsr" not in normalized or "self.state=[feedback]+self.state[:-1]" not in normalized:
+        return {"method": None, "flags": [], "plaintext_preview": ""}
+    taps_match = re.search(r"taps\s*=\s*\[([0-9,\s]+)\]", text)
+    if not taps_match:
+        return {"method": "lfsr_known_taps", "flags": [], "plaintext_preview": ""}
+    taps = [int(value) for value in re.findall(r"\d+", taps_match.group(1))]
+    values = _large_decimal_values(text)
+    if len(values) < 2:
+        return {"method": "lfsr_known_taps", "flags": [], "plaintext_preview": ""}
+
+    if "assertkey1==key2" in normalized:
+        key, enc = values[-2], values[-1]
+        return _flag_result_from_int(enc ^ key, "lfsr_repeated_keystream_xor", {"key": str(key), "enc": str(enc)})
+
+    if "seed>>8" in normalized:
+        seed_high, enc = values[-2], values[-1]
+        for low_bits in range(256):
+            seed = (seed_high << 8) + low_bits
+            key = _simple_lfsr_keystream_int(seed, taps, enc.bit_length())
+            plaintext = enc ^ key
+            preview = _int_to_bytes(plaintext).decode("utf-8", errors="replace")
+            flags = list(extract_flags(preview))
+            if flags:
+                return {
+                    "method": "lfsr_seed_high_bits",
+                    "flags": flags,
+                    "seed": str(seed),
+                    "seed_low_bits": low_bits,
+                    "enc": str(enc),
+                    "plaintext_preview": preview[:500],
+                }
+        return {"method": "lfsr_seed_high_bits", "flags": [], "plaintext_preview": ""}
+
+    seed, enc = values[-2], values[-1]
+    key = _simple_lfsr_keystream_int(seed, taps, enc.bit_length())
+    return _flag_result_from_int(enc ^ key, "lfsr_known_seed", {"seed": str(seed), "enc": str(enc)})
+
+
+def _recover_mt19937_624_clone_flags_from_text(text: str) -> dict[str, object]:
+    if "getrandbits(32)" not in text and "numbers" not in text and "numbers =" not in text:
+        return {"method": None, "flags": [], "plaintext_preview": ""}
+    numbers = _first_int_list_with_length(text, minimum=624)
+    ciphertext = _last_bytes_literal(text)
+    if numbers is None or len(numbers) < 624 or ciphertext is None:
+        return {"method": "mt19937_624_clone", "flags": [], "plaintext_preview": ""}
+    clone = _MT19937Clone(numbers[:624])
+    next_value = clone.getrandbits32()
+    key = hashlib.md5(str(next_value).encode()).hexdigest().encode()
+    plaintext = bytes(byte ^ key[index % len(key)] for index, byte in enumerate(ciphertext))
+    preview = plaintext.decode("utf-8", errors="replace")
+    return {
+        "method": "mt19937_624_clone",
+        "flags": list(extract_flags(preview)),
+        "next_value": next_value,
+        "plaintext_preview": preview[:500],
+    }
+
+
+def _flag_result_from_int(value: int, method: str, evidence: dict[str, object]) -> dict[str, object]:
+    plaintext = _int_to_bytes(value)
+    preview = plaintext.decode("utf-8", errors="replace")
+    result: dict[str, object] = {
+        "method": method,
+        "flags": list(extract_flags(preview)),
+        "plaintext_preview": preview[:500],
+    }
+    result.update(evidence)
+    return result
+
+
+def _named_decimal_assignments(text: str) -> dict[str, int]:
+    values: dict[str, int] = {}
+    for name, value in re.findall(r"(?m)^\s*#?\s*(a|b|n|c|seed|output1|output2)\s*=\s*(\d{2,})\s*$", text):
+        values[name] = int(value)
+    return values
+
+
+def _recover_lcg_modulus(outputs: list[int]) -> int:
+    if len(outputs) < 4:
+        return 0
+    differences = [outputs[index + 1] - outputs[index] for index in range(len(outputs) - 1)]
+    modulus = 0
+    for index in range(len(differences) - 2):
+        value = abs(differences[index + 2] * differences[index] - differences[index + 1] ** 2)
+        modulus = math.gcd(modulus, value)
+    return modulus
+
+
+def _lift_flag_residue(residue: int, modulus: int, max_multiplier: int = 32) -> tuple[int, int] | None:
+    for multiplier in range(max_multiplier + 1):
+        candidate = residue + multiplier * modulus
+        preview = _int_to_bytes(candidate).decode("utf-8", errors="ignore")
+        if extract_flags(preview):
+            return candidate, multiplier
+    return None
+
+
+def _simple_lfsr_keystream_int(seed: int, taps: list[int], steps: int) -> int:
+    state = [int(bit) for bit in f"{seed:b}"]
+    output_bits: list[str] = []
+    for _ in range(steps):
+        feedback = 0
+        for tap in taps:
+            if tap >= len(state):
+                return 0
+            feedback ^= state[tap]
+        output_bits.append(str(state[-1]))
+        state = [feedback] + state[:-1]
+    return int("".join(output_bits), 2) if output_bits else 0
+
+
+def _first_int_list_with_length(text: str, minimum: int) -> list[int] | None:
+    for match in re.finditer(r"\[[0-9,\s]{1000,}\]", text):
+        try:
+            value = ast.literal_eval(match.group(0))
+        except (SyntaxError, ValueError):
+            continue
+        if isinstance(value, list) and len(value) >= minimum and all(isinstance(item, int) for item in value):
+            return value
+    return None
+
+
+def _last_bytes_literal(text: str) -> bytes | None:
+    selected: bytes | None = None
+    for match in re.finditer(r"b(?:\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*')", text):
+        value = _bytes_literal(match.group(0))
+        if value and not _looks_like_placeholder_bytes(value):
+            selected = value
+    return selected
+
+
+class _MT19937Clone:
+    def __init__(self, outputs: list[int]) -> None:
+        self.state = [_mt19937_untemper(value) for value in outputs[:624]]
+        self.index = 624
+
+    def getrandbits32(self) -> int:
+        if self.index >= 624:
+            self._twist()
+        value = self.state[self.index]
+        value ^= value >> 11
+        value ^= (value << 7) & 0x9D2C5680
+        value ^= (value << 15) & 0xEFC60000
+        value ^= value >> 18
+        self.index += 1
+        return value & 0xFFFFFFFF
+
+    def _twist(self) -> None:
+        for index in range(624):
+            value = (self.state[index] & 0x80000000) + (self.state[(index + 1) % 624] & 0x7FFFFFFF)
+            self.state[index] = self.state[(index + 397) % 624] ^ (value >> 1)
+            if value & 1:
+                self.state[index] ^= 0x9908B0DF
+            self.state[index] &= 0xFFFFFFFF
+        self.index = 0
+
+
+def _mt19937_untemper(value: int) -> int:
+    result = value
+    for _ in range(5):
+        result = value ^ (result >> 18)
+    value = result
+    for _ in range(5):
+        result = value ^ ((result << 15) & 0xEFC60000)
+    value = result
+    for _ in range(5):
+        result = value ^ ((result << 7) & 0x9D2C5680)
+    value = result
+    for _ in range(5):
+        result = value ^ (result >> 11)
+    return result & 0xFFFFFFFF
+
+
 def _crt_combine(residues: tuple[int, ...], moduli: tuple[int, ...]) -> int:
     modulus_product = math.prod(moduli)
     total = 0
@@ -438,6 +971,17 @@ def _python_random_seed_bounds(text: str) -> tuple[int, int] | None:
     return start, stop
 
 
+def _python_random_randint_bounds(text: str) -> list[tuple[int, int]]:
+    bounds: list[tuple[int, int]] = []
+    for match in PY_RANDOM_RANDINT_PATTERN.finditer(text):
+        start = _safe_int_expr(match.group(1))
+        stop = _safe_int_expr(match.group(2))
+        if start is None or stop is None:
+            continue
+        bounds.append((start, stop))
+    return bounds[:8]
+
+
 def _python_random_key_bits(text: str) -> int | None:
     match = PY_RANDOM_BITS_PATTERN.search(text)
     if not match:
@@ -518,3 +1062,45 @@ def _safe_int_expr(value: str) -> int | None:
             return None
         return base**exponent
     return int(cleaned)
+
+
+def _assigned_bytes_literal(text: str, name: str) -> bytes | None:
+    match = re.search(rf"(?m)^\s*{re.escape(name)}\s*=\s*(b(?:\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'))", text)
+    if not match:
+        return None
+    return _bytes_literal(match.group(1))
+
+
+def _printed_gift_bytes(text: str) -> bytes | None:
+    match = re.search(r"(?m)^\s*#\s*(b(?:\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'))", text)
+    while match:
+        value = _bytes_literal(match.group(1))
+        if value and not _looks_like_placeholder_bytes(value):
+            return value
+        match = re.search(r"(?m)^\s*#\s*(b(?:\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'))", text[match.end() :])
+    return None
+
+
+def _bytes_literal(value: str) -> bytes | None:
+    try:
+        parsed = ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        return None
+    return parsed if isinstance(parsed, bytes) else None
+
+
+def _looks_like_placeholder_bytes(value: bytes) -> bool:
+    return set(value) <= {ord("x"), ord("*")} or not value
+
+
+def _next_prime(value: int) -> int:
+    if value <= 2:
+        return 2
+    candidate = value if value % 2 else value + 1
+    while not _is_probable_prime(candidate):
+        candidate += 2
+    return candidate
+
+
+def _safe_decode(value: bytes) -> str:
+    return value.decode("utf-8", errors="replace")

@@ -1,0 +1,832 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import base64
+from datetime import datetime, timezone
+import json
+import re
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from forgeflag.agent_roster import default_agent_roster  # noqa: E402
+from forgeflag.domain import ChallengeCategory  # noqa: E402
+from forgeflag.flags import extract_flags  # noqa: E402
+
+SUITES: dict[str, dict[str, Any]] = {
+    "smoke": {
+        "description": "Fast API corpus across the main CTF categories.",
+        "kind": "json_rows",
+        "command": ["scripts/forgeflag-corpus-smoke"],
+    },
+    "medium": {
+        "description": "Medium public-pattern corpus with flags and evidence paths.",
+        "kind": "json_rows",
+        "command": ["scripts/forgeflag-medium-corpus"],
+    },
+    "hard": {
+        "description": "Hard public-pattern corpus scored by flags plus required evidence.",
+        "kind": "json_rows",
+        "command": ["scripts/forgeflag-hard-corpus", "--strict"],
+    },
+    "browser-smoke": {
+        "description": "Human-style Web UI smoke benchmark through Playwright.",
+        "kind": "browser_scorecard",
+        "command": ["scripts/forgeflag-web-player-benchmark", "--suite", "smoke", "--run"],
+    },
+    "browser-expanded": {
+        "description": "Expanded human-style Web UI benchmark through Playwright.",
+        "kind": "browser_scorecard",
+        "command": ["scripts/forgeflag-web-player-benchmark", "--suite", "expanded", "--run"],
+    },
+}
+
+DEFAULT_SUITES = ("smoke", "medium", "hard", "browser-smoke")
+
+METRICS = {
+    "flag_success_rate": "Accepted expected flags over cases that expect a flag.",
+    "evidence_score_rate": "Required-evidence score over max score for scored hard/manifest cases.",
+    "ui_flow_rate": "Browser-player passed cases over total browser-player cases.",
+    "category_route_rate": "Passed cases grouped by submitted ForgeFlag challenge category.",
+    "role_attribution_coverage": "Benchmark pass/evidence/UI results grouped by responsible ForgeFlag agent roles.",
+    "role_backlog_count": "Failed cases converted into owner-role backlog items with replay-oriented next actions.",
+    "manual_intervention_count": "Cases that did not reach full score and need human follow-up.",
+    "readiness_status": "Battle-readiness gate derived from failures, backlog, hard evidence, UI flow, and held-out coverage.",
+}
+
+ATTRIBUTION_EXCLUDED_ROLES = {"LLMRoutePlannerAgent", "EvidenceJudgeAgent", "BrowserPlayerQAAgent"}
+
+MANIFEST_SCHEMA = {
+    "description": "Optional local held-out challenge set for real-artifact replay.",
+    "required_case_fields": ["challenge_id", "category"],
+    "optional_case_fields": [
+        "title",
+        "description",
+        "target",
+        "attachments",
+        "expected_flag",
+        "required_evidence",
+        "active_probe",
+        "allowed_hosts",
+        "local_service",
+        "replay",
+    ],
+    "example": {
+        "cases": [
+            {
+                "challenge_id": "heldout-pcap-01",
+                "category": "traffic",
+                "title": "Local PCAP blind replay",
+                "attachments": ["/absolute/path/to/challenge.pcap"],
+                "expected_flag": "flag{example}",
+                "required_evidence": ["tcp_streams"],
+                "replay": {
+                    "command": ["python3", "scripts/solve_example.py", "/absolute/path/to/challenge.pcap"],
+                    "timeout": 30,
+                },
+            }
+        ]
+    },
+}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run ForgeFlag capability benchmarks and emit one scorecard.")
+    parser.add_argument("--url", default="http://127.0.0.1:8080", help="ForgeFlag Web UI base URL")
+    parser.add_argument("--suite", action="append", choices=sorted(SUITES), help="Suite to run; may be repeated")
+    parser.add_argument("--manifest", help="JSON manifest of local held-out CTF cases to replay through ForgeFlag")
+    parser.add_argument("--manifest-only", action="store_true", help="Run only the held-out manifest and skip built-in suites")
+    parser.add_argument("--list", action="store_true", help="List benchmark suites, metrics, and manifest schema")
+    parser.add_argument("--keep", action="store_true", help="Keep generated benchmark challenges in the notebook")
+    parser.add_argument("--llm", action="store_true", help="Pass LLM mode through to hard and browser suites")
+    parser.add_argument("--timeout", type=int, default=180, help="Per-suite subprocess timeout in seconds")
+    parser.add_argument("--output", help="Write the emitted scorecard JSON to this path")
+    parser.add_argument("--history", help="Append the emitted scorecard to a JSONL history file")
+    args = parser.parse_args()
+
+    if args.list:
+        print(json.dumps(list_payload(), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.manifest_only and not args.manifest:
+        parser.error("--manifest-only requires --manifest")
+
+    suite_names = () if args.manifest_only else tuple(args.suite or DEFAULT_SUITES)
+    summaries: list[dict[str, Any]] = []
+    for suite_name in suite_names:
+        summaries.append(run_suite(suite_name, args.url, keep=args.keep, llm=args.llm, timeout=args.timeout))
+    if args.manifest:
+        summaries.append(run_manifest(Path(args.manifest), args.url, keep=args.keep, request_timeout=args.timeout))
+    scorecard = build_scorecard(summaries)
+    output = json.dumps(scorecard, ensure_ascii=False, indent=2)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(output + "\n", encoding="utf-8")
+    if args.history:
+        append_history(Path(args.history), scorecard)
+    print(output)
+    return 0 if scorecard["totals"]["failed"] == 0 else 1
+
+
+def append_history(history_path: Path, scorecard: dict[str, Any]) -> None:
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "scorecard": scorecard,
+    }
+    with history_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def list_payload() -> dict[str, Any]:
+    return {
+        "benchmark": "forgeflag-capability",
+        "default_suites": list(DEFAULT_SUITES),
+        "suites": [
+            {
+                "name": name,
+                "description": data["description"],
+                "kind": data["kind"],
+                "command": data["command"],
+            }
+            for name, data in SUITES.items()
+        ],
+        "metrics": METRICS,
+        "manifest_schema": MANIFEST_SCHEMA,
+    }
+
+
+def run_suite(suite_name: str, url: str, keep: bool = False, llm: bool = False, timeout: int = 180) -> dict[str, Any]:
+    suite = SUITES[suite_name]
+    command = [str(ROOT / suite["command"][0]), *suite["command"][1:], "--url", url]
+    if keep and suite_name not in {"smoke"}:
+        command.append("--keep")
+    if llm and suite_name in {"hard", "browser-smoke", "browser-expanded"}:
+        command.append("--llm")
+    completed = subprocess.run(command, cwd=ROOT, capture_output=True, check=False, text=True, timeout=timeout)
+    if suite["kind"] == "browser_scorecard":
+        return summarize_browser_scorecard(suite_name, completed.stdout, completed.returncode, command, stderr=completed.stderr)
+    try:
+        rows = json.loads(completed.stdout)
+        if isinstance(rows, dict) and "rows" in rows:
+            rows = rows["rows"]
+        if not isinstance(rows, list):
+            raise ValueError("suite output is not a JSON list")
+    except (json.JSONDecodeError, ValueError) as exc:
+        return failed_suite_summary(suite_name, completed.returncode, command, completed.stdout, completed.stderr, str(exc))
+    return summarize_json_rows(suite_name, rows, completed.returncode, command, stderr=completed.stderr)
+
+
+def summarize_json_rows(
+    suite_name: str,
+    rows: list[dict[str, Any]],
+    returncode: int,
+    command: list[str],
+    stderr: str = "",
+) -> dict[str, Any]:
+    categories: dict[str, dict[str, int]] = {}
+    failures: list[dict[str, Any]] = []
+    hard_score = 0
+    hard_max_score = 0
+    passed = 0
+    for row in rows:
+        category = str(row.get("category") or "unknown")
+        owner_roles = _owner_roles_for_row(row)
+        categories.setdefault(category, {"passed": 0, "total": 0})
+        categories[category]["total"] += 1
+        ok = bool(row.get("ok"))
+        if ok:
+            passed += 1
+            categories[category]["passed"] += 1
+        else:
+            failures.append(
+                {
+                    "suite": suite_name,
+                    "challenge_id": row.get("challenge_id"),
+                    "category": category,
+                    "owner_roles": owner_roles,
+                    "status": row.get("status"),
+                    "missing_evidence": row.get("missing_evidence", []),
+                    "accepted_flags": row.get("accepted_flags", []),
+                }
+            )
+        if "score" in row or "max_score" in row:
+            hard_score += int(row.get("score") or 0)
+            hard_max_score += int(row.get("max_score") or 0)
+    return {
+        "name": suite_name,
+        "kind": "json_rows",
+        "command": command,
+        "returncode": returncode,
+        "cases": len(rows),
+        "passed": passed,
+        "failed": len(rows) - passed,
+        "categories": categories,
+        "roles": _role_summary_from_rows(rows),
+        "hard_score": hard_score,
+        "hard_max_score": hard_max_score,
+        "failures": failures,
+        "stderr": stderr.strip(),
+    }
+
+
+def summarize_browser_scorecard(
+    suite_name: str,
+    stdout: str,
+    returncode: int,
+    command: list[str],
+    stderr: str = "",
+) -> dict[str, Any]:
+    match = re.search(r"benchmark:\s+(\d+)/(\d+)\s+passed", stdout)
+    if not match:
+        return failed_suite_summary(suite_name, returncode, command, stdout, stderr, "could not parse browser scorecard")
+    passed = int(match.group(1))
+    total = int(match.group(2))
+    categories = _parse_browser_categories(stdout)
+    failures = _parse_browser_failures(suite_name, stdout)
+    role_summary = {"BrowserPlayerQAAgent": {"passed": passed, "total": total, "ui_passed": passed, "ui_total": total}}
+    for category, values in categories.items():
+        for role in _owner_roles_for_category(category):
+            entry = role_summary.setdefault(role, {"passed": 0, "total": 0, "ui_passed": 0, "ui_total": 0})
+            entry["passed"] += int(values.get("passed") or 0)
+            entry["total"] += int(values.get("total") or 0)
+    return {
+        "name": suite_name,
+        "kind": "browser_scorecard",
+        "command": command,
+        "returncode": returncode,
+        "cases": total,
+        "passed": passed,
+        "failed": total - passed,
+        "ui_passed": passed,
+        "ui_total": total,
+        "categories": categories,
+        "roles": role_summary,
+        "hard_score": 0,
+        "hard_max_score": 0,
+        "failures": failures,
+        "stderr": stderr.strip(),
+    }
+
+
+def failed_suite_summary(
+    suite_name: str,
+    returncode: int,
+    command: list[str],
+    stdout: str,
+    stderr: str,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "name": suite_name,
+        "kind": "failed",
+        "command": command,
+        "returncode": returncode,
+        "cases": 1,
+        "passed": 0,
+        "failed": 1,
+        "categories": {"unknown": {"passed": 0, "total": 1}},
+        "roles": {"ForgeFlagManager": {"passed": 0, "total": 1}},
+        "hard_score": 0,
+        "hard_max_score": 0,
+        "failures": [{"suite": suite_name, "challenge_id": suite_name, "category": "unknown", "status": reason}],
+        "stdout": stdout[-4000:],
+        "stderr": stderr[-4000:],
+    }
+
+
+def build_scorecard(suites: list[dict[str, Any]]) -> dict[str, Any]:
+    totals = {
+        "cases": 0,
+        "passed": 0,
+        "failed": 0,
+        "hard_score": 0,
+        "hard_max_score": 0,
+        "ui_passed": 0,
+        "ui_total": 0,
+    }
+    categories: dict[str, dict[str, int]] = {}
+    roles: dict[str, dict[str, int]] = {}
+    failures: list[dict[str, Any]] = []
+    for suite in suites:
+        totals["cases"] += int(suite.get("cases") or 0)
+        totals["passed"] += int(suite.get("passed") or 0)
+        totals["failed"] += int(suite.get("failed") or 0)
+        totals["hard_score"] += int(suite.get("hard_score") or 0)
+        totals["hard_max_score"] += int(suite.get("hard_max_score") or 0)
+        totals["ui_passed"] += int(suite.get("ui_passed") or 0)
+        totals["ui_total"] += int(suite.get("ui_total") or 0)
+        failures.extend(suite.get("failures") or [])
+        for category, values in (suite.get("categories") or {}).items():
+            categories.setdefault(category, {"passed": 0, "total": 0})
+            categories[category]["passed"] += int(values.get("passed") or 0)
+            categories[category]["total"] += int(values.get("total") or 0)
+        for role, values in (suite.get("roles") or {}).items():
+            role_entry = roles.setdefault(role, {})
+            for metric, value in values.items():
+                role_entry[metric] = int(role_entry.get(metric) or 0) + int(value or 0)
+    rates = {
+        "case_pass_rate": _rate(totals["passed"], totals["cases"]),
+        "evidence_score_rate": _rate(totals["hard_score"], totals["hard_max_score"]),
+        "ui_flow_rate": _rate(totals["ui_passed"], totals["ui_total"]),
+    }
+    backlog = build_backlog(failures)
+    readiness = assess_readiness(suites, totals, backlog)
+    return {
+        "benchmark": "forgeflag-capability",
+        "totals": totals,
+        "rates": rates,
+        "readiness": readiness,
+        "categories": categories,
+        "roles": roles,
+        "failures": failures,
+        "backlog": backlog,
+        "backlog_by_role": summarize_backlog_by_role(backlog),
+        "suites": suites,
+    }
+
+
+def assess_readiness(
+    suites: list[dict[str, Any]],
+    totals: dict[str, int],
+    backlog: list[dict[str, Any]],
+) -> dict[str, Any]:
+    suite_names = [str(suite.get("name") or "") for suite in suites]
+    coverage = {
+        "hard_evidence": int(totals.get("hard_max_score") or 0) > 0,
+        "ui_flow": int(totals.get("ui_total") or 0) > 0,
+        "heldout_manifest": any(name.startswith("manifest:") for name in suite_names),
+    }
+    warnings: list[str] = []
+    next_actions: list[str] = []
+
+    failed = int(totals.get("failed") or 0)
+    if failed:
+        warnings.append(f"{failed} failed cases need replay before this scorecard can be considered battle-ready.")
+    if backlog:
+        warnings.append(f"{len(backlog)} backlog items are still open across owner roles.")
+
+    if not coverage["hard_evidence"]:
+        warnings.append("Hard evidence scoring has not been exercised in this scorecard.")
+        next_actions.append("Run scripts/forgeflag-capability-benchmark --suite hard to verify evidence-backed solving.")
+    if not coverage["ui_flow"]:
+        warnings.append("Browser UI flow has not been exercised in this scorecard.")
+        next_actions.append("Run scripts/forgeflag-capability-benchmark --suite browser-smoke to verify analyst workflow.")
+    if not coverage["heldout_manifest"]:
+        warnings.append("No held-out manifest was included, so generalization is not proven.")
+        next_actions.append(
+            "Run scripts/forgeflag-capability-benchmark --manifest-only --manifest .forgeflag/heldout-platform-manifest.json for held-out replay."
+        )
+
+    if failed or backlog:
+        status = "blocked"
+        summary = "Failures or owner-role backlog remain; use the generated replay tasks as the next optimization queue."
+    elif not all(coverage.values()):
+        status = "limited"
+        summary = "All included cases passed, but the scorecard is missing hard, UI, or held-out evidence."
+    else:
+        status = "ready"
+        summary = "No failed cases remain and hard evidence, UI flow, and held-out replay are all represented."
+
+    return {
+        "status": status,
+        "summary": summary,
+        "coverage": coverage,
+        "warnings": warnings,
+        "next_actions": next_actions,
+        "suite_names": suite_names,
+    }
+
+
+def build_backlog(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for failure in failures:
+        challenge_id = str(failure.get("challenge_id") or failure.get("suite") or "unknown")
+        suite = str(failure.get("suite") or "unknown")
+        category = str(failure.get("category") or "unknown")
+        owner_roles = _owner_roles_for_row(failure)
+        missing_evidence = [str(item) for item in failure.get("missing_evidence") or []]
+        accepted_flags = [str(item) for item in failure.get("accepted_flags") or []]
+        status = str(failure.get("status") or "failed")
+        reason_parts = [status]
+        if missing_evidence:
+            reason_parts.append("missing evidence: " + ", ".join(missing_evidence))
+        if accepted_flags:
+            reason_parts.append("unexpected accepted candidates: " + ", ".join(accepted_flags))
+        items.append(
+            {
+                "suite": suite,
+                "challenge_id": challenge_id,
+                "category": category,
+                "owner_roles": owner_roles,
+                "status": status,
+                "reason": "; ".join(reason_parts),
+                "missing_evidence": missing_evidence,
+                "accepted_flags": accepted_flags,
+                "next_action": _backlog_next_action(challenge_id, category, owner_roles, missing_evidence),
+            }
+        )
+    return items
+
+
+def summarize_backlog_by_role(backlog: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    for item in backlog:
+        for role in item.get("owner_roles") or ["ForgeFlagManager"]:
+            entry = summary.setdefault(str(role), {"total": 0, "categories": {}, "suites": {}})
+            entry["total"] += 1
+            category = str(item.get("category") or "unknown")
+            suite = str(item.get("suite") or "unknown")
+            entry["categories"][category] = int(entry["categories"].get(category) or 0) + 1
+            entry["suites"][suite] = int(entry["suites"].get(suite) or 0) + 1
+    return summary
+
+
+def _backlog_next_action(
+    challenge_id: str,
+    category: str,
+    owner_roles: list[str],
+    missing_evidence: list[str],
+) -> str:
+    role_hint = ", ".join(owner_roles) if owner_roles else "ForgeFlagManager"
+    evidence_hint = " and capture missing evidence: " + ", ".join(missing_evidence) if missing_evidence else ""
+    return (
+        f"replay {challenge_id} as a {category} CTF case with {role_hint}; "
+        f"add or adjust the bounded solver regression{evidence_hint}."
+    )
+
+
+def run_manifest(manifest_path: Path, url: str, keep: bool = False, request_timeout: int = 60) -> dict[str, Any]:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = []
+    for case in manifest.get("cases", []):
+        challenge_id = str(case["challenge_id"])
+        missing_attachments = [
+            str(path)
+            for path in (case.get("attachments") or [])
+            if _resolve_manifest_attachment(str(path)) is None
+        ]
+        if missing_attachments:
+            rows.append(score_missing_attachment_case(case, missing_attachments))
+            continue
+        if not keep:
+            delete_challenge(url, challenge_id)
+        create_challenge(url, case)
+        summary = run_challenge(url, case, request_timeout)
+        findings = get_json(url, f"/api/challenges/{challenge_id}/findings")
+        report = get_json(url, f"/api/challenges/{challenge_id}/report")
+        replay = run_manifest_replay(case) if case.get("replay") else None
+        rows.append(score_manifest_case(case, summary, findings, report, replay))
+        if not keep:
+            delete_challenge(url, challenge_id)
+    return summarize_json_rows(f"manifest:{manifest_path.stem}", rows, 0, ["manifest", str(manifest_path)])
+
+
+def score_missing_attachment_case(case: dict[str, Any], missing_attachments: list[str]) -> dict[str, Any]:
+    required = [str(item) for item in case.get("required_evidence", [])]
+    return {
+        "challenge_id": case["challenge_id"],
+        "category": case.get("category", "unknown"),
+        "owner_roles": _owner_roles_for_category(str(case.get("category", "unknown"))),
+        "status": "missing_attachment",
+        "expected_flag": case.get("expected_flag"),
+        "accepted_flags": [],
+        "flag_ok": False,
+        "matched_evidence": [],
+        "missing_evidence": [*missing_attachments, *required],
+        "score": 0,
+        "max_score": 1 + len(required),
+        "ok": False,
+    }
+
+
+def score_manifest_case(
+    case: dict[str, Any],
+    summary: dict[str, Any],
+    findings: list[dict[str, Any]],
+    report: dict[str, Any],
+    replay: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    expected_flag = case.get("expected_flag")
+    accepted = list(summary.get("accepted_flags", []))
+    if replay:
+        accepted.extend(str(flag) for flag in replay.get("accepted_flags") or [])
+    accepted = list(dict.fromkeys(accepted))
+    flag_ok = expected_flag in accepted if expected_flag else True
+    required = [str(item) for item in case.get("required_evidence", [])]
+    haystack = json.dumps({"summary": summary, "findings": findings, "report": report, "replay": replay}, ensure_ascii=False)
+    missing = [item for item in required if item not in haystack]
+    score = (1 if flag_ok else 0) + (len(required) - len(missing))
+    max_score = 1 + len(required)
+    status = str(summary.get("status") or "completed")
+    if replay and replay.get("status") != "success":
+        status = f"{status}+replay_{replay.get('status') or 'failed'}"
+    return {
+        "challenge_id": case["challenge_id"],
+        "category": case.get("category", "unknown"),
+        "owner_roles": _owner_roles_for_category(str(case.get("category", "unknown"))),
+        "status": status,
+        "expected_flag": expected_flag,
+        "accepted_flags": accepted,
+        "flag_ok": flag_ok,
+        "matched_evidence": [item for item in required if item not in missing],
+        "missing_evidence": missing,
+        "score": score,
+        "max_score": max_score,
+        "ok": flag_ok and not missing,
+    }
+
+
+def run_manifest_replay(case: dict[str, Any]) -> dict[str, Any]:
+    service = case.get("local_service")
+    if isinstance(service, dict):
+        setup = _run_local_service_setup(service)
+        if setup.get("status") != "success":
+            _run_local_service_teardown(service)
+            return {
+                "status": "failed",
+                "phase": "local_service_setup",
+                "accepted_flags": [],
+                "stdout": setup.get("stdout", ""),
+                "stderr": setup.get("stderr", ""),
+                "command": setup.get("command", []),
+            }
+    else:
+        setup = None
+
+    try:
+        if isinstance(service, dict):
+            wait = _wait_for_local_service(service)
+            if wait.get("status") != "success":
+                return {
+                    "status": "failed",
+                    "phase": "local_service_wait",
+                    "accepted_flags": [],
+                    "stdout": wait.get("stdout", ""),
+                    "stderr": wait.get("stderr", ""),
+                    "command": wait.get("command", []),
+                }
+        replay = case.get("replay")
+        if not isinstance(replay, dict):
+            return {"status": "skipped", "accepted_flags": [], "stdout": "", "stderr": "missing replay object"}
+        result = _run_replay_command(replay)
+        if setup:
+            result["setup"] = setup
+        return result
+    finally:
+        if isinstance(service, dict):
+            _run_local_service_teardown(service)
+
+
+def _run_local_service_setup(service: dict[str, Any]) -> dict[str, Any]:
+    command = service.get("up")
+    if not command:
+        return {"status": "success", "accepted_flags": [], "stdout": "", "stderr": "", "command": []}
+    return _run_manifest_command(command, service.get("cwd"), int(service.get("timeout") or 90))
+
+
+def _run_local_service_teardown(service: dict[str, Any]) -> dict[str, Any]:
+    command = service.get("down")
+    if not command:
+        return {"status": "success", "accepted_flags": [], "stdout": "", "stderr": "", "command": []}
+    return _run_manifest_command(command, service.get("cwd"), int(service.get("teardown_timeout") or 45))
+
+
+def _wait_for_local_service(service: dict[str, Any]) -> dict[str, Any]:
+    wait_url = service.get("wait_url")
+    if not wait_url:
+        return {"status": "success", "accepted_flags": [], "stdout": "", "stderr": "", "command": []}
+    deadline = datetime.now(timezone.utc).timestamp() + float(service.get("wait_timeout") or service.get("timeout") or 90)
+    last_error = ""
+    while datetime.now(timezone.utc).timestamp() < deadline:
+        try:
+            with urllib.request.urlopen(str(wait_url), timeout=3) as response:
+                response.read(256)
+            return {"status": "success", "accepted_flags": [], "stdout": str(wait_url), "stderr": "", "command": ["wait_url", str(wait_url)]}
+        except Exception as exc:
+            last_error = str(exc)
+            import time
+
+            time.sleep(1)
+    return {"status": "failed", "accepted_flags": [], "stdout": "", "stderr": last_error, "command": ["wait_url", str(wait_url)]}
+
+
+def _run_replay_command(replay: dict[str, Any]) -> dict[str, Any]:
+    command = replay.get("command")
+    return _run_manifest_command(command, replay.get("cwd"), int(replay.get("timeout") or 60))
+
+
+def _run_manifest_command(command: Any, cwd: Any = None, timeout: int = 60) -> dict[str, Any]:
+    try:
+        command_list = _validated_command(command)
+    except ValueError as exc:
+        return {"status": "failed", "accepted_flags": [], "stdout": "", "stderr": str(exc), "command": []}
+    cwd_path = _resolve_manifest_cwd(cwd)
+    try:
+        completed = subprocess.run(
+            command_list,
+            cwd=cwd_path,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        return {"status": "failed", "accepted_flags": [], "stdout": "", "stderr": str(exc), "command": command_list}
+    combined = "\n".join((completed.stdout, completed.stderr))
+    return {
+        "status": "success" if completed.returncode == 0 else "failed",
+        "returncode": completed.returncode,
+        "accepted_flags": list(extract_flags(combined)),
+        "stdout": completed.stdout[-4000:],
+        "stderr": completed.stderr[-4000:],
+        "command": command_list,
+        "cwd": str(cwd_path),
+    }
+
+
+def _validated_command(command: Any) -> list[str]:
+    if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
+        raise ValueError("manifest replay commands must be non-empty string arrays")
+    return list(command)
+
+
+def _resolve_manifest_cwd(cwd: Any) -> Path:
+    if not cwd:
+        return ROOT
+    path = str(cwd)
+    candidate = _resolve_manifest_path(path)
+    if candidate is None or not candidate.is_dir():
+        raise FileNotFoundError(f"manifest replay cwd does not exist: {path}")
+    return candidate
+
+
+def create_challenge(base_url: str, case: dict[str, Any]) -> None:
+    payload = {
+        "challenge_id": case["challenge_id"],
+        "category": case["category"],
+        "title": case.get("title", case["challenge_id"]),
+        "target": case.get("target", ""),
+        "description": case.get("description", ""),
+        "tags": "capability-benchmark,heldout",
+        "attachments": _manifest_attachment_payloads(case.get("attachments") or []),
+    }
+    post_json(base_url, "/api/challenges", payload)
+
+
+def _manifest_attachment_payloads(paths: list[str]) -> list[dict[str, str]]:
+    attachments: list[dict[str, str]] = []
+    for path in paths:
+        resolved = _resolve_manifest_attachment(str(path))
+        if resolved is None:
+            continue
+        attachments.append(
+            {
+                "name": resolved.name,
+                "content_base64": base64.b64encode(resolved.read_bytes()).decode("ascii"),
+            }
+        )
+    return attachments
+
+
+def _resolve_manifest_attachment(path: str) -> Path | None:
+    candidate = _resolve_manifest_path(path)
+    if candidate is not None and candidate.is_file():
+        return candidate
+    return None
+
+
+def _resolve_manifest_path(path: str) -> Path | None:
+    candidate = Path(path)
+    if candidate.exists():
+        return candidate
+    if not candidate.is_absolute():
+        repo_candidate = ROOT / path
+        if repo_candidate.exists():
+            return repo_candidate
+    prefix = "/tmp/forgeflag-heldout/"
+    if path.startswith(prefix):
+        cache_candidate = ROOT / ".forgeflag" / "heldout-cache" / path[len(prefix) :]
+        if cache_candidate.exists():
+            return cache_candidate
+    return None
+
+
+def run_challenge(base_url: str, case: dict[str, Any], timeout: int = 60) -> dict[str, Any]:
+    payload = {
+        "active_probe": bool(case.get("active_probe", False)),
+        "allowed_hosts": case.get("allowed_hosts", "127.0.0.1,localhost"),
+    }
+    return post_json(base_url, f"/api/challenges/{case['challenge_id']}/run", payload, timeout=timeout)
+
+
+def delete_challenge(base_url: str, challenge_id: str) -> None:
+    request = urllib.request.Request(f"{base_url.rstrip('/')}/api/challenges/{challenge_id}", method="DELETE")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            response.read()
+    except Exception:
+        return
+
+
+def get_json(base_url: str, path: str) -> Any:
+    with urllib.request.urlopen(f"{base_url.rstrip('/')}{path}", timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def post_json(base_url: str, path: str, payload: dict[str, Any], timeout: int = 60) -> Any:
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}{path}",
+        data=data,
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _parse_browser_categories(stdout: str) -> dict[str, dict[str, int]]:
+    categories: dict[str, dict[str, int]] = {}
+    block_match = re.search(r"Category results:\n(?P<body>.*?)(?:\n[A-Z][^\n]* results:|\nCase results:|\Z)", stdout, flags=re.S)
+    if not block_match:
+        return categories
+    for category, passed, total in re.findall(r"^- ([a-z-]+): (\d+)/(\d+)$", block_match.group("body"), flags=re.MULTILINE):
+        categories[category] = {"passed": int(passed), "total": int(total)}
+    return categories
+
+
+def _parse_browser_failures(suite_name: str, stdout: str) -> list[dict[str, Any]]:
+    failures = []
+    for category, profile, challenge_id in re.findall(r"^- FAIL \[([^/]+)/([^\]]+)\] ([^ ]+)", stdout, flags=re.MULTILINE):
+        failures.append(
+            {
+                "suite": suite_name,
+                "challenge_id": challenge_id,
+                "category": category,
+                "owner_roles": ["BrowserPlayerQAAgent", *_owner_roles_for_category(category)],
+                "status": f"browser profile {profile} failed",
+            }
+        )
+    return failures
+
+
+def _role_summary_from_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    roles: dict[str, dict[str, int]] = {}
+    for row in rows:
+        ok = bool(row.get("ok"))
+        score = int(row.get("score") or 0)
+        max_score = int(row.get("max_score") or 0)
+        for role in _owner_roles_for_row(row):
+            entry = roles.setdefault(role, {"passed": 0, "total": 0, "hard_score": 0, "hard_max_score": 0})
+            entry["total"] += 1
+            if ok:
+                entry["passed"] += 1
+            entry["hard_score"] += score
+            entry["hard_max_score"] += max_score
+    return roles
+
+
+def _owner_roles_for_row(row: dict[str, Any]) -> list[str]:
+    explicit = row.get("owner_roles")
+    if isinstance(explicit, list) and explicit:
+        return [str(item) for item in explicit if str(item).strip()]
+    return _owner_roles_for_category(str(row.get("category") or "unknown"))
+
+
+def _owner_roles_for_category(category: str) -> list[str]:
+    roster = default_agent_roster()
+    try:
+        challenge_category = ChallengeCategory(category)
+    except ValueError:
+        challenge_category = ChallengeCategory.UNKNOWN
+    roles: list[str] = []
+    for agent in roster.active_agents_for(challenge_category):
+        if agent.name in ATTRIBUTION_EXCLUDED_ROLES:
+            continue
+        if agent.name == "ChallengeTriageAgent" and challenge_category != ChallengeCategory.UNKNOWN:
+            continue
+        if not agent.solvers:
+            continue
+        roles.append(agent.name)
+    return roles or ["ForgeFlagManager"]
+
+
+def _rate(numerator: int, denominator: int) -> float | None:
+    if denominator == 0:
+        return None
+    return round(numerator / denominator, 4)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

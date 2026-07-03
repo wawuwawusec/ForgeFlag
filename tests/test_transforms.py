@@ -77,6 +77,27 @@ class TransformTest(unittest.TestCase):
 
         self.assertIn("flag{octal}", {candidate.value for candidate in candidates})
 
+    def test_transform_candidates_decodes_quickstego_hex_braille_flag(self) -> None:
+        candidates = transform_candidates("2471491ED07C69930E8F994E383E415F")
+
+        self.assertIn("csictf{ucbr4ill3}", {candidate.value for candidate in candidates})
+
+    def test_transform_candidates_decodes_ccir476_transmission(self) -> None:
+        encoded = (
+            "10110100110110110100111010011011010111010011010010110110101011010111001011010010111010011100110110010110110110"
+            "10001111000111100110110101010110010111011010100101110111001000111101010101101101010110101110010110101101001011"
+            "01101010110101101011001011010011101110001101100101110101101010110011011100001101101101101010101101101000111010"
+            "11011001011101011010110010110011011110100010101110111000110110110100101011100101110111000101011100101110001101"
+            "1"
+        )
+
+        candidates = transform_candidates(encoded)
+
+        self.assertIn(
+            "DUCTF{##TH3 QU0KK4'S AR3 H3LD 1N F4C1LITY #11911!}",
+            {candidate.value for candidate in candidates},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -60,6 +60,8 @@ class PwnSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["tool_statuses"]["checksec_binary"], "success")
         self.assertEqual(finding.evidence["tool_statuses"]["ropgadget_scan"], "missing")
         self.assertEqual(finding.evidence["tool_statuses"]["ropper_scan"], "missing")
+        self.assertEqual(finding.evidence["ctf_scope"]["category"], "pwn")
+        self.assertEqual(finding.evidence["ctf_scope"]["research_context"], "local_or_authorized_ctf_lab")
 
     def test_pwn_solver_interacts_with_scoped_tcp_service_target(self) -> None:
         class PwnBannerHandler(socketserver.BaseRequestHandler):
@@ -97,6 +99,7 @@ class PwnSolverTest(unittest.TestCase):
         self.assertEqual(result.flag_candidates, ("flag{pwn_tcp_service}",))
         self.assertEqual(finding.finding, "Interacted with scoped pwn service")
         self.assertEqual(finding.evidence["tool_status"], "success")
+        self.assertEqual(finding.evidence["ctf_scope"]["category"], "pwn")
         self.assertIn("flag{pwn_tcp_service}", finding.evidence["transcript"])
         self.assertTrue(any(observation.kind == "tool_summary" for observation in observations))
 

@@ -12,6 +12,9 @@ from forgeflag.domain import ToolResult
 from forgeflag.safety import ScopePolicy
 
 
+DOCKER_TOOL_PATH = "/opt/forgeflag-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
@@ -31,10 +34,48 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
     "ROPgadget": ToolSpec("ROPgadget", ("ROPgadget",), "pwn", "Search ROP/JOP gadgets in a binary."),
     "ropper": ToolSpec("ropper", ("ropper",), "pwn", "Search gadgets and ROP chain helpers in a binary."),
     "RsaCtfTool": ToolSpec("RsaCtfTool", ("RsaCtfTool",), "crypto", "Run RSA CTF attack heuristics."),
+    "objdump": ToolSpec(
+        "objdump",
+        ("objdump",),
+        "reverse",
+        "Disassemble binaries or dump sections for static reverse engineering.",
+        default_timeout_seconds=30,
+        max_output_bytes=32_768,
+    ),
+    "readelf": ToolSpec(
+        "readelf",
+        ("readelf",),
+        "reverse",
+        "Inspect ELF headers, sections, and symbols.",
+        default_timeout_seconds=20,
+    ),
+    "radare2": ToolSpec(
+        "radare2",
+        ("r2",),
+        "reverse",
+        "Run bounded radare2 metadata and string analysis.",
+        default_timeout_seconds=20,
+        max_output_bytes=32_768,
+    ),
     "hashcat": ToolSpec("hashcat", ("hashcat",), "crypto", "Run bounded dictionary hash cracking."),
     "john": ToolSpec("john", ("john",), "crypto", "Run bounded dictionary password/hash recovery."),
     "binwalk": ToolSpec("binwalk", ("binwalk",), "forensics", "Scan firmware and embedded file signatures."),
     "exiftool": ToolSpec("exiftool", ("exiftool",), "forensics", "Read metadata from images and documents."),
+    "foremost": ToolSpec(
+        "foremost",
+        ("foremost",),
+        "forensics",
+        "Carve embedded files into a managed output directory.",
+        default_timeout_seconds=30,
+        max_output_bytes=32_768,
+    ),
+    "yara": ToolSpec(
+        "yara",
+        ("yara",),
+        "forensics",
+        "Run bounded YARA signature scans over local artifacts.",
+        default_timeout_seconds=20,
+    ),
     "steghide": ToolSpec(
         "steghide",
         ("steghide",),
@@ -87,10 +128,14 @@ class ToolRunner:
     def inventory(self) -> list[dict[str, object]]:
         rows = []
         docker_ready = _docker_image_available(self.docker_image)
+        docker_commands = _docker_available_commands(
+            self.docker_image,
+            {spec.command[0] for spec in TOOL_CATALOG.values()},
+        ) if docker_ready else set()
         for spec in TOOL_CATALOG.values():
             executable = spec.command[0]
             host_available = _command_available(executable)
-            docker_available = bool(spec.docker_supported and docker_ready)
+            docker_available = bool(spec.docker_supported and executable in docker_commands)
             rows.append(
                 {
                     "name": spec.name,
@@ -125,7 +170,11 @@ class ToolRunner:
 
         executable = spec.command[0]
         host_available = _command_available(executable)
-        docker_ready = bool(spec.docker_supported and _docker_image_available(self.docker_image))
+        docker_ready = bool(
+            spec.docker_supported
+            and _docker_image_available(self.docker_image)
+            and _docker_command_available(self.docker_image, executable)
+        )
         if not host_available and not docker_ready:
             return ToolResult(
                 tool=name,
@@ -163,7 +212,7 @@ class ToolRunner:
                 evidence=[f"timed out after {exc.timeout} seconds", f"argv={shlex.join(argv)}"],
             )
         except OSError as exc:
-            return ToolResult(tool=name, target=target, status="error", evidence=[str(exc)])
+            return ToolResult(tool=spec.name, target=target, status="error", evidence=[str(exc)])
 
         stdout, stdout_truncated = _decode_limited(completed.stdout, spec.max_output_bytes)
         stderr, stderr_truncated = _decode_limited(completed.stderr, spec.max_output_bytes)
@@ -194,6 +243,8 @@ class ToolRunner:
             "--rm",
             "-e",
             "TERM=xterm",
+            "-e",
+            f"PATH={DOCKER_TOOL_PATH}",
             "-v",
             f"{self.docker_mount}:/workspace",
             "-w",
@@ -314,6 +365,40 @@ def _docker_image_available(image: str) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return completed.returncode == 0
+
+
+def _docker_available_commands(image: str, executables: set[str]) -> set[str]:
+    if not executables or not image or shutil.which("docker") is None:
+        return set()
+    script = "for c in \"$@\"; do command -v \"$c\" >/dev/null 2>&1 && printf '%s\\n' \"$c\"; done"
+    try:
+        completed = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-e",
+                f"PATH={DOCKER_TOOL_PATH}",
+                image,
+                "sh",
+                "-c",
+                script,
+                "sh",
+                *sorted(executables),
+            ],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if completed.returncode != 0:
+        return set()
+    return {line.strip() for line in completed.stdout.decode("utf-8", errors="replace").splitlines() if line.strip()}
+
+
+def _docker_command_available(image: str, executable: str) -> bool:
+    return executable in _docker_available_commands(image, {executable})
 
 
 def _docker_arg(arg: str, mount: Path) -> str:

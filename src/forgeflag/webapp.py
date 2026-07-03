@@ -3,18 +3,24 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timezone
 import json
+import os
+import platform
 import shutil
+import subprocess
+import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
+from forgeflag import __version__
 from forgeflag.agent_roster import agent_roster_path_for_db, load_agent_roster
+from forgeflag.analysis_hints import recommended_analysis_hints
 from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
 from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.llm import build_llm_provider
-from forgeflag.manager import Manager
+from forgeflag.manager import Manager, _proof_status
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.project_catalog import recommended_projects
 from forgeflag.report import ReportBuilder
@@ -48,6 +54,10 @@ def create_handler(db_path: str | Path):
             if path == "/":
                 self._send_html(self.render_index())
                 return
+            if path == "/favicon.ico":
+                self.send_response(HTTPStatus.NO_CONTENT.value)
+                self.end_headers()
+                return
             if path == "/api/challenges":
                 self._send_json(self.handle_list_challenges())
                 return
@@ -56,6 +66,16 @@ def create_handler(db_path: str | Path):
                 return
             if path == "/api/project-catalog":
                 self._send_json(self.handle_project_catalog())
+                return
+            if path == "/api/analysis-hints":
+                category = parse_qs(parsed.query).get("category", [None])[0]
+                self._send_json(self.handle_analysis_hints(category))
+                return
+            if path == "/api/capability-benchmark":
+                self._send_json(self.handle_capability_benchmark())
+                return
+            if path == "/api/system-health":
+                self._send_json(self.handle_system_health())
                 return
             if path == "/api/agents":
                 self._send_json(self.handle_agents())
@@ -118,6 +138,8 @@ def create_handler(db_path: str | Path):
             for challenge in cls.notebook.list_challenges():
                 summary = cls.notebook.latest_run_summary(challenge.challenge_id) or {}
                 accepted_flags = _string_list(summary.get("accepted_flags"))
+                summary = cls._with_proof_status(challenge, summary)
+                proof = summary.get("proof") if isinstance(summary.get("proof"), dict) else {}
                 rows.append(
                     {
                         "challenge_id": challenge.challenge_id,
@@ -128,6 +150,8 @@ def create_handler(db_path: str | Path):
                         "tags": list(challenge.tags),
                         "attachment_paths": list(challenge.attachment_paths),
                         "latest_status": str(summary.get("status") or "not_run"),
+                        "proof_status": str(summary.get("proof_status") or proof.get("status") or summary.get("status") or "not_run"),
+                        "proof": proof,
                         "accepted_flags": accepted_flags,
                         "accepted_flag_count": len(accepted_flags),
                     }
@@ -138,12 +162,16 @@ def create_handler(db_path: str | Path):
         def handle_tools(cls) -> dict[str, Any]:
             wrappers = ToolRunner(ScopePolicy()).inventory()
             catalog = recommended_projects()
+            analysis_hints = recommended_analysis_hints()
+            profiles = _docker_profile_inventory()
             host_wrappers = sum(1 for row in wrappers if row.get("source") == "host")
             docker_wrappers = sum(1 for row in wrappers if row.get("source") == "docker")
             missing_wrappers = sum(1 for row in wrappers if row.get("source") == "missing")
             return {
                 "wrappers": wrappers,
                 "catalog": catalog,
+                "analysis_hints": analysis_hints,
+                "docker_profiles": profiles,
                 "counts": {
                     "wrappers": len(wrappers),
                     "available_wrappers": sum(1 for row in wrappers if row.get("available")),
@@ -151,6 +179,9 @@ def create_handler(db_path: str | Path):
                     "docker_wrappers": docker_wrappers,
                     "missing_wrappers": missing_wrappers,
                     "catalog": len(catalog),
+                    "analysis_hints": len(analysis_hints),
+                    "docker_profiles": len(profiles),
+                    "available_docker_profiles": sum(1 for row in profiles if row.get("available")),
                 },
                 "runtime_smoke": {
                     "command": "scripts/forgeflag-tool-smoke",
@@ -261,17 +292,62 @@ def create_handler(db_path: str | Path):
         def handle_summary(cls, challenge_id: str) -> dict[str, Any]:
             summary = cls.notebook.latest_run_summary(challenge_id)
             if isinstance(summary, dict) and summary:
-                return summary
+                challenge = cls.notebook.get_challenge(challenge_id)
+                return cls._with_proof_status(challenge, summary)
             # Validate that the challenge exists and return a stable empty run shape.
-            cls.notebook.get_challenge(challenge_id)
+            try:
+                cls.notebook.get_challenge(challenge_id)
+            except KeyError:
+                return {
+                    "challenge_id": challenge_id,
+                    "status": "not_found",
+                    "solvers": [],
+                    "accepted_flags": [],
+                    "rejected_flags": [],
+                    "proof_status": "not_found",
+                    "proof": {
+                        "status": "not_found",
+                        "label": "Challenge not saved",
+                        "verified": False,
+                        "summary": "The selected challenge id is not present in the notebook.",
+                        "next_action": "Save the challenge or select an existing challenge before running analysis.",
+                    },
+                    "observations": 0,
+                }
             return {
                 "challenge_id": challenge_id,
                 "status": "not_run",
                 "solvers": [],
                 "accepted_flags": [],
                 "rejected_flags": [],
+                "proof_status": "not_run",
+                "proof": {
+                    "status": "not_run",
+                    "label": "Not run",
+                    "verified": False,
+                    "summary": "This challenge has not been run yet.",
+                    "next_action": "Run the challenge to collect solver evidence.",
+                },
                 "observations": len(cls.notebook.observations_for(challenge_id)),
             }
+
+        @classmethod
+        def _with_proof_status(cls, challenge, summary: dict[str, Any]) -> dict[str, Any]:
+            proof = summary.get("proof")
+            if isinstance(proof, dict) and summary.get("proof_status"):
+                return summary
+            accepted_flags = tuple(_string_list(summary.get("accepted_flags")))
+            derived = _proof_status(
+                challenge.category,
+                cls.notebook.findings_for(challenge.challenge_id),
+                accepted_flags,
+            )
+            enriched = dict(summary)
+            enriched["proof"] = derived
+            enriched["proof_status"] = derived["status"]
+            if enriched.get("status") in {"completed", None, ""} or derived["status"] in {"flag_found", "exploit_plan", "exploit_verified", "analysis_only"}:
+                enriched["status"] = derived["status"]
+            return enriched
 
         @classmethod
         def handle_observations(cls, challenge_id: str) -> list[dict[str, Any]]:
@@ -319,6 +395,39 @@ def create_handler(db_path: str | Path):
             return recommended_projects()
 
         @classmethod
+        def handle_analysis_hints(cls, category: str | None = None) -> list[dict[str, Any]]:
+            return recommended_analysis_hints(category)
+
+        @classmethod
+        def handle_capability_benchmark(cls) -> dict[str, Any]:
+            latest = _capability_benchmark_path(cls.db_path)
+            history_path = _capability_benchmark_history_path(cls.db_path)
+            history = _read_capability_benchmark_history(history_path)
+            refresh_command = f"scripts/forgeflag-capability-benchmark --output {latest} --history {history_path}"
+            if not latest.exists():
+                return {
+                    "status": "missing",
+                    "path": str(latest),
+                    "history_path": str(history_path),
+                    "refresh_command": refresh_command,
+                    "scorecard": None,
+                    "history": history,
+                }
+            scorecard = json.loads(latest.read_text(encoding="utf-8"))
+            return {
+                "status": "ok",
+                "path": str(latest),
+                "history_path": str(history_path),
+                "refresh_command": refresh_command,
+                "scorecard": scorecard,
+                "history": history,
+            }
+
+        @classmethod
+        def handle_system_health(cls) -> dict[str, Any]:
+            return _system_health(cls.db_path)
+
+        @classmethod
         def handle_agents(cls) -> dict[str, Any]:
             return load_agent_roster(agent_roster_path_for_db(cls.db_path)).to_public_dict()
 
@@ -345,6 +454,334 @@ def create_handler(db_path: str | Path):
             self.wfile.write(body)
 
     return ForgeFlagWebHandler
+
+
+_DOCKER_PROFILES = (
+    {
+        "name": "forgeflag-volatility",
+        "target": "forgeflag-volatility",
+        "image": "forgeflag-ctf:volatility",
+        "purpose": "Memory forensics and dump triage without bloating the default tool image.",
+    },
+    {
+        "name": "forgeflag-sagemath",
+        "target": "forgeflag-sagemath",
+        "image": "forgeflag-ctf:sagemath",
+        "purpose": "Math-heavy crypto work such as lattices, finite fields, and elliptic curves.",
+    },
+    {
+        "name": "forgeflag-ghidra-headless",
+        "target": "forgeflag-ghidra-headless",
+        "image": "forgeflag-ctf:ghidra-headless",
+        "purpose": "Scripted reverse-engineering exports and headless analysis jobs.",
+    },
+)
+
+
+def _docker_profile_inventory() -> list[dict[str, Any]]:
+    docker = shutil.which("docker")
+    rows: list[dict[str, Any]] = []
+    for profile in _DOCKER_PROFILES:
+        image = str(profile["image"])
+        available = False
+        if docker:
+            try:
+                result = subprocess.run(
+                    [docker, "image", "inspect", image],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    check=False,
+                )
+                available = result.returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                available = False
+        rows.append(
+            {
+                **profile,
+                "available": available,
+                "source": "docker" if available else "missing",
+                "category": "heavyweight-profile",
+                "build_command": (
+                    "docker build -f docker/Dockerfile.ctf "
+                    f"--target {profile['target']} -t {image} ."
+                ),
+                "verify_command": f"docker image inspect {image}",
+            }
+        )
+    return rows
+
+
+def _capability_benchmark_path(db_path: Path) -> Path:
+    return db_path.parent / "capability-benchmark-latest.json"
+
+
+def _capability_benchmark_history_path(db_path: Path) -> Path:
+    return db_path.parent / "capability-benchmark-history.jsonl"
+
+
+def _read_capability_benchmark_history(history_path: Path, limit: int = 20) -> list[dict[str, Any]]:
+    if not history_path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in history_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records[-limit:]
+
+
+def _system_health(db_path: Path) -> dict[str, Any]:
+    checks = [
+        _notebook_health(db_path),
+        _tool_health(),
+        _docker_profile_health(),
+        _benchmark_health(db_path),
+        _llm_health(),
+    ]
+    errors = sum(1 for check in checks if check["status"] == "error")
+    warnings = sum(1 for check in checks if check["status"] == "warning")
+    status = "blocked" if errors else "limited" if warnings else "ready"
+    core_readiness = _core_readiness(checks)
+    next_actions = _deduped_health_actions(checks)
+    diagnostic_bundle = _diagnostic_bundle(
+        db_path=db_path,
+        status=status,
+        core_readiness=core_readiness,
+        checks=checks,
+        next_actions=next_actions,
+    )
+    return {
+        "status": status,
+        "summary": _commercial_health_summary(status),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "core_readiness": core_readiness,
+        "commercial_readiness": {
+            "status": status,
+            "label": "Commercial readiness",
+            "blocking_checks": [check["id"] for check in checks if check["status"] == "error"],
+            "warning_checks": [check["id"] for check in checks if check["status"] == "warning"],
+        },
+        "counts": {
+            "checks": len(checks),
+            "ok": sum(1 for check in checks if check["status"] == "ok"),
+            "warnings": warnings,
+            "errors": errors,
+        },
+        "checks": checks,
+        "next_actions": next_actions,
+        "diagnostic_bundle": diagnostic_bundle,
+    }
+
+
+def _diagnostic_bundle(
+    db_path: Path,
+    status: str,
+    core_readiness: dict[str, Any],
+    checks: list[dict[str, Any]],
+    next_actions: list[str],
+) -> dict[str, Any]:
+    config = LLMConfig.from_env()
+    blocking_checks = [str(check["id"]) for check in checks if check.get("status") == "error"]
+    warning_checks = [str(check["id"]) for check in checks if check.get("status") == "warning"]
+    counts = {
+        "checks": len(checks),
+        "ok": sum(1 for check in checks if check.get("status") == "ok"),
+        "warnings": len(warning_checks),
+        "errors": len(blocking_checks),
+    }
+    support_summary = [
+        f"ForgeFlag {__version__} status={status}",
+        f"checks ok={counts['ok']} warnings={counts['warnings']} errors={counts['errors']}",
+        f"db={db_path}",
+        f"llm={config.provider}/{config.model} enabled={config.enabled}",
+        f"next_actions={len(next_actions)}",
+    ]
+    return {
+        "bundle_version": 1,
+        "service": {
+            "name": "ForgeFlag",
+            "version": __version__,
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "pid": os.getpid(),
+            "cwd": str(Path.cwd()),
+            "db_path": str(db_path),
+        },
+        "readiness": {
+            "status": status,
+            "counts": counts,
+            "blocking_checks": blocking_checks,
+            "warning_checks": warning_checks,
+        },
+        "core_readiness": core_readiness,
+        "llm": {
+            "enabled": config.enabled,
+            "provider": config.provider,
+            "model": config.model,
+            "base_url": config.base_url,
+            "api_key_configured": bool(config.api_key),
+        },
+        "checks": [
+            {
+                "id": str(check.get("id") or "unknown"),
+                "status": str(check.get("status") or "unknown"),
+                "summary": str(check.get("summary") or ""),
+            }
+            for check in checks
+        ],
+        "next_actions": list(next_actions),
+        "support_summary": support_summary,
+    }
+
+
+def _core_readiness(checks: list[dict[str, Any]]) -> dict[str, Any]:
+    core_ids = {"notebook", "tools", "benchmark"}
+    core_checks = [check for check in checks if check.get("id") in core_ids]
+    blocking = [str(check["id"]) for check in core_checks if check.get("status") == "error"]
+    warnings = [str(check["id"]) for check in core_checks if check.get("status") == "warning"]
+    status = "blocked" if blocking else "limited" if warnings else "ready"
+    return {
+        "status": status,
+        "label": "Core solving readiness",
+        "summary": _core_health_summary(status),
+        "blocking_checks": blocking,
+        "warning_checks": warnings,
+        "check_ids": [str(check.get("id") or "unknown") for check in core_checks],
+    }
+
+
+def _notebook_health(db_path: Path) -> dict[str, Any]:
+    exists = db_path.exists()
+    return {
+        "id": "notebook",
+        "label": "Notebook",
+        "status": "ok",
+        "summary": f"SQLite notebook {'exists' if exists else 'will be initialized'} at {db_path}",
+        "next_actions": [],
+    }
+
+
+def _tool_health() -> dict[str, Any]:
+    wrappers = ToolRunner(ScopePolicy()).inventory()
+    missing = [row for row in wrappers if row.get("source") == "missing" or row.get("available") is False]
+    status = "error" if missing else "ok"
+    return {
+        "id": "tools",
+        "label": "Tool wrappers",
+        "status": status,
+        "summary": f"{len(wrappers) - len(missing)} available wrappers; missing wrappers: {len(missing)}",
+        "next_actions": ["scripts/forgeflag-tool-smoke"] if missing else [],
+        "details": {
+            "total": len(wrappers),
+            "missing": [str(row.get("name") or "unknown") for row in missing[:12]],
+        },
+    }
+
+
+def _docker_profile_health() -> dict[str, Any]:
+    profiles = _docker_profile_inventory()
+    missing = [row for row in profiles if not row.get("available")]
+    return {
+        "id": "docker_profiles",
+        "label": "Heavyweight Docker profiles",
+        "status": "warning" if missing else "ok",
+        "summary": f"{len(profiles) - len(missing)} / {len(profiles)} optional heavyweight profiles built",
+        "next_actions": [str(row.get("build_command")) for row in missing[:3] if row.get("build_command")],
+        "details": {
+            "missing": [str(row.get("name") or "unknown") for row in missing],
+        },
+    }
+
+
+def _benchmark_health(db_path: Path) -> dict[str, Any]:
+    latest = _capability_benchmark_path(db_path)
+    refresh_command = f"scripts/forgeflag-capability-benchmark --output {latest} --history {_capability_benchmark_history_path(db_path)}"
+    if not latest.exists():
+        return {
+            "id": "benchmark",
+            "label": "Capability benchmark",
+            "status": "warning",
+            "summary": "No saved capability benchmark scorecard yet",
+            "next_actions": [refresh_command],
+        }
+    try:
+        scorecard = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "id": "benchmark",
+            "label": "Capability benchmark",
+            "status": "error",
+            "summary": f"Saved capability benchmark is unreadable: {exc}",
+            "next_actions": [refresh_command],
+        }
+    readiness = scorecard.get("readiness") if isinstance(scorecard, dict) else {}
+    readiness_status = str((readiness or {}).get("status") or "unknown")
+    status = "ok" if readiness_status == "ready" else "error" if readiness_status == "blocked" else "warning"
+    totals = scorecard.get("totals", {}) if isinstance(scorecard, dict) else {}
+    return {
+        "id": "benchmark",
+        "label": "Capability benchmark",
+        "status": status,
+        "summary": f"readiness={readiness_status}; passed={totals.get('passed', 0)} / {totals.get('cases', 0)}; failed={totals.get('failed', 0)}",
+        "next_actions": (readiness or {}).get("next_actions") or ([] if status == "ok" else [refresh_command]),
+        "details": {"readiness": readiness, "path": str(latest)},
+    }
+
+
+def _llm_health() -> dict[str, Any]:
+    config = LLMConfig.from_env()
+    if config.enabled:
+        return {
+            "id": "llm",
+            "label": "LLM runtime",
+            "status": "ok",
+            "summary": f"{config.provider} {config.model} configured",
+            "next_actions": [],
+        }
+    return {
+        "id": "llm",
+        "label": "LLM runtime",
+        "status": "warning",
+        "summary": "LLM runtime is not configured; deterministic solvers still run",
+        "next_actions": ["Set FORGEFLAG_LLM_PROVIDER and provider API key or configure it in the Web UI"],
+    }
+
+
+def _commercial_health_summary(status: str) -> str:
+    if status == "ready":
+        return "commercial-ready: core runtime, tools, benchmark gate, and optional LLM are green"
+    if status == "limited":
+        return "commercial-limited: core runtime works but release evidence or optional integrations need attention"
+    return "commercial-blocked: fix blocking checks before treating this platform as production-ready"
+
+
+def _core_health_summary(status: str) -> str:
+    if status == "ready":
+        return "core-ready: notebook, tool wrappers, and capability benchmark are green for CTF solving"
+    if status == "limited":
+        return "core-limited: refresh the capability benchmark or resolve core warnings before trusting solves"
+    return "core-blocked: fix notebook, tool wrapper, or benchmark errors before running challenge work"
+
+
+def _deduped_health_actions(checks: list[dict[str, Any]]) -> list[str]:
+    actions: list[str] = []
+    seen: set[str] = set()
+    for check in checks:
+        for action in check.get("next_actions", []):
+            if not isinstance(action, str):
+                continue
+            cleaned = action.strip()
+            if not cleaned or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            actions.append(cleaned)
+    return actions[:12]
 
 
 def _challenge_route(path: str) -> tuple[str | None, str | None]:
@@ -497,57 +934,123 @@ INDEX_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ForgeFlag Console</title>
+  <title>ForgeFlag Workbench</title>
   <style>
-    :root { color-scheme: light; --ink:#172026; --muted:#5d6b75; --line:#d9e0e5; --panel:#f7f9fb; --accent:#126b56; --warn:#9b4d13; }
+    :root {
+      color-scheme: dark;
+      --ink:#e8f3ff;
+      --muted:#91a6b8;
+      --subtle:#647989;
+      --line:rgba(108,137,155,.30);
+      --line-strong:rgba(0,255,171,.36);
+      --surface:#071016;
+      --surface-raised:rgba(10,22,30,.88);
+      --surface-solid:#0c1821;
+      --surface-tint:rgba(0,255,171,.08);
+      --surface-glass:rgba(9,20,29,.72);
+      --accent:#00d7ff;
+      --accent-strong:#00ffab;
+      --accent-soft:rgba(0,215,255,.12);
+      --matrix-green:#00ffab;
+      --phosphor:#a6ffcb;
+      --signal-cyan:#00d7ff;
+      --signal-indigo:#8b7dff;
+      --signal-emerald:#18d987;
+      --signal-amber:#ffbf4d;
+      --warn:#ffbf4d;
+      --warn-soft:rgba(255,191,77,.13);
+      --danger:#ff5d73;
+      --danger-soft:rgba(255,93,115,.13);
+      --code:#03080d;
+      --shadow-soft:0 24px 80px rgba(0,0,0,.45);
+      --shadow-tight:0 12px 34px rgba(0,0,0,.32);
+      --shadow-hairline:0 1px 0 rgba(255,255,255,.06) inset;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: #fff; }
-    header { padding: 18px 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 16px; align-items: center; }
-    h1 { margin: 0; font-size: 22px; }
-    h2 { margin: 0 0 12px; font-size: 16px; }
-    main { display: grid; grid-template-columns: 380px 1fr; min-height: calc(100vh - 64px); }
-    aside { border-right: 1px solid var(--line); padding: 18px; background: var(--panel); }
-    section { padding: 18px 24px; }
-    label { display: block; margin: 10px 0 4px; font-size: 13px; color: var(--muted); }
-    input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; background: #fff; }
-    textarea { min-height: 76px; resize: vertical; }
-    button { border: 1px solid #0f5d4c; background: var(--accent); color: white; border-radius: 6px; padding: 9px 12px; font: inherit; cursor: pointer; transition: transform .08s ease, box-shadow .12s ease, opacity .12s ease, background-color .12s ease; }
-    button.secondary { background: white; color: var(--ink); border-color: var(--line); }
-    button.warn { background: var(--warn); border-color: var(--warn); }
+    html { background: var(--surface); }
+    body { margin: 0; min-height: 100vh; height: 100vh; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); font-size: 14px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: #071016; }
+    body::before { content: ""; position: fixed; inset: 0; z-index: -2; background-image: repeating-linear-gradient(90deg, rgba(0, 255, 171, .07) 0 1px, transparent 1px 120px), repeating-linear-gradient(0deg, rgba(0, 215, 255, .055) 0 1px, transparent 1px 84px), linear-gradient(135deg, #071016 0%, #0b1322 45%, #111827 100%); }
+    body::after { content: ""; position: fixed; inset: 0; z-index: -1; background: linear-gradient(180deg, rgba(0,0,0,.1), rgba(0,0,0,.52)), repeating-linear-gradient(0deg, rgba(255,255,255,.035) 0 1px, transparent 1px 4px); pointer-events: none; }
+    .topbar { position: sticky; top: 0; z-index: 8; min-height: 82px; padding: 14px 24px; border-bottom: 1px solid rgba(0,255,171,.22); display: flex; justify-content: space-between; gap: 18px; align-items: center; background: rgba(5,12,18,.88); backdrop-filter: blur(18px) saturate(150%); box-shadow: 0 14px 44px rgba(0,0,0,.35); overflow: hidden; }
+    .signal-field { position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(90deg, rgba(0,255,171,.16) 1px, transparent 1px), linear-gradient(rgba(0,215,255,.10) 1px, transparent 1px); background-size: 48px 48px; opacity: .34; mask-image: linear-gradient(90deg, rgba(0,0,0,.85), transparent 76%); }
+    .ops-orbit { position: absolute; right: 24px; top: 12px; width: 260px; height: 56px; pointer-events: none; border: 1px solid rgba(0,255,171,.18); border-inline-color: rgba(0,215,255,.28); transform: skewX(-18deg); opacity: .62; }
+    .brand { position: relative; z-index: 1; display: grid; gap: 5px; min-width: 0; }
+    .brand-line { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .brand-mark { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 900; color: #03110d; border: 1px solid rgba(0,255,171,.58); background: linear-gradient(135deg, var(--matrix-green), var(--signal-cyan)); box-shadow: 0 0 24px rgba(0,255,171,.24), var(--shadow-hairline); }
+    .brand-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+    .signal-chip { border: 1px solid rgba(0,255,171,.30); background: rgba(0,255,171,.09); color: var(--phosphor); border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 800; box-shadow: var(--shadow-hairline); text-transform: uppercase; }
+    .signal-chip.indigo { border-color: rgba(139,125,255,.32); background: rgba(139,125,255,.10); color: #d9d4ff; }
+    .signal-chip.amber { border-color: rgba(255,191,77,.32); background: rgba(255,191,77,.10); color: #ffe1a0; }
+    h1 { margin: 0; font-size: 23px; line-height: 1.1; letter-spacing: 0; }
+    .brand-subtitle { color: var(--muted); font-size: 12px; }
+    .mission-strip { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: min(520px, 44vw); }
+    .mission-tile { border: 1px solid rgba(0,255,171,.20); background: rgba(5,14,20,.72); border-radius: 8px; padding: 8px 10px; box-shadow: var(--shadow-hairline); }
+    .mission-tile span { display: block; color: var(--subtle); font-size: 10px; text-transform: uppercase; font-weight: 800; }
+    .mission-tile strong { display: block; color: var(--ink); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+    .runtime-status[data-tone="busy"] { color: var(--signal-cyan); }
+    .runtime-status[data-tone="success"] { color: var(--matrix-green); }
+    .runtime-status[data-tone="error"] { color: #ffd8df; }
+    h2 { margin: 0 0 12px; font-size: 12px; line-height: 1.2; letter-spacing: 0; text-transform: uppercase; color: var(--phosphor); }
+    h3 { letter-spacing: 0; }
+    .app-shell { display: grid; grid-template-columns: minmax(260px, 320px) minmax(520px, 1fr) minmax(300px, 380px); gap: 14px; height: 100%; overflow: hidden; padding: 14px; }
+    .sidebar-panel, .content-panel, .evidence-rail { min-width: 0; min-height: 0; }
+    .sidebar-panel { display: grid; gap: 14px; overflow: hidden; }
+    .content-panel { display: grid; grid-template-rows: minmax(200px, 34vh) minmax(320px, 1fr); gap: 12px; overflow: hidden; }
+    .evidence-rail { min-width: 0; overflow: auto; display: grid; align-content: start; gap: 14px; padding-right: 2px; }
+    .queue-workspace { height: 100%; overflow: auto; }
+    .panel-section, .run-card { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow-tight), var(--shadow-hairline); backdrop-filter: blur(18px); }
+    .panel-section { padding: 16px; position: relative; overflow: hidden; }
+    .panel-section.queue-workspace { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+    .panel-section::before, .run-card::before, .result-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; background: linear-gradient(90deg, var(--matrix-green), transparent 42%, var(--signal-indigo)); opacity: .82; }
+    .panel-heading { display: flex; justify-content: space-between; gap: 12px; align-items: start; margin-bottom: 12px; }
+    .panel-heading .meta { margin-top: 3px; }
+    .section-heading { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+    label { display: block; margin: 10px 0 5px; font-size: 12px; font-weight: 800; color: #b4c7d9; }
+    input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 7px; padding: 10px 11px; font: inherit; color: var(--ink); background: rgba(3,9,14,.74); transition: border-color .12s ease, box-shadow .12s ease, background-color .12s ease; box-shadow: var(--shadow-hairline); }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: rgba(0,255,171,.66); box-shadow: 0 0 0 3px rgba(0,255,171,.11), var(--shadow-hairline); background: rgba(4,13,19,.92); }
+    textarea { min-height: 84px; resize: vertical; }
+    button { border: 1px solid rgba(0,255,171,.52); background: linear-gradient(135deg, rgba(0,255,171,.92), rgba(0,215,255,.82)); color: #03110d; border-radius: 7px; padding: 9px 12px; font: inherit; font-weight: 900; cursor: pointer; transition: transform .08s ease, box-shadow .12s ease, opacity .12s ease, background-color .12s ease, border-color .12s ease; box-shadow: 0 10px 26px rgba(0,255,171,.16); }
+    button:hover { background: linear-gradient(135deg, var(--phosphor), var(--signal-cyan)); box-shadow: 0 12px 30px rgba(0,215,255,.20); }
+    button.secondary { background: rgba(10,22,30,.74); color: var(--ink); border-color: var(--line); box-shadow: var(--shadow-hairline); }
+    button.secondary:hover { background: rgba(14,31,42,.92); border-color: rgba(0,255,171,.42); box-shadow: var(--shadow-tight); }
+    button.warn { background: rgba(255,93,115,.16); color: #ffd8df; border-color: rgba(255,93,115,.50); }
+    button.warn:hover { background: rgba(255,93,115,.24); }
     button:active { transform: translateY(1px); }
-    button:focus-visible { outline: 3px solid #9fd8c7; outline-offset: 2px; }
+    button:focus-visible { outline: 3px solid rgba(0,255,171,.22); outline-offset: 2px; }
     button:disabled { opacity: .58; cursor: wait; }
     button.is-busy { position: relative; padding-left: 32px; }
     button.is-busy::before { content: ""; position: absolute; left: 11px; top: 50%; width: 12px; height: 12px; margin-top: -6px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 999px; animation: spin .75s linear infinite; }
-    button.just-done { box-shadow: 0 0 0 3px rgba(18,107,86,.18); }
-    button.just-error { box-shadow: 0 0 0 3px rgba(155,77,19,.22); }
+    button.just-done { box-shadow: 0 0 0 3px rgba(0,255,171,.18); }
+    button.just-error { box-shadow: 0 0 0 3px rgba(255,93,115,.22); }
     @keyframes spin { to { transform: rotate(360deg); } }
     .row { display: flex; gap: 8px; align-items: center; }
     .row > * { flex: 1; }
-    .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
-    .run-panel { display: grid; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 16px; }
-    .runtime-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .inline-check { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); }
+    .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
+    .run-panel { display: grid; gap: 12px; padding: 16px; min-height: 0; overflow: auto; align-content: start; overscroll-behavior: contain; }
+    .runtime-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .inline-check { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 13px; font-weight: 600; }
     .inline-check input { width: auto; }
-    .llm-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .llm-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
     .llm-settings[hidden] { display: none; }
     .llm-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .llm-status { color: var(--muted); font-size: 12px; }
-    .pwn-helper { border: 1px solid #cfe4dc; border-radius: 6px; background: #f7fcfa; padding: 12px; display: grid; gap: 10px; }
+    .pwn-helper { border: 1px solid rgba(0,255,171,.24); border-radius: 8px; background: linear-gradient(180deg, rgba(0,255,171,.08), rgba(10,22,30,.78)); padding: 12px; display: grid; gap: 10px; }
     .pwn-helper[hidden] { display: none; }
     .pwn-helper h3 { margin: 0; font-size: 14px; }
     .command-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
     .command-head strong { font-size: 13px; }
-    .command-block { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #111820; color: #e7eef4; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.45; }
-    .category-bar, .status-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 16px; }
-    .category-pill, .status-pill { background: white; color: var(--ink); border-color: var(--line); display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; }
-    .category-pill.active, .status-pill.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .command-block { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--code); color: var(--phosphor); border-radius: 8px; padding: 11px 12px; font-size: 12px; line-height: 1.5; border: 1px solid rgba(0,255,171,.18); box-shadow: inset 0 1px 0 rgba(255,255,255,.08); }
+    .category-bar, .status-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 10px; }
+    .category-pill, .status-pill { background: rgba(10,22,30,.76); color: var(--ink); border-color: var(--line); display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; box-shadow: var(--shadow-hairline); }
+    .category-pill:hover, .status-pill:hover { box-shadow: var(--shadow-tight); border-color: rgba(0,255,171,.36); }
+    .category-pill.active, .status-pill.active { background: linear-gradient(135deg, rgba(0,255,171,.16), rgba(139,125,255,.12)); color: var(--phosphor); border-color: rgba(0,255,171,.42); box-shadow: inset 3px 0 0 var(--matrix-green), var(--shadow-hairline); }
     .category-pill span:last-child, .status-pill span:last-child { font-size: 12px; opacity: .85; }
     .list { display: grid; gap: 8px; margin-top: 12px; }
-    .item { border: 1px solid var(--line); background: white; border-radius: 6px; padding: 10px; cursor: pointer; }
-    .item.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+    .item { border: 1px solid var(--line); background: rgba(10,22,30,.72); border-radius: 8px; padding: 10px; cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease, transform .08s ease; box-shadow: var(--shadow-hairline); }
+    .item:hover { border-color: rgba(0,255,171,.36); box-shadow: var(--shadow-tight); }
+    .item.active { border-color: rgba(0,255,171,.5); box-shadow: inset 3px 0 0 var(--matrix-green), var(--shadow-tight); background: rgba(14,31,42,.92); }
     .item-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-    .category-group, .tool-group { border: 1px solid var(--line); border-radius: 6px; background: white; overflow: hidden; }
+    .category-group, .tool-group { border: 1px solid var(--line); border-radius: 8px; background: rgba(10,22,30,.78); overflow: hidden; box-shadow: var(--shadow-tight), var(--shadow-hairline); }
     .category-group summary, .tool-group summary { list-style: none; cursor: pointer; padding: 10px 12px; display: flex; justify-content: space-between; gap: 10px; align-items: center; }
     .category-group summary::-webkit-details-marker, .tool-group summary::-webkit-details-marker { display: none; }
     .category-group summary::before, .tool-group summary::before { content: "›"; color: var(--muted); font-size: 16px; transition: transform .15s ease; }
@@ -555,93 +1058,100 @@ INDEX_HTML = r"""<!doctype html>
     .category-items, .tool-items { display: grid; gap: 8px; padding: 0 10px 10px; }
     .group-count { color: var(--muted); font-size: 12px; margin-left: auto; }
     .meta { color: var(--muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
-    .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
-    .tabs button { background: white; color: var(--ink); border-color: var(--line); border-bottom: 0; border-radius: 6px 6px 0 0; }
-    .tabs button.active { background: var(--accent); color: white; }
-    .result-view { display: grid; gap: 12px; min-height: 420px; }
-    .empty-state { border: 1px dashed var(--line); border-radius: 6px; padding: 18px; color: var(--muted); background: #fbfcfd; }
-    .result-card { border: 1px solid var(--line); border-radius: 6px; background: white; padding: 14px; display: grid; gap: 10px; }
+    .tabs { display: flex; gap: 6px; margin: 2px 0 0; overflow-x: auto; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: rgba(5,12,18,.82); box-shadow: var(--shadow-hairline), var(--shadow-tight); backdrop-filter: blur(18px); }
+    .tabs button { background: transparent; color: #a9bbc8; border-color: transparent; border-radius: 6px; white-space: nowrap; box-shadow: none; font-size: 14px; line-height: 1.15; padding: 8px 10px; flex: 0 0 auto; }
+    .tabs button:hover { background: rgba(0,255,171,.08); border-color: rgba(0,255,171,.24); box-shadow: none; }
+    .tabs button.active { background: linear-gradient(135deg, rgba(0,255,171,.22), rgba(0,215,255,.16)); color: var(--phosphor); border-color: rgba(0,255,171,.42); }
+    .result-view { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; padding-right: 2px; }
+    .workspace-stack { min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow-tight), var(--shadow-hairline); backdrop-filter: blur(18px); }
+    .workspace-stack .tabs { position: sticky; top: 0; z-index: 2; margin: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; background: rgba(5,12,18,.96); }
+    .workspace-stack .result-view { padding: 12px; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+    .empty-state { border: 1px dashed var(--line-strong); border-radius: 8px; padding: 18px; color: var(--muted); background: rgba(10,22,30,.62); box-shadow: var(--shadow-hairline); }
+    .result-card { position: relative; overflow: visible; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); padding: 14px; display: grid; gap: 10px; flex: 0 0 auto; box-shadow: var(--shadow-tight), var(--shadow-hairline); backdrop-filter: blur(18px); }
     .result-card h3 { margin: 0; font-size: 15px; }
-    .writeup-hero { border-color: #b9d8cc; background: #f7fcfa; }
-    .writeup-section-body { margin: 0; line-height: 1.65; color: #2f3b43; }
+    .writeup-hero { border-color: rgba(0,255,171,.28); background: linear-gradient(180deg, rgba(0,255,171,.08), rgba(10,22,30,.82)); }
+    .writeup-section-body { margin: 0; line-height: 1.65; color: #d7e7f2; }
     .writeup-section-body:empty { display: none; }
     .writeup-section .steps li { margin: 8px 0; line-height: 1.55; }
-    .writeup-code { margin: 12px 0 0; max-height: 520px; overflow: auto; border: 1px solid #d7e1e8; border-radius: 8px; background: #0f1720; color: #e8f1f8; padding: 14px; line-height: 1.45; font-size: 12px; }
-    .tab-intro { border: 1px solid #cfe4dc; border-radius: 6px; background: #f2faf7; color: #24463d; padding: 10px 12px; font-size: 13px; }
+    .writeup-code { margin: 12px 0 0; max-height: 520px; overflow: auto; border: 1px solid rgba(0,255,171,.22); border-radius: 8px; background: var(--code); color: var(--phosphor); padding: 14px; line-height: 1.45; font-size: 12px; }
+    .tab-intro { border: 1px solid rgba(0,255,171,.24); border-radius: 8px; background: linear-gradient(135deg, rgba(0,255,171,.10), rgba(139,125,255,.10)); color: #d7e7f2; padding: 10px 12px; font-size: 13px; box-shadow: var(--shadow-tight), var(--shadow-hairline); }
     .tab-intro strong { display: block; margin-bottom: 3px; color: var(--ink); }
     .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; flex-wrap: wrap; }
     .card-title { display: grid; gap: 4px; min-width: 0; }
-    .badge { display: inline-flex; width: fit-content; align-items: center; border-radius: 999px; padding: 3px 8px; font-size: 12px; background: #eaf4f0; color: #0f5d4c; border: 1px solid #cfe4dc; }
-    .badge.warn { background: #fff5eb; color: #8b4210; border-color: #f1d5b7; }
-    .badge.muted { background: #eef2f5; color: var(--muted); border-color: var(--line); }
+    .badge { display: inline-flex; width: fit-content; align-items: center; border-radius: 999px; padding: 3px 8px; font-size: 12px; background: rgba(0,255,171,.10); color: var(--phosphor); border: 1px solid rgba(0,255,171,.28); box-shadow: var(--shadow-hairline); }
+    .badge.warn { background: var(--warn-soft); color: #ffe1a0; border-color: rgba(255,191,77,.38); }
+    .badge.muted { background: rgba(145,166,184,.10); color: var(--muted); border-color: var(--line); }
     .flag-list { display: flex; gap: 8px; flex-wrap: wrap; }
-    .flag-chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #111820; color: #e7eef4; border-radius: 6px; padding: 5px 8px; overflow-wrap: anywhere; }
+    .flag-chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code); color: var(--phosphor); border-radius: 6px; padding: 5px 8px; overflow-wrap: anywhere; border: 1px solid rgba(0,255,171,.18); }
     .tag-row { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
-    .tag-chip { border: 1px solid var(--line); border-radius: 999px; background: #fbfcfd; color: var(--muted); padding: 2px 7px; font-size: 11px; }
+    .tag-chip { border: 1px solid var(--line); border-radius: 999px; background: rgba(10,22,30,.78); color: var(--muted); padding: 2px 7px; font-size: 11px; }
     .kv-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-    .kv { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; background: #fbfcfd; min-width: 0; }
+    .kv { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: rgba(5,12,18,.66); min-width: 0; box-shadow: var(--shadow-hairline); }
     .kv span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
     .kv strong { overflow-wrap: anywhere; }
     .steps { margin: 0; padding-left: 20px; }
     .steps li { margin: 5px 0; }
     details.raw { border-top: 1px solid var(--line); padding-top: 8px; }
     details.raw summary { color: var(--muted); cursor: pointer; font-size: 13px; }
-    pre.raw-json { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #111820; color: #e7eef4; border-radius: 6px; padding: 12px; max-height: 360px; overflow: auto; }
-    .status { font-size: 13px; color: var(--muted); }
-    .status[data-tone="busy"] { color: #0f5d4c; }
-    .status[data-tone="success"] { color: #126b56; }
-    .status[data-tone="error"] { color: #9b2c13; }
-    .action-toast { position: fixed; right: 18px; top: 74px; z-index: 10; max-width: min(420px, calc(100vw - 36px)); border: 1px solid #cfe4dc; border-radius: 6px; background: #f2faf7; color: #24463d; padding: 10px 12px; font-size: 13px; box-shadow: 0 10px 24px rgba(23,32,38,.12); }
-    .action-toast[data-tone="busy"] { border-color: #b9d8cc; }
-    .action-toast[data-tone="success"] { border-color: #a8d5c5; background: #eefaf5; }
-    .action-toast[data-tone="error"] { border-color: #f1c5b7; background: #fff3ef; color: #7d2d18; }
+    pre.raw-json { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--code); color: var(--phosphor); border-radius: 8px; padding: 12px; max-height: 360px; overflow: auto; border: 1px solid rgba(0,255,171,.18); }
+    .status { position: relative; z-index: 1; font-size: 12px; color: var(--phosphor); border: 1px solid rgba(0,255,171,.28); background: rgba(5,12,18,.76); border-radius: 999px; padding: 6px 10px; white-space: nowrap; box-shadow: var(--shadow-hairline); }
+    .status[data-tone="busy"] { color: var(--signal-cyan); border-color: rgba(0,215,255,.38); background: rgba(0,215,255,.10); }
+    .status[data-tone="success"] { color: var(--matrix-green); }
+    .status[data-tone="error"] { color: #ffd8df; border-color: rgba(255,93,115,.38); background: var(--danger-soft); }
+    .action-toast { position: fixed; right: 18px; top: 92px; z-index: 10; max-width: min(420px, calc(100vw - 36px)); border: 1px solid rgba(0,255,171,.28); border-radius: 8px; background: rgba(5,12,18,.9); color: #d7e7f2; padding: 10px 12px; font-size: 13px; box-shadow: var(--shadow-soft), var(--shadow-hairline); backdrop-filter: blur(18px); }
+    .action-toast[data-tone="busy"] { border-color: rgba(0,215,255,.38); }
+    .action-toast[data-tone="success"] { border-color: rgba(0,255,171,.38); background: rgba(0,255,171,.10); }
+    .action-toast[data-tone="error"] { border-color: rgba(255,93,115,.38); background: var(--danger-soft); color: #ffd8df; }
     .action-toast[hidden] { display: none; }
-    @media (max-width: 860px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } .runtime-grid, .llm-settings, .kv-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 1280px) { .app-shell { grid-template-columns: minmax(220px, 260px) minmax(420px, 1fr) minmax(240px, 300px); } .evidence-rail { grid-template-columns: 1fr; overflow: auto; } .mission-strip { min-width: min(420px, 42vw); } }
+    @media (max-width: 900px) { body { height: auto; overflow: visible; display: block; } .app-shell { grid-template-columns: 1fr; height: auto; overflow: visible; } .sidebar-panel, .content-panel { overflow: visible; } .content-panel { grid-template-rows: auto auto; } .workspace-stack { height: min(760px, calc(100vh - 96px)); } .panel-section.queue-workspace { height: min(640px, calc(100vh - 96px)); } .evidence-rail { grid-template-columns: 1fr; } .mission-strip { min-width: 0; width: 100%; } }
+    @media (max-width: 720px) { .topbar { align-items: start; flex-direction: column; padding: 13px 16px; } .mission-strip { grid-template-columns: 1fr; } .app-shell { padding: 12px; gap: 12px; } .row, .runtime-grid, .llm-settings, .kv-grid { display: grid; grid-template-columns: 1fr; } .category-bar, .status-bar { grid-template-columns: 1fr; } .tabs { padding-bottom: 5px; } .status { white-space: normal; } .brand-line { align-items: start; } }
   </style>
 </head>
-<body>
-  <header>
-    <h1>ForgeFlag Console</h1>
-    <div class="status" id="status">ready</div>
+<body data-theme="forgeflag-hacker-ops">
+  <header class="topbar">
+    <div class="signal-field"></div>
+    <div class="ops-orbit"></div>
+    <div class="brand">
+      <div class="brand-line"><div class="brand-mark">FF</div><h1>ForgeFlag Workbench</h1></div>
+      <div class="brand-subtitle">Local and authorized CTF challenge research console</div>
+      <div class="brand-meta"><span class="signal-chip">Mission console</span><span class="signal-chip indigo">Evidence rail</span><span class="signal-chip amber">CTF scoped</span></div>
+    </div>
+    <div class="mission-strip" aria-label="ForgeFlag readiness overview">
+      <div class="mission-tile"><span>Scope</span><strong>Local / authorized CTF</strong></div>
+      <div class="mission-tile"><span>Mode</span><strong>Replay evidence first</strong></div>
+      <div class="mission-tile"><span>Runtime</span><strong id="status" class="runtime-status">ready</strong></div>
+    </div>
   </header>
   <div class="action-toast" id="actionToast" role="status" aria-live="polite" hidden></div>
-  <main>
-    <aside>
-      <h2>新建 / 更新题目</h2>
-      <label>Challenge ID</label>
-      <div class="row">
-        <input id="challengeId" placeholder="自动生成，如 crypto-20260603-195201-rsa">
-        <button class="secondary" id="generateIdBtn" type="button">自动生成</button>
+  <main class="app-shell">
+    <aside class="sidebar-panel queue-column">
+      <div class="panel-section queue-workspace">
+        <div class="panel-heading">
+          <div>
+            <h2>Challenge queue</h2>
+            <div class="meta">筛选、选择和回到最近的 CTF 题目，不把录入表单塞进主流程。</div>
+          </div>
+          <button class="secondary" id="refreshBtn" type="button">刷新</button>
+        </div>
+        <h2 class="section-heading">分类工作台</h2>
+        <div class="category-bar" id="categoryFilters"></div>
+        <div class="meta" id="categoryCounts"></div>
+        <h2 class="section-heading">状态筛选</h2>
+        <div class="status-bar" id="statusFilters"></div>
+        <div class="meta" id="statusCounts"></div>
+        <h2 class="section-heading">题目列表</h2>
+        <div class="list" id="challengeList"></div>
       </div>
-      <div class="row">
-        <div><label>Category</label><select id="category"></select></div>
-        <div><label>Tags</label><input id="tags" placeholder="zip,stego"></div>
-      </div>
-      <label>Title</label>
-      <input id="title">
-      <label>Target</label>
-      <input id="target" placeholder="http://127.0.0.1:8081">
-      <label>Description</label>
-      <textarea id="description"></textarea>
-      <label>Attachments</label>
-      <input id="attachments" type="file" multiple>
-      <div class="actions">
-        <button id="saveBtn">保存题目</button>
-        <button class="secondary" id="refreshBtn">刷新列表</button>
-        <button class="warn" id="deleteBtn">删除选中</button>
-        <button class="warn" id="clearBtn">清空全部</button>
-      </div>
-      <h2 style="margin-top:22px">分类工作台</h2>
-      <div class="category-bar" id="categoryFilters"></div>
-      <div class="meta" id="categoryCounts"></div>
-      <h2 style="margin-top:22px">状态筛选</h2>
-      <div class="status-bar" id="statusFilters"></div>
-      <div class="meta" id="statusCounts"></div>
-      <h2 style="margin-top:22px">题目列表</h2>
-      <div class="list" id="challengeList"></div>
     </aside>
-    <section>
-      <div class="run-panel">
+    <section class="content-panel mission-column">
+      <div class="run-panel run-card">
+        <div class="panel-heading">
+          <div>
+            <h2>Run control</h2>
+            <div class="meta">运行选中题目，控制主动探测和 LLM 辅助，保留可复现证据。</div>
+          </div>
+        </div>
         <div class="actions">
           <button id="runBtn">运行选中题目</button>
           <label class="inline-check"><input id="activeProbe" type="checkbox"> Active probe</label>
@@ -661,7 +1171,7 @@ INDEX_HTML = r"""<!doctype html>
             </select>
           </div>
         </div>
-        <div class="llm-settings" id="llmSettings" hidden>
+        <form class="llm-settings" id="llmSettings" hidden autocomplete="off" onsubmit="return false;">
           <div>
             <label>Model</label>
             <input id="llmModel" placeholder="gpt-4.1">
@@ -685,34 +1195,71 @@ INDEX_HTML = r"""<!doctype html>
             <input id="llmTimeout" type="number" min="1" value="30">
           </div>
           <div class="llm-actions">
-            <button class="secondary" id="llmSaveConfig">保存配置</button>
-            <button class="secondary" id="llmClearSavedKeys">清空保存Key</button>
-            <button class="secondary" id="llmTestBtn">测试大模型</button>
+            <button class="secondary" id="llmSaveConfig" type="button">保存配置</button>
+            <button class="secondary" id="llmClearSavedKeys" type="button">清空保存Key</button>
+            <button class="secondary" id="llmTestBtn" type="button">测试大模型</button>
             <span class="llm-status" id="llmConfigStatus">配置未保存；保存后 API Key 会保存到本浏览器</span>
           </div>
+        </form>
+      </div>
+      <section class="workspace-stack" aria-label="Challenge analysis workspace">
+        <div class="tabs">
+          <button class="active" data-tab="summary">Summary</button>
+          <button data-tab="report">Write-up</button>
+          <button data-tab="agent">Agent</button>
+          <button data-tab="findings">Findings</button>
+          <button data-tab="observations">Observations</button>
+          <button data-tab="artifacts">Artifacts</button>
+          <button data-tab="benchmark">Benchmark</button>
+          <button data-tab="health">Health</button>
+          <button data-tab="tools">Tools</button>
+          <button data-tab="catalog">Catalog</button>
         </div>
-        <div class="pwn-helper" id="pwnEnvironmentPanel" hidden></div>
-      </div>
-      <div class="tabs" style="margin-top:18px">
-        <button class="active" data-tab="summary">Summary</button>
-        <button data-tab="report">Write-up</button>
-        <button data-tab="agent">Agent</button>
-        <button data-tab="findings">Findings</button>
-        <button data-tab="observations">Observations</button>
-        <button data-tab="artifacts">Artifacts</button>
-        <button data-tab="tools">Tools</button>
-        <button data-tab="catalog">Catalog</button>
-      </div>
-      <div id="output" class="result-view"><div class="empty-state">选择题目并运行后，这里会显示可读的解题结果。</div></div>
+        <div id="output" class="result-view"><div class="empty-state">选择题目并运行后，这里会显示可读的解题结果。</div></div>
+      </section>
     </section>
+    <aside class="evidence-rail">
+      <div class="panel-section intake-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Evidence rail</h2>
+            <div class="meta">新建 / 更新题目，上传本地附件，保留 CTF/lab replay 上下文。</div>
+          </div>
+        </div>
+        <label>Challenge ID</label>
+        <div class="row">
+          <input id="challengeId" placeholder="自动生成，如 crypto-20260603-195201-rsa">
+          <button class="secondary" id="generateIdBtn" type="button">自动生成</button>
+        </div>
+        <div class="row">
+          <div><label>Category</label><select id="category"></select></div>
+          <div><label>Tags</label><input id="tags" placeholder="zip,stego"></div>
+        </div>
+        <label>Title</label>
+        <input id="title">
+        <label>Target</label>
+        <input id="target" placeholder="http://127.0.0.1:8081">
+        <label>Description</label>
+        <textarea id="description"></textarea>
+        <label>Attachments</label>
+        <input id="attachments" type="file" multiple>
+        <div class="actions">
+          <button id="saveBtn">保存题目</button>
+          <button class="warn" id="deleteBtn">删除选中</button>
+          <button class="warn" id="clearBtn">清空全部</button>
+        </div>
+      </div>
+      <div class="pwn-helper" id="pwnEnvironmentPanel" hidden></div>
+    </aside>
   </main>
   <script>
     const categories = ["unknown","web","pwn","reverse","crypto","forensics","traffic","misc","infra"];
     const categoryLabels = { all:"全部", unknown:"未知", web:"Web", pwn:"Pwn", reverse:"Reverse", crypto:"Crypto", forensics:"Forensics", traffic:"Traffic", misc:"Misc", infra:"Infra" };
     const statusFilters = ["all","solved","ran","not_run"];
     const statusLabels = { all:"全部", solved:"已出 flag", ran:"已运行未出", not_run:"未运行" };
-    const state = { selected: null, activeCategory: "all", activeStatus: "all", challenges: [], lastSummary: {}, summaries: {}, idTouched: false };
+    const state = { selected: null, activeCategory: "all", activeStatus: "all", challenges: [], lastSummary: {}, summaries: {}, openChallengeGroups: {}, idTouched: false };
     const writeupSectionOrder = ["解题思路", "复现步骤"];
+    const builtinAnalysisHintIds = ["traffic-http-webshell-delimited-flag", "traffic-data-uri-image", "traffic-raw-capture-flag-scan", "traffic-pcap-resync-ip-id-stego", "traffic-rf-image-manchester-ask", "forensics-registry-wifi", "forensics-bmp-quickstego-braille", "forensics-visual-crypto-xor", "forensics-osint-building-geolocation", "forensics-osint-music-cross-reference", "forensics-archive-mangled-png", "forensics-minecraft-region-orphan", "web-renderer-dns-rebinding", "web-basic-auth-prefix-strcmp", "web-php-pack-procfs", "web-loopback-alias-ssrf", "web-python-class-pollution", "web-h3-h1-request-smuggling", "web-lamenote-substring-oracle", "crypto-python-random-prime-offset", "crypto-linear-xorshift-inverse", "crypto-shifted-rsa-factor-leak", "crypto-rsa-modular-low-exponent-root", "crypto-lfsr-berlekamp-massey", "crypto-prng-stream-replay", "crypto-debruijn-pin-replay", "crypto-chacha-state-keystream", "crypto-composite-ntru-crt-lattice", "misc-recipe-state", "misc-decayed-doublehelix-ruby", "misc-recursive-regex-golf", "misc-python-eval-blacklist-bypass", "misc-vivado-dcp-edif-lut", "misc-i2c-eeprom-schematic-dump", "misc-sparse-adversarial-pixels", "pwn-ret2win-escaped-bytes", "pwn-int16-hp-overflow", "pwn-heap-off-by-one-overlap", "pwn-suffix-retaddr-alignment", "pwn-uaf-uninitialized-list-next", "pwn-aarch64-pac-signing-oracle", "pwn-glibc-tcache-malloc-hook", "pwn-ret2vdso-vm-artifact-check", "reverse-elf-argv-repeating-xor", "reverse-jmp-popcount-table", "reverse-compiled-byte-equality-chain", "reverse-pe-stack-xor-key-check", "reverse-mlvm-pixel-art", "reverse-python-vm-perfect-sha1", "reverse-python-grid-constraints"];
     const $ = (id) => document.getElementById(id);
     let toastTimer = null;
     const status = (text, tone="info") => {
@@ -1064,11 +1611,41 @@ INDEX_HTML = r"""<!doctype html>
     async function refresh() {
       const challenges = await api("/api/challenges");
       state.challenges = challenges;
+      reconcileSelectedChallenge(challenges);
       renderCategoryFilters(challenges);
       renderStatusFilters(challenges);
       renderChallengeList();
       renderPwnEnvironmentPanel();
-      show(challenges, "raw");
+      if (!state.selected) show(draftChallengeSummary(), "summary");
+      else if (state.summaries[state.selected]) show(state.summaries[state.selected], "summary");
+      else show({}, "summary");
+    }
+    function reconcileSelectedChallenge(challenges) {
+      if (!state.selected) return;
+      if (challenges.some(ch => ch.challenge_id === state.selected)) return;
+      delete state.summaries[state.selected];
+      state.selected = null;
+      state.lastSummary = {};
+    }
+    function draftChallengeSummary() {
+      const challengeId = $("challengeId").value.trim();
+      if (!challengeId) return {};
+      return {
+        challenge_id: challengeId,
+        status: "not_found",
+        solvers: [],
+        accepted_flags: [],
+        rejected_flags: [],
+        proof_status: "not_found",
+        proof: {
+          status: "not_found",
+          label: "Challenge not saved",
+          verified: false,
+          summary: "当前 ID 尚未保存，不属于题目列表，也不会参与状态分组。",
+          next_action: "请先保存题目或从列表选择已有题目。"
+        },
+        observations: 0
+      };
     }
     function renderChallengeList() {
       const list = $("challengeList");
@@ -1080,6 +1657,11 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       list.innerHTML = renderChallengeGroups(visible);
+      list.querySelectorAll("details.category-group").forEach(details => {
+        details.addEventListener("toggle", () => {
+          state.openChallengeGroups[details.dataset.category] = details.open;
+        });
+      });
       list.querySelectorAll("[data-challenge-id]").forEach(item => {
         item.onclick = () => {
           state.selected = item.dataset.challengeId;
@@ -1094,8 +1676,8 @@ INDEX_HTML = r"""<!doctype html>
       return groupOrder(groups, categories).map(category => {
         const rows = groups[category] || [];
         const selectedInGroup = rows.some(ch => ch.challenge_id === state.selected);
-        const shouldOpen = state.activeCategory !== "all" || selectedInGroup;
-        return `<details class="category-group" ${shouldOpen ? "open" : ""}>
+        const shouldOpen = groupOpenState(category, selectedInGroup);
+        return `<details class="category-group" data-category="${escapeHtml(category)}" ${shouldOpen ? "open" : ""}>
           <summary><strong>${escapeHtml(categoryLabels[category] || category)}</strong><span class="group-count">${rows.length}</span></summary>
           <div class="category-items">
             ${rows.map(ch => `
@@ -1109,20 +1691,49 @@ INDEX_HTML = r"""<!doctype html>
         </details>`;
       }).join("");
     }
+    function groupOpenState(category, selectedInGroup) {
+      if (selectedInGroup) return true;
+      if (Object.prototype.hasOwnProperty.call(state.openChallengeGroups, category)) return state.openChallengeGroups[category];
+      return true;
+    }
     function statusLabel(challenge) {
       const status = challenge.latest_status || "not_run";
       const count = challenge.accepted_flag_count || 0;
-      const badgeClass = status === "flag_found" ? "badge" : (status === "not_run" ? "badge muted" : "badge warn");
+      const proof = proofLabel(challenge.proof || {status: challenge.proof_status || status});
+      const badgeClass = proof.verified ? "badge" : (status === "not_run" ? "badge muted" : "badge warn");
       const suffix = count ? ` · ${count} flag` : "";
-      return `<span class="${badgeClass}">${escapeHtml(status)}${escapeHtml(suffix)}</span>`;
+      return `<span class="${badgeClass}">${escapeHtml(proof.label || status)}${escapeHtml(suffix)}</span>`;
+    }
+    function proofLabel(proof) {
+      const status = (proof && (proof.status || proof.proof_status)) || "not_run";
+      const labels = {
+        flag_found: "Flag verified",
+        exploit_verified: "Exploit verified",
+        exploit_plan: "Exploit plan",
+        analysis_only: "Analysis only",
+        completed: "Completed",
+        not_run: "Not run"
+      };
+      return {
+        status,
+        label: (proof && proof.label) || labels[status] || status,
+        verified: !!(proof && proof.verified) || status === "flag_found" || status === "exploit_verified",
+        summary: (proof && proof.summary) || "",
+        next_action: (proof && proof.next_action) || "",
+        required_evidence: asList(proof && proof.required_evidence)
+      };
     }
     function tagChips(tags) {
       const values = asList(tags).filter(Boolean).slice(0, 5);
       if (!values.length) return "";
       return `<div class="tag-row">${values.map(tag => `<span class="tag-chip">${escapeHtml(tag)}</span>`).join("")}</div>`;
     }
+    function isSolvedStatus(status) {
+      return status === "flag_found" || status === "exploit_verified";
+    }
     function statusBucket(challenge) {
-      if ((challenge.accepted_flag_count || 0) > 0 || challenge.latest_status === "flag_found") return "solved";
+      const proof = proofLabel(challenge.proof || {status: challenge.proof_status || challenge.latest_status});
+      if ((challenge.accepted_flag_count || 0) > 0 || isSolvedStatus(challenge.latest_status) || isSolvedStatus(challenge.proof_status) || proof.verified) return "solved";
       if (challenge.latest_status && challenge.latest_status !== "not_run") return "ran";
       return "not_run";
     }
@@ -1137,6 +1748,8 @@ INDEX_HTML = r"""<!doctype html>
       if (tab === "observations") return intro + renderObservations(data);
       if (tab === "artifacts") return intro + renderArtifacts(data);
       if (tab === "report") return intro + renderReport(data);
+      if (tab === "benchmark") return intro + renderBenchmark(data);
+      if (tab === "health") return intro + renderSystemHealth(data);
       if (tab === "tools") return intro + renderToolRows(data, "工具可用性", "tool");
       if (tab === "catalog") return intro + renderToolRows(data, "项目目录", "catalog");
       return intro + renderRaw(data);
@@ -1149,6 +1762,8 @@ INDEX_HTML = r"""<!doctype html>
         observations: ["Observations", "跨 solver 共享的线索池，包括 LLM 建议、flag 候选和工具压缩摘要。"],
         artifacts: ["Artifacts", "确认上传附件是否已进入工作区，并查看文件大小、SHA256 和实际路径。"],
         report: ["Write-up", "只保留解题思路和复现步骤，方便照着复现拿 flag。"],
+        benchmark: ["Benchmark", "最新能力评测、证据分、UI flow 和角色 Backlog，用来判断 ForgeFlag 是否真的能打。"],
+        health: ["Health", "商业化健康检查：运行时、工具链、benchmark gate、LLM 和下一步修复建议。"],
         tools: ["Tools", "本机和 Docker 中可用的工具清单，以及缺失工具和验证命令。"],
         catalog: ["Catalog", "推荐集成的 CTF 项目目录，用来规划后续工具能力，不会自动安装。"],
       };
@@ -1168,7 +1783,8 @@ INDEX_HTML = r"""<!doctype html>
       if (!data || !data.challenge_id) {
         return `<div class="empty-state">还没有本轮运行摘要。点击“运行选中题目”后会在这里显示状态、flag 和执行路径。</div>`;
       }
-      const statusClass = data.status === "flag_found" ? "badge" : "badge muted";
+      const proof = proofLabel(data.proof || {status: data.proof_status || data.status});
+      const statusClass = proof.verified ? "badge" : "badge muted";
       const rejected = asList(data.rejected_flags);
       return `
         <div class="result-card">
@@ -1185,9 +1801,43 @@ INDEX_HTML = r"""<!doctype html>
             <div class="kv"><span>Observations</span><strong>${escapeHtml(data.observations ?? 0)}</strong></div>
             <div class="kv"><span>Rejected</span><strong>${rejected.length}</strong></div>
           </div>
+          <div class="kv">
+            <span>证明状态</span>
+            <strong>${escapeHtml(proof.label)}</strong>
+            <div class="meta">${escapeHtml(proof.summary || "等待 solver/verifier 证据。")}</div>
+            ${proof.next_action ? `<div class="meta">下一步：${escapeHtml(proof.next_action)}</div>` : ""}
+            ${proof.required_evidence.length ? `<div class="meta">所需证据：${proof.required_evidence.map(escapeHtml).join("；")}</div>` : ""}
+            ${proof && proof.summary ? "" : ""}
+          </div>
+          ${renderLLMStatus(data.llm_status)}
           ${rejected.length ? `<div class="meta">被拒候选：${rejected.map(escapeHtml).join(", ")}</div>` : ""}
           ${rawJson(data)}
         </div>`;
+    }
+    function renderLLMStatus(llm) {
+      if (!llm) return "";
+      const enabled = !!llm.enabled;
+      const state = llm.status || (enabled ? "unknown" : "disabled");
+      const provider = llm.provider || "disabled";
+      const model = llm.model || "";
+      const failed = enabled && ["config_error", "error", "unavailable", "timeout"].includes(String(state));
+      const title = failed ? "LLM 请求失败" : (enabled ? "LLM 已参与本轮规划" : "LLM 未启用");
+      const toneClass = failed ? "badge warn" : (enabled ? "badge" : "badge muted");
+      return `<div>
+        <div class="card-head">
+          <div class="card-title">
+            <h3>大模型运行状态</h3>
+            <div class="meta">${escapeHtml(title)}</div>
+          </div>
+          <span class="${toneClass}">${escapeHtml(state)}</span>
+        </div>
+        <div class="kv-grid">
+          <div class="kv"><span>provider</span><strong>${escapeHtml(provider)}</strong></div>
+          <div class="kv"><span>model</span><strong>${escapeHtml(model || "-")}</strong></div>
+          <div class="kv"><span>role</span><strong>planning only</strong><div class="meta">最终 flag 仍由 solver/verifier 证据确认。</div></div>
+        </div>
+        ${llm.error ? `<div class="meta">错误摘要：${escapeHtml(String(llm.error).slice(0, 360))}</div>` : ""}
+      </div>`;
     }
     function renderFindings(data) {
       const findings = asList(data);
@@ -1501,6 +2151,7 @@ INDEX_HTML = r"""<!doctype html>
             <div class="kv"><span>Tool Summaries</span><strong>${toolSummaries.length}</strong></div>
           </div>
         </div>
+        ${renderAgentGapCard(data, postRunCritics, findings, runRoster, roster)}
         ${renderAgentRoster(roster, runRoster)}
         <div class="result-card">
           <div class="card-head"><div class="card-title"><h3>LLM 规划</h3><div class="meta">模型给出的假设、工具建议和下一步。</div></div></div>
@@ -1532,6 +2183,75 @@ INDEX_HTML = r"""<!doctype html>
           ${rawJson(data)}
         </div>`;
     }
+    function renderAgentGapCard(data, postRunCritics, findings, runRoster, roster) {
+      const summary = data.summary || {};
+      const status = summary.status || "not_run";
+      const accepted = asList(summary.accepted_flags);
+      const rejected = asList(summary.rejected_flags);
+      const proof = proofLabel(summary.proof || {status: summary.proof_status || status});
+      const solved = accepted.length > 0 || proof.verified;
+      const criticEvidence = postRunCritics.map(obs => obs.evidence || {});
+      const missingEvidence = uniqueStrings(criticEvidence.flatMap(evidence => asList(evidence.missing_evidence)));
+      const proofMissing = proof.verified ? [] : proof.required_evidence;
+      const llmPlanEvidence = collectLLMPlans(findings, data.observations || []).map(entry => entry.plan || entry);
+      const llmBlocked = uniqueStrings(llmPlanEvidence.flatMap(plan => asList(plan.blocked_by_missing_artifacts)));
+      const llmManual = uniqueStrings(llmPlanEvidence.flatMap(plan => asList(plan.manual_replay_needed)));
+      const blockers = uniqueStrings(criticEvidence.flatMap(evidence => asList(evidence.blockers)));
+      const criticActions = uniqueStrings(criticEvidence.flatMap(evidence => asList(evidence.next_actions)));
+      const findingActions = uniqueStrings(findings.map(finding => finding.next_action).filter(Boolean));
+      const ownerRoles = ownerRolesForAgentGap(data, runRoster, roster);
+      const nextActions = uniqueStrings([...asList(proof.next_action), ...criticActions, ...llmManual, ...findingActions]).slice(0, 4);
+      const missingItems = uniqueStrings([...proofMissing, ...missingEvidence, ...llmBlocked]);
+      const tone = solved ? "badge" : "badge warn";
+      return `<div class="result-card">
+        <div class="card-head">
+          <div class="card-title">
+            <h3>Gap 卡片</h3>
+            <div class="meta">把本题当前状态、负责人角色和下一步动作收敛成一个 PM/QA 可跟踪项。</div>
+          </div>
+          <span class="${tone}">${escapeHtml(solved ? "no open gap" : "needs follow-up")}</span>
+        </div>
+        <div class="kv-grid">
+          <div class="kv"><span>运行状态</span><strong>${escapeHtml(status)}</strong><div class="meta">${escapeHtml(proof.summary || (solved ? "证据已验证。" : "尚未拿到 evidence-backed proof。"))}</div></div>
+          <div class="kv"><span>Proof</span><strong>${escapeHtml(proof.label)}</strong><div class="meta">${escapeHtml(proof.verified ? "可作为做出本题的证明。" : "还不能证明本题已做出。")}</div></div>
+          <div class="kv"><span>负责人角色</span><strong>${escapeHtml(ownerRoles.join(", ") || "ForgeFlagManager")}</strong><div class="meta">来自本轮 run roster 或当前 challenge category。</div></div>
+          <div class="kv"><span>拒绝候选</span><strong>${escapeHtml(String(rejected.length))}</strong><div class="meta">${rejected.length ? rejected.map(escapeHtml).join("；") : "暂无 rejected flag。"}</div></div>
+        </div>
+        <div class="kv">
+          <span>缺失证据</span>
+          <strong>${escapeHtml(missingItems.length ? missingItems.join("；") : (solved ? "无待补证据" : "未记录明确 missing_evidence"))}</strong>
+          ${blockers.length ? `<div class="meta">卡点：${blockers.map(escapeHtml).join("；")}</div>` : ""}
+        </div>
+        <div class="kv">
+          <span>下一步动作</span>
+          <strong>${escapeHtml(nextActions.length ? nextActions.join("；") : (solved ? "沉淀 casebook/playbook 或继续 benchmark。" : "检查 findings、补 proof-of-solve evidence，并重跑负责角色对应 benchmark。"))}</strong>
+        </div>
+      </div>`;
+    }
+    function ownerRolesForAgentGap(data, runRoster, roster) {
+      const excluded = new Set(["LLMRoutePlannerAgent", "EvidenceJudgeAgent", "BrowserPlayerQAAgent"]);
+      const active = asList(runRoster && runRoster.agents)
+        .filter(agent => agent && agent.solvers && asList(agent.solvers).length && !excluded.has(agent.name))
+        .map(agent => agent.name || agent.id)
+        .filter(Boolean);
+      if (active.length) return uniqueStrings(active);
+      const selected = selectedChallenge() || {};
+      const category = selected.category || (runRoster && runRoster.category) || "";
+      const configured = asList(roster && roster.agents)
+        .filter(agent => agent && agent.enabled !== false)
+        .filter(agent => !excluded.has(agent.name))
+        .filter(agent => {
+          const categories = asList(agent.categories);
+          return categories.includes(category) || (!category && categories.includes("*"));
+        })
+        .filter(agent => asList(agent.solvers).length)
+        .map(agent => agent.name || agent.id)
+        .filter(Boolean);
+      return configured.length ? uniqueStrings(configured) : ["ForgeFlagManager"];
+    }
+    function uniqueStrings(values) {
+      return [...new Set(values.map(value => String(value || "").trim()).filter(Boolean))];
+    }
     function renderAgentRoster(roster, runRoster) {
       const configured = asList(roster && roster.agents);
       const active = asList(runRoster && runRoster.agents);
@@ -1539,6 +2259,12 @@ INDEX_HTML = r"""<!doctype html>
       const policy = (roster && roster.subagent_work_policy) || (runRoster && runRoster.subagent_work_policy) || {};
       const activeIds = new Set(active.map(agent => agent.id));
       const rows = configured.length ? configured : active;
+      const previewList = (items, limit=3) => {
+        const values = asList(items);
+        if (!values.length) return "-";
+        const shown = values.slice(0, limit).map(escapeHtml).join("；");
+        return values.length > limit ? `${shown}；+${values.length - limit}` : shown;
+      };
       return `
         <div class="result-card">
           <div class="card-head">
@@ -1549,6 +2275,9 @@ INDEX_HTML = r"""<!doctype html>
             <span>Coordinator</span>
             <strong>${escapeHtml(coordinator.name || "ForgeFlagManager")}</strong>
             <div class="meta">${escapeHtml(coordinator.mission || "Coordinate scoped CTF solving and evidence-backed verification.")}</div>
+            <div class="meta">团队类型: ${escapeHtml(coordinator.team_type || "manager")} · 汇报给: ${escapeHtml(coordinator.reports_to || "project owner")} · 协作节奏: ${escapeHtml(coordinator.cadence || "continuous")}</div>
+            <div class="meta">success_metrics: ${previewList(coordinator.success_metrics)}</div>
+            <div class="meta">deliverables: ${previewList(coordinator.deliverables)}</div>
           </div>
           <div class="kv-grid">
             <div class="kv"><span>Subagent 工作机制</span><strong>${escapeHtml(policy.mode || "conservative")}</strong><div class="meta">默认本地验证优先，避免把同一问题拆成过多并发请求。</div></div>
@@ -1560,6 +2289,9 @@ INDEX_HTML = r"""<!doctype html>
               <span>${activeIds.has(agent.id) ? "本轮参与" : (agent.enabled === false ? "已停用" : "常驻待命")}</span>
               <strong>${escapeHtml(agent.name || agent.id || "Agent")}</strong>
               <div class="meta">${escapeHtml(agent.mission || "")}</div>
+              <div class="meta">团队类型: ${escapeHtml(agent.team_type || "stream-aligned")} · 汇报给: ${escapeHtml(agent.reports_to || "forgeflag-manager")} · 协作节奏: ${escapeHtml(agent.cadence || "per challenge")}</div>
+              <div class="meta">success_metrics: ${previewList(agent.success_metrics)}</div>
+              <div class="meta">deliverables: ${previewList(agent.deliverables)}</div>
               <div class="meta">solvers: ${escapeHtml(asList(agent.solvers).join(", ") || "-")} · tools: ${escapeHtml(asList(agent.tools).join(", ") || "-")}</div>
             </div>`).join("") : `<div class="empty-state">暂无 Agent roster。运行 forgeflag agents --write-default 可以生成项目配置。</div>`}
         </div>`;
@@ -1580,15 +2312,24 @@ INDEX_HTML = r"""<!doctype html>
       const solvers = asList(plan.suggested_solvers);
       const tools = asList(plan.tool_hints);
       const expected = asList(plan.expected_evidence);
+      const artifactRequirements = asList(plan.artifact_requirements);
+      const blocked = asList(plan.blocked_by_missing_artifacts);
+      const manualReplay = asList(plan.manual_replay_needed);
+      const riskNotes = asList(plan.risk_notes);
       return `<div class="kv">
         <span>${escapeHtml(entry.source || "LLM")}</span>
         <strong>${escapeHtml(plan.summary || entry.finding || "LLM plan")}</strong>
+        ${plan.analysis_mode ? `<div class="meta">分析模式：${escapeHtml(plan.analysis_mode)}</div>` : ""}
         ${hypotheses.length ? `<div class="meta">假设：${hypotheses.map(escapeHtml).join("；")}</div>` : ""}
         ${actions.length ? `<div class="meta">下一步：${actions.map(escapeHtml).join("；")}</div>` : ""}
         ${solvers.length ? `<div class="meta">建议 solver：${solvers.map(escapeHtml).join(", ")}</div>` : ""}
         ${tools.length ? `<div class="meta">工具提示：${tools.map(escapeHtml).join(", ")}</div>` : ""}
         ${expected.length ? `<div class="meta">期望证据：${expected.map(escapeHtml).join("；")}</div>` : ""}
-        ${plan.fallback_plan ? `<div class="meta">Fallback：${escapeHtml(plan.fallback_plan)}</div>` : ""}
+        ${artifactRequirements.length ? `<div class="meta">artifact_requirements / 所需附件：${artifactRequirements.map(escapeHtml).join("；")}</div>` : ""}
+        ${blocked.length ? `<div class="meta">blocked_by_missing_artifacts / 缺失附件/证据：${blocked.map(escapeHtml).join("；")}</div>` : ""}
+        ${manualReplay.length ? `<div class="meta">manual_replay_needed / 人工复现：${manualReplay.map(escapeHtml).join("；")}</div>` : ""}
+        ${riskNotes.length ? `<div class="meta">risk_notes / 风险提示：${riskNotes.map(escapeHtml).join("；")}</div>` : ""}
+        ${asList(plan.fallback_plan).length ? `<div class="meta">Fallback：${asList(plan.fallback_plan).map(escapeHtml).join("；")}</div>` : ""}
       </div>`;
     }
     function renderActionQueue(obs) {
@@ -1598,14 +2339,23 @@ INDEX_HTML = r"""<!doctype html>
       const unknown = asList(evidence.unknown_solvers);
       const actions = asList(evidence.next_actions);
       const tools = asList(evidence.tool_hints);
+      const artifactRequirements = asList(evidence.artifact_requirements);
+      const blocked = asList(evidence.blocked_by_missing_artifacts);
+      const manualReplay = asList(evidence.manual_replay_needed);
+      const riskNotes = asList(evidence.risk_notes);
       return `<div class="kv">
         <span>${escapeHtml(obs.source || "Manager")}</span>
         <strong>${escapeHtml(obs.summary || "LLM action queue")}</strong>
+        ${evidence.analysis_mode ? `<div class="meta">分析模式：${escapeHtml(evidence.analysis_mode)}</div>` : ""}
         ${queued.length ? `<div class="meta">排队 solver：${queued.map(escapeHtml).join(", ")}</div>` : ""}
         ${already.length ? `<div class="meta">已在队列：${already.map(escapeHtml).join(", ")}</div>` : ""}
         ${unknown.length ? `<div class="meta">无效建议：${unknown.map(escapeHtml).join(", ")}</div>` : ""}
         ${actions.length ? `<div class="meta">下一步：${actions.map(escapeHtml).join("；")}</div>` : ""}
         ${tools.length ? `<div class="meta">工具提示：${tools.map(escapeHtml).join(", ")}</div>` : ""}
+        ${artifactRequirements.length ? `<div class="meta">行动队列所需附件：${artifactRequirements.map(escapeHtml).join("；")}</div>` : ""}
+        ${blocked.length ? `<div class="meta">行动队列缺失证据：${blocked.map(escapeHtml).join("；")}</div>` : ""}
+        ${manualReplay.length ? `<div class="meta">行动队列人工复现：${manualReplay.map(escapeHtml).join("；")}</div>` : ""}
+        ${riskNotes.length ? `<div class="meta">行动队列风险提示：${riskNotes.map(escapeHtml).join("；")}</div>` : ""}
       </div>`;
     }
     function renderPostRunCritic(obs) {
@@ -1615,14 +2365,23 @@ INDEX_HTML = r"""<!doctype html>
       const solvers = asList(evidence.suggested_solvers);
       const tools = asList(evidence.tool_hints);
       const actions = asList(evidence.next_actions);
+      const artifactRequirements = asList(evidence.artifact_requirements);
+      const blocked = asList(evidence.blocked_by_missing_artifacts);
+      const manualReplay = asList(evidence.manual_replay_needed);
+      const riskNotes = asList(evidence.risk_notes);
       return `<div class="kv">
         <span>${escapeHtml(evidence.provider || obs.source || "LLMCritic")}</span>
         <strong>${escapeHtml(evidence.summary || obs.summary || "Post-run critic")}</strong>
+        ${evidence.analysis_mode ? `<div class="meta">分析模式：${escapeHtml(evidence.analysis_mode)}</div>` : ""}
         ${blockers.length ? `<div class="meta">卡点：${blockers.map(escapeHtml).join("；")}</div>` : ""}
         ${missing.length ? `<div class="meta">缺失证据：${missing.map(escapeHtml).join("；")}</div>` : ""}
         ${solvers.length ? `<div class="meta">建议 solver：${solvers.map(escapeHtml).join(", ")}</div>` : ""}
         ${tools.length ? `<div class="meta">工具路线：${tools.map(escapeHtml).join(", ")}</div>` : ""}
         ${actions.length ? `<div class="meta">下一轮：${actions.map(escapeHtml).join("；")}</div>` : ""}
+        ${artifactRequirements.length ? `<div class="meta">artifact_requirements / 所需附件：${artifactRequirements.map(escapeHtml).join("；")}</div>` : ""}
+        ${blocked.length ? `<div class="meta">blocked_by_missing_artifacts / 缺失附件/证据：${blocked.map(escapeHtml).join("；")}</div>` : ""}
+        ${manualReplay.length ? `<div class="meta">manual_replay_needed / 人工复现：${manualReplay.map(escapeHtml).join("；")}</div>` : ""}
+        ${riskNotes.length ? `<div class="meta">risk_notes / 风险提示：${riskNotes.map(escapeHtml).join("；")}</div>` : ""}
         ${evidence.rerun_reason ? `<div class="meta">重跑理由：${escapeHtml(evidence.rerun_reason)}</div>` : ""}
         ${evidence.error ? `<div class="meta">Error：${escapeHtml(evidence.error)}</div>` : ""}
       </div>`;
@@ -1738,10 +2497,228 @@ INDEX_HTML = r"""<!doctype html>
       const allowed = new Map(sections.filter(section => writeupSectionOrder.includes(section.title)).map(section => [section.title, section]));
       return writeupSectionOrder.map(title => allowed.get(title)).filter(Boolean);
     }
+    function renderBenchmark(data) {
+      const scorecard = data && data.scorecard;
+      if (!scorecard) {
+        return `<div class="result-card">
+          <div class="card-head">
+            <div class="card-title">
+              <h3>最新能力评测</h3>
+              <div class="meta">还没有保存过 capability benchmark scorecard。</div>
+            </div>
+            <span class="badge warn">missing</span>
+          </div>
+          <div class="kv">
+            <span>生成命令</span>
+            <strong>${escapeHtml(data && data.refresh_command ? data.refresh_command : "scripts/forgeflag-capability-benchmark --output .forgeflag/capability-benchmark-latest.json")}</strong>
+            <div class="meta">建议先跑 smoke 或 manifest-only，再回到本页刷新 Benchmark tab。</div>
+          </div>
+        </div>${renderBenchmarkHistory(asList(data && data.history))}${rawJson(data)}`;
+      }
+      const totals = scorecard.totals || {};
+      const rates = scorecard.rates || {};
+      const readiness = scorecard.readiness || {};
+      const backlog = asList(scorecard.backlog);
+      const backlogByRole = scorecard.backlog_by_role || {};
+      const roles = scorecard.roles || {};
+      const roleNames = Object.keys(backlogByRole).sort((a, b) => (backlogByRole[b].total || 0) - (backlogByRole[a].total || 0));
+      const roleRows = roleNames.length ? roleNames.map(role => {
+        const item = backlogByRole[role] || {};
+        const categories = Object.entries(item.categories || {}).map(([key, value]) => `${key}:${value}`).join(", ") || "-";
+        const suites = Object.entries(item.suites || {}).map(([key, value]) => `${key}:${value}`).join(", ") || "-";
+        return `<div class="kv">
+          <span>${escapeHtml(role)}</span>
+          <strong>${escapeHtml(item.total || 0)} open</strong>
+          <div class="meta">categories: ${escapeHtml(categories)}</div>
+          <div class="meta">suites: ${escapeHtml(suites)}</div>
+        </div>`;
+      }).join("") : `<div class="empty-state">当前 scorecard 没有角色 Backlog。</div>`;
+      const taskRows = backlog.length ? backlog.slice(0, 12).map(item => `
+        <div class="kv">
+          <span>${escapeHtml(item.suite || "suite")} · ${escapeHtml(item.category || "unknown")}</span>
+          <strong>${escapeHtml(item.challenge_id || "unknown")}</strong>
+          <div class="meta">owner: ${escapeHtml(asList(item.owner_roles).join(", ") || "ForgeFlagManager")}</div>
+          <div class="meta">reason: ${escapeHtml(item.reason || item.status || "failed")}</div>
+          <div class="meta">next: ${escapeHtml(item.next_action || "replay and add a regression")}</div>
+        </div>`).join("") : `<div class="empty-state">没有开放任务；继续用 held-out manifest 验证泛化能力。</div>`;
+      const roleHealth = Object.entries(roles).slice(0, 8).map(([role, item]) => `
+        <div class="kv">
+          <span>${escapeHtml(role)}</span>
+          <strong>${escapeHtml(item.passed ?? 0)} / ${escapeHtml(item.total ?? 0)}</strong>
+          <div class="meta">evidence: ${escapeHtml(item.hard_score ?? 0)} / ${escapeHtml(item.hard_max_score ?? 0)} · ui: ${escapeHtml(item.ui_passed ?? 0)} / ${escapeHtml(item.ui_total ?? 0)}</div>
+        </div>`).join("");
+      return `
+        <div class="result-card">
+          <div class="card-head">
+            <div class="card-title">
+              <h3>最新能力评测</h3>
+              <div class="meta">${escapeHtml(data.path || "")}</div>
+            </div>
+            <span class="${Number(totals.failed || 0) ? "badge warn" : "badge"}">${escapeHtml(Number(totals.failed || 0) ? "needs work" : "green")}</span>
+          </div>
+          <div class="kv-grid">
+            <div class="kv"><span>Cases</span><strong>${escapeHtml(totals.passed ?? 0)} / ${escapeHtml(totals.cases ?? 0)}</strong><div class="meta">failed: ${escapeHtml(totals.failed ?? 0)}</div></div>
+            <div class="kv"><span>Evidence score</span><strong>${escapeHtml(totals.hard_score ?? 0)} / ${escapeHtml(totals.hard_max_score ?? 0)}</strong><div class="meta">rate: ${formatRate(rates.evidence_score_rate)}</div></div>
+            <div class="kv"><span>UI flow</span><strong>${escapeHtml(totals.ui_passed ?? 0)} / ${escapeHtml(totals.ui_total ?? 0)}</strong><div class="meta">rate: ${formatRate(rates.ui_flow_rate)}</div></div>
+          </div>
+          <div class="kv">
+            <span>刷新命令</span>
+            <strong>${escapeHtml(data.refresh_command || "scripts/forgeflag-capability-benchmark --output .forgeflag/capability-benchmark-latest.json")}</strong>
+          </div>
+        </div>
+        ${renderBenchmarkReadiness(readiness)}
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>角色 Backlog</h3><div class="meta">按负责人聚合失败项，方便 manager 分派下一轮优化。</div></div></div>
+          <div class="kv-grid">${roleRows}</div>
+        </div>
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>Backlog tasks</h3><div class="meta">${backlog.length} open items</div></div></div>
+          ${taskRows}
+        </div>
+        <div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>Role health</h3><div class="meta">角色级 pass/evidence/UI 归因。</div></div></div>
+          <div class="kv-grid">${roleHealth || `<div class="empty-state">暂无角色归因。</div>`}</div>
+        </div>
+        ${renderBenchmarkHistory(asList(data.history))}
+        ${rawJson(data)}`;
+    }
+    function renderBenchmarkReadiness(readiness) {
+      const status = readiness && readiness.status ? readiness.status : "unknown";
+      const coverage = readiness && readiness.coverage ? readiness.coverage : {};
+      const warnings = asList(readiness && readiness.warnings);
+      const actions = asList(readiness && readiness.next_actions);
+      const badgeClass = status === "ready" ? "badge" : status === "limited" ? "badge warn" : "badge warn";
+      const coverageRows = [
+        ["Hard evidence", coverage.hard_evidence],
+        ["UI flow", coverage.ui_flow],
+        ["Held-out manifest", coverage.heldout_manifest]
+      ].map(([label, ok]) => `
+        <div class="kv">
+          <span>${escapeHtml(label)}</span>
+          <strong>${ok ? "covered" : "missing"}</strong>
+        </div>`).join("");
+      const warningRows = warnings.length ? warnings.map(item => `<li>${escapeHtml(item)}</li>`).join("") : "<li>当前 scorecard 没有阻断项。</li>";
+      const actionRows = actions.length ? actions.map(item => `<li>${escapeHtml(item)}</li>`).join("") : "<li>继续用新的 held-out CTF artifact 做周期性回归。</li>";
+      return `<div class="result-card">
+        <div class="card-head">
+          <div class="card-title">
+            <h3>实战就绪度</h3>
+            <div class="meta">${escapeHtml(readiness.summary || "根据失败、backlog、hard evidence、UI flow 和 held-out 覆盖判定。")}</div>
+          </div>
+          <span class="${badgeClass}">${escapeHtml(status)}</span>
+        </div>
+        <div class="kv-grid">${coverageRows}</div>
+        <div class="kv">
+          <span>Warnings</span>
+          <ol class="steps">${warningRows}</ol>
+        </div>
+        <div class="kv">
+          <span>Next actions</span>
+          <ol class="steps">${actionRows}</ol>
+        </div>
+      </div>`;
+    }
+    function renderBenchmarkHistory(history) {
+      const rows = asList(history).slice(-8).reverse();
+      if (!rows.length) {
+        return `<div class="result-card">
+          <div class="card-head"><div class="card-title"><h3>Benchmark history</h3><div class="meta">历史趋势会在使用 --history 后出现。</div></div></div>
+          <div class="empty-state">暂无历史记录。</div>
+        </div>`;
+      }
+      return `<div class="result-card">
+        <div class="card-head"><div class="card-title"><h3>Benchmark history</h3><div class="meta">最近 ${rows.length} 次能力评测趋势。</div></div></div>
+        <div class="kv-grid">
+          ${rows.map(record => {
+            const card = record.scorecard || {};
+            const totals = card.totals || {};
+            const backlog = asList(card.backlog);
+            return `<div class="kv">
+              <span>${escapeHtml(record.recorded_at || "record")}</span>
+              <strong>${escapeHtml(totals.passed ?? 0)} / ${escapeHtml(totals.cases ?? 0)}</strong>
+              <div class="meta">failed: ${escapeHtml(totals.failed ?? 0)} · backlog: ${escapeHtml(backlog.length)}</div>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>`;
+    }
+    function renderSystemHealth(data) {
+      const checks = asList(data && data.checks);
+      const nextActions = asList(data && data.next_actions);
+      const core = (data && data.core_readiness) || {};
+      const readiness = (data && data.commercial_readiness) || {};
+      const counts = (data && data.counts) || {};
+      const status = (data && data.status) || "unknown";
+      const diagnostic = (data && data.diagnostic_bundle) || {};
+      const service = diagnostic.service || {};
+      const llm = diagnostic.llm || {};
+      const supportSummary = asList(diagnostic.support_summary);
+      const badgeClass = status === "ready" ? "badge" : "badge warn";
+      const checkRows = checks.length ? checks.map(check => {
+        const tone = check.status === "ok" ? "badge" : "badge warn";
+        const actions = asList(check.next_actions);
+        return `<div class="kv">
+          <span>${escapeHtml(check.label || check.id || "check")}</span>
+          <strong>${escapeHtml(check.summary || "")}</strong>
+          <div class="meta"><span class="${tone}">${escapeHtml(check.status || "unknown")}</span></div>
+          ${actions.length ? `<div class="meta">next: ${actions.map(escapeHtml).join("；")}</div>` : ""}
+        </div>`;
+      }).join("") : `<div class="empty-state">暂无健康检查数据。</div>`;
+      const actionRows = nextActions.length ? nextActions.map(action => `<li>${escapeHtml(action)}</li>`).join("") : "<li>继续周期性运行 benchmark 和工具 smoke。</li>";
+      return `<div class="result-card">
+        <div class="card-head">
+          <div class="card-title">
+            <h3>商业化健康检查</h3>
+            <div class="meta">${escapeHtml((data && data.summary) || "Runtime readiness gate")}</div>
+          </div>
+          <span class="${badgeClass}">${escapeHtml(status)}</span>
+        </div>
+        <div class="kv-grid">
+          <div class="kv"><span>核心解题能力</span><strong>${escapeHtml(core.status || "unknown")}</strong><div class="meta">${escapeHtml(core.summary || "Core solving readiness")}</div></div>
+          <div class="kv"><span>Commercial readiness</span><strong>${escapeHtml(readiness.status || status)}</strong><div class="meta">${escapeHtml(readiness.label || "Commercial readiness")}</div></div>
+          <div class="kv"><span>Checks</span><strong>${escapeHtml(counts.ok ?? 0)} ok</strong><div class="meta">warnings: ${escapeHtml(counts.warnings ?? 0)} · errors: ${escapeHtml(counts.errors ?? 0)}</div></div>
+          <div class="kv"><span>Generated</span><strong>${escapeHtml((data && data.generated_at) || "-")}</strong></div>
+        </div>
+      </div>
+      <div class="result-card">
+        <div class="card-head"><div class="card-title"><h3>Readiness checks</h3><div class="meta">运行时、工具链、benchmark gate、LLM 配置。</div></div></div>
+        <div class="kv-grid">${checkRows}</div>
+      </div>
+      <div class="result-card">
+        <div class="card-head">
+          <div class="card-title">
+            <h3>Diagnostic bundle</h3>
+            <div class="meta">脱敏支持包，用于定位网页端、solver、工具链或 LLM 接入问题。</div>
+          </div>
+          <span class="badge muted">bundle v${escapeHtml(diagnostic.bundle_version || 1)}</span>
+        </div>
+        <div class="kv-grid">
+          <div class="kv"><span>ForgeFlag</span><strong>${escapeHtml(service.version || "-")}</strong><div class="meta">${escapeHtml(service.platform || "-")}</div></div>
+          <div class="kv"><span>Python</span><strong>${escapeHtml(service.python || "-")}</strong><div class="meta">pid: ${escapeHtml(service.pid || "-")}</div></div>
+          <div class="kv"><span>Notebook</span><strong>${escapeHtml(service.db_path || "-")}</strong></div>
+          <div class="kv"><span>LLM</span><strong>${escapeHtml(llm.provider || "-")} / ${escapeHtml(llm.model || "-")}</strong><div class="meta">enabled: ${escapeHtml(llm.enabled ?? false)} · key: ${llm.api_key_configured ? "configured" : "missing"}</div></div>
+        </div>
+        <div class="kv">
+          <span>Support summary</span>
+          <ol class="steps">${supportSummary.length ? supportSummary.map(item => `<li>${escapeHtml(item)}</li>`).join("") : "<li>暂无摘要。</li>"}</ol>
+        </div>
+      </div>
+      <div class="result-card">
+        <div class="card-head"><div class="card-title"><h3>Next actions</h3><div class="meta">优先处理阻断项，再补 optional profile 或 LLM。</div></div></div>
+        <ol class="steps">${actionRows}</ol>
+        ${rawJson(data)}
+      </div>`;
+    }
+    function formatRate(value) {
+      if (value === null || value === undefined) return "n/a";
+      return `${Math.round(Number(value) * 1000) / 10}%`;
+    }
     function renderToolRows(data, title, kind) {
       if (kind === "tool" && data && !Array.isArray(data) && (data.wrappers || data.catalog)) {
         const wrappers = asList(data.wrappers);
         const catalog = asList(data.catalog);
+        const analysisHints = asList(data.analysis_hints);
+        const profiles = asList(data.docker_profiles);
         const counts = data.counts || {};
         const smoke = data.runtime_smoke || {};
         return `
@@ -1749,8 +2726,8 @@ INDEX_HTML = r"""<!doctype html>
             <div class="card-head">
               <div class="card-title">
                 <h3>工具总览</h3>
-                <div class="meta">${escapeHtml(counts.available_wrappers ?? 0)} / ${escapeHtml(counts.wrappers ?? wrappers.length)} wrappers available · ${escapeHtml(counts.catalog ?? catalog.length)} catalog entries</div>
-                <div class="meta">推荐 CTF 工具目录已按分类折叠，展开分组查看明细。</div>
+                <div class="meta">${escapeHtml(counts.available_wrappers ?? 0)} / ${escapeHtml(counts.wrappers ?? wrappers.length)} wrappers available · ${escapeHtml(counts.catalog ?? catalog.length)} catalog entries · ${escapeHtml(counts.analysis_hints ?? analysisHints.length)} analysis hints</div>
+                <div class="meta">推荐 CTF 工具目录和分析提示已按分类折叠，展开分组查看明细。</div>
               </div>
               <span class="badge muted">host/docker</span>
             </div>
@@ -1758,6 +2735,7 @@ INDEX_HTML = r"""<!doctype html>
               <div class="kv"><span>Host</span><strong>${escapeHtml(counts.host_wrappers ?? wrappers.filter(row => row.source === "host").length)}</strong></div>
               <div class="kv"><span>Docker</span><strong>${escapeHtml(counts.docker_wrappers ?? wrappers.filter(row => row.source === "docker").length)}</strong></div>
               <div class="kv"><span>Missing</span><strong>${escapeHtml(counts.missing_wrappers ?? wrappers.filter(row => row.source === "missing").length)}</strong></div>
+              <div class="kv"><span>Heavy profiles</span><strong>${escapeHtml(counts.available_docker_profiles ?? profiles.filter(row => row.available).length)} / ${escapeHtml(counts.docker_profiles ?? profiles.length)}</strong></div>
             </div>
             <div class="kv">
               <span>Docker install</span>
@@ -1771,7 +2749,8 @@ INDEX_HTML = r"""<!doctype html>
               <div class="meta">Active probes are scoped and opt-in: ${escapeHtml(smoke.active_network_command || "scripts/forgeflag-tool-smoke --include-active-network")}</div>
             </div>
           </div>
-          ${renderToolGroups(wrappers, catalog)}
+          ${renderAnalysisHintGroups(analysisHints)}
+          ${renderToolGroups(wrappers, catalog, profiles)}
           ${rawJson(data)}`;
       }
       const rows = asList(data);
@@ -1784,38 +2763,76 @@ INDEX_HTML = r"""<!doctype html>
         <div class="result-card">
           <div class="card-head"><div class="card-title"><h3>${escapeHtml(title)}</h3><div class="meta">${rows.length} entries</div></div></div>
           ${rows.map(row => {
-            const name = row.name || row.tool || "entry";
-            const badge = kind === "tool" ? (row.available ? "available" : "missing") : (row.integration || row.category || "catalog");
-            const badgeClass = badge === "missing" ? "badge warn" : "badge muted";
+            const name = row.name || row.title || row.tool || row.id || "entry";
+            const badge = kind === "tool"
+              ? (row.available ? "available" : "missing")
+              : (kind === "profile" ? (row.available ? "built" : "not built") : (kind === "analysis_hint" ? (row.status || "hint") : (row.integration || row.category || "catalog")));
+            const badgeClass = (badge === "missing" || badge === "not built") ? "badge warn" : "badge muted";
             const categories = row.categories ? row.categories.join(", ") : (row.category || "");
             const description = row.description || row.purpose || row.notes || "";
+            const signals = asList(row.signals).length ? `<div class="meta">Signals: ${asList(row.signals).map(escapeHtml).join("；")}</div>` : "";
+            const steps = asList(row.recommended_steps).length ? `<div class="meta">Next: ${asList(row.recommended_steps).map(escapeHtml).join("；")}</div>` : "";
+            const solverPaths = asList(row.solver_paths).length ? `<div class="meta">Paths: ${asList(row.solver_paths).map(escapeHtml).join(", ")}</div>` : "";
+            const docs = asList(row.docs).length ? `<div class="meta">Docs: ${asList(row.docs).map(escapeHtml).join(", ")}</div>` : "";
             const install = row.install_hint ? `<div class="meta">Install: ${escapeHtml(row.install_hint)}</div>` : "";
+            const build = row.build_command ? `<div class="meta">Build: ${escapeHtml(row.build_command)}</div>` : "";
+            const verify = row.verify_command ? `<div class="meta">Verify: ${escapeHtml(row.verify_command)}</div>` : "";
             const source = kind === "tool" && row.source ? `<div class="meta">Source: ${escapeHtml(row.source)}</div>` : "";
             return `<div class="kv">
               <span>${escapeHtml(categories || row.integration || "")}</span>
               <strong>${escapeHtml(name)}</strong>
-              <div class="meta">${escapeHtml(description)}</div>
+              ${row.id ? `<div class="meta">ID: ${escapeHtml(row.id)}</div>` : ""}
+              ${description ? `<div class="meta">${escapeHtml(description)}</div>` : ""}
               ${row.why ? `<div class="meta">${escapeHtml(row.why)}</div>` : ""}
+              ${signals}
+              ${steps}
+              ${solverPaths}
+              ${docs}
               ${source}
               ${install}
+              ${build}
+              ${verify}
               <span class="${badgeClass}">${escapeHtml(badge)}</span>
             </div>`;
           }).join("")}
         </div>`;
     }
-    function renderToolGroups(wrappers, catalog) {
+    function renderToolGroups(wrappers, catalog, profiles) {
       const wrapperGroups = [
         ["Host wrappers", wrappers.filter(row => row.source === "host"), "本机可直接调用"],
         ["Docker wrappers", wrappers.filter(row => row.source === "docker"), "通过容器自动 fallback"],
         ["Missing wrappers", wrappers.filter(row => row.source === "missing"), "当前不可调用"]
       ];
       const wrapperHtml = wrapperGroups.map(([title, rows, note]) => renderToolGroup(title, rows, "tool", note, rows.length > 0 && title === "Missing wrappers")).join("");
+      const profileHtml = renderToolGroup(
+        "Heavyweight profiles",
+        profiles,
+        "profile",
+        "按需单独构建的大型 Docker 镜像",
+        profiles.some(row => !row.available)
+      );
       const catalogGroups = groupRows(catalog, row => (row.categories && row.categories[0]) || row.category || "other");
       const catalogHtml = groupOrder(catalogGroups, categories).map(category => {
         const rows = catalogGroups[category] || [];
         return renderToolGroup(`Catalog: ${categoryLabels[category] || category}`, rows, "catalog", "推荐工具目录", false);
       }).join("");
-      return wrapperHtml + catalogHtml;
+      return wrapperHtml + profileHtml + catalogHtml;
+    }
+    function renderAnalysisHintGroups(hints) {
+      const groups = groupRows(hints, row => row.category || "other");
+      const html = groupOrder(groups, categories).map(category => {
+        const rows = groups[category] || [];
+        return renderToolGroup(`Hints: ${categoryLabels[category] || category}`, rows, "analysis_hint", "推荐分析提示", false);
+      }).join("");
+      return `<div class="result-card">
+        <div class="card-head">
+          <div class="card-title">
+            <h3>推荐分析提示</h3>
+            <div class="meta">来自 casebook/playbook 和近期 solve 脚本，用于减少做题经验与主功能漂移。</div>
+          </div>
+          <span class="badge muted">analysis hints</span>
+        </div>
+      </div>${html}`;
     }
     function renderToolGroup(title, rows, kind, note, open) {
       return `<details class="tool-group" ${open ? "open" : ""}>
@@ -1879,38 +2896,105 @@ INDEX_HTML = r"""<!doctype html>
         "#!/usr/bin/env python3",
         "from pwn import *",
         "import argparse",
+        "import sys",
         "",
         "parser = argparse.ArgumentParser(description='pwntools exploit template')",
         "parser.add_argument('--remote', action='store_true', help='connect to remote HOST:PORT instead of local process')",
         "parser.add_argument('--host', default='127.0.0.1')",
         "parser.add_argument('--port', type=int, default=31337)",
         `parser.add_argument('--binary', default=${binaryLiteral})`,
+        "parser.add_argument('--libc', default='', help='optional shipped libc path')",
+        "parser.add_argument('--gdb', action='store_true', help='attach gdb in local debug mode')",
+        "parser.add_argument('--proof', action='store_true', help='run cat flag and verify the local test flag after exploit')",
         "args = parser.parse_args()",
         "",
-        "context.binary = ELF(args.binary, checksec=False)",
-        "context.log_level = 'info'",
+        "DEBUG = not args.remote",
+        "elf = ELF(args.binary, checksec=False)",
+        "libc = ELF(args.libc, checksec=False) if args.libc else None",
+        "context.binary = elf",
+        "context.log_level = 'debug' if DEBUG else 'info'",
+        "context.terminal = ['tmux', 'splitw', '-v']",
+        "TEST_FLAG = b'flag{forgeflag_local_pwn_test}'",
         "",
         "def start():",
         "    if args.remote:",
         "        return remote(args.host, args.port)",
         "    return process(args.binary)",
         "",
+        "def debugf():",
+        "    if DEBUG and args.gdb:",
+        "        gdb.attach(io, gdbscript='''",
+        "# b *main",
+        "continue",
+        "''')",
+        "",
+        "def sla(delim, data):",
+        "    return io.sendlineafter(delim, data if isinstance(data, bytes) else str(data).encode())",
+        "",
+        "def sa(delim, data):",
+        "    return io.sendafter(delim, data if isinstance(data, bytes) else str(data).encode())",
+        "",
+        "def ru(delim):",
+        "    return io.recvuntil(delim)",
+        "",
+        "# Menu helper placeholders: rename prompts and choices to match the challenge.",
+        "def Add(size, content):",
+        "    sla(b'Your choice: ', b'2')",
+        "    sla(b'Length: ', size)",
+        "    sa(b'Content: ', content)",
+        "",
+        "def Delete(index):",
+        "    sla(b'Your choice: ', b'4')",
+        "    sla(b'Index: ', index)",
+        "",
+        "def Edit(index, size, content):",
+        "    sla(b'Your choice: ', b'3')",
+        "    sla(b'Index: ', index)",
+        "    sla(b'Length: ', size)",
+        "    sa(b'Content: ', content)",
+        "",
+        "def Show():",
+        "    sla(b'Your choice: ', b'1')",
+        "    return ru(b'Your choice: ')",
+        "",
+        "def leak():",
+        "    # Keep heap/libc/code leaks here and log every derived base.",
+        "    # log.success(f'libc_base: {hex(libc.address)}')",
+        "    return {}",
+        "",
+        "def exploit(leaks):",
+        "    # Replace this with cyclic_find(crash_value) after reproducing the crash in gdb.",
+        "    offset = cyclic_find(0x6161616c)",
+        "    if offset < 0:",
+        "        offset = cyclic_find(b'laaa')",
+        "",
+        "    payload = flat({",
+        "        0: b'A' * offset,",
+        "        # offset: p64(0xdeadbeef),",
+        "    })",
+        "",
+        "    # Adjust sendlineafter() to match the target prompt.",
+        "    # sla(b'> ', payload)",
+        "    io.sendline(payload)",
+        "",
+        "def proof():",
+        "    # local test flag proof: only use after the exploit gives shell or command execution.",
+        "    io.sendline(b'cat flag')",
+        "    data = io.recvrepeat(1)",
+        "    print(data.decode(errors='replace'))",
+        "    if TEST_FLAG not in data:",
+        "        log.failure('local test flag was not recovered')",
+        "        raise SystemExit(2)",
+        "    log.success('local test flag proof verified')",
+        "",
         "io = start()",
-        "",
-        "# Replace this with cyclic_find(crash_value) after reproducing the crash in gdb.",
-        "offset = cyclic_find(0x6161616c)",
-        "if offset < 0:",
-        "    offset = cyclic_find(b'laaa')",
-        "",
-        "payload = flat({",
-        "    0: b'A' * offset,",
-        "    # offset: p64(0xdeadbeef),",
-        "})",
-        "",
-        "# Adjust sendlineafter() to match the target prompt.",
-        "# io.sendlineafter(b'> ', payload)",
-        "io.sendline(payload)",
-        "io.interactive()",
+        "debugf()",
+        "leaks = leak()",
+        "exploit(leaks)",
+        "if args.proof:",
+        "    proof()",
+        "else:",
+        "    io.interactive()",
       ].join("\n");
     }
     function downloadExploitTemplate() {
@@ -1943,6 +3027,7 @@ INDEX_HTML = r"""<!doctype html>
         'docker run --rm -it --platform linux/amd64 -p 31337:31337 -v "$PWD:/workspace" -w /workspace forgeflag-ctf:latest bash'
       ].join("\n");
       const serviceCommand = [
+        `printf '%s\\n' 'flag{forgeflag_local_pwn_test}' > flag`,
         `chmod +x ${quotedArtifact}`,
         `socat TCP-LISTEN:31337,reuseaddr,fork EXEC:${quotedArtifact},pty,stderr`
       ].join("\n");
@@ -2024,7 +3109,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     async function runSelected() {
       if (!state.selected) {
-        status("请先选择一道题目", "error");
+        status($("challengeId").value.trim() ? "请先保存题目或从列表选择已有题目" : "请先选择一道题目", "error");
         return false;
       }
       if (!ensureLLMReady()) return false;
@@ -2109,15 +3194,19 @@ INDEX_HTML = r"""<!doctype html>
     }
     async function loadTab(tab) {
       document.querySelectorAll(".tabs button").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tab));
+      const activeButton = document.querySelector(`.tabs button[data-tab="${tab}"]`);
+      if (activeButton) activeButton.scrollIntoView({block:"nearest", inline:"center"});
       if (tab === "tools") return show(await api("/api/tools"), "tools");
       if (tab === "catalog") return show(await api("/api/project-catalog"), "catalog");
-      if (!state.selected) return status("请先选择一道题目", "error");
+      if (tab === "benchmark") return show(await api("/api/capability-benchmark"), "benchmark");
+      if (tab === "health") return show(await api("/api/system-health"), "health");
       if (tab === "summary") return show(await loadLatestSummary(), "summary");
+      if (!state.selected) return status($("challengeId").value.trim() ? "请先保存题目或从列表选择已有题目" : "请先选择一道题目", "error");
       if (tab === "agent") return show(await loadAgentView(), "agent");
       show(await api(`/api/challenges/${encodeURIComponent(state.selected)}/${tab}`), tab);
     }
     async function loadLatestSummary() {
-      if (!state.selected) return state.lastSummary || {};
+      if (!state.selected) return draftChallengeSummary();
       const summary = await api(`/api/challenges/${encodeURIComponent(state.selected)}/summary`);
       state.lastSummary = summary;
       state.summaries[state.selected] = summary;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from forgeflag.ctf_scope import ctf_scope_evidence
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.solvers.base import SolverContext
@@ -23,7 +24,11 @@ class ReconSolver:
             challenge_id=challenge.challenge_id,
             solver=self.name,
             finding=f"Initial triage suggests category={category_hint}",
-            evidence={"tags": list(challenge.tags), "target": challenge.target},
+            evidence={
+                "tags": list(challenge.tags),
+                "target": challenge.target,
+                "ctf_scope": ctf_scope_evidence(ChallengeCategory.RECON),
+            },
             hypothesis=f"Dispatch specialist solver for {category_hint}",
             confidence=0.55 if category_hint == "unknown" else 0.75,
             next_action="Run the matching specialist solver and collect evidence.",
@@ -42,6 +47,7 @@ class ReconSolver:
                     "flag_candidates": list(text_flags),
                     "source": "title/description/tags/target",
                     "matching_lines": _matching_flag_lines(_challenge_text(challenge)),
+                    "ctf_scope": ctf_scope_evidence(ChallengeCategory.RECON),
                 },
                 hypothesis="The challenge text itself contains a complete flag-like token or proof candidate.",
                 confidence=0.86,
@@ -57,7 +63,12 @@ class ReconSolver:
                 challenge_id=challenge.challenge_id,
                 solver=self.name,
                 finding="HTTP target probe completed",
-                evidence={"tool": tool_result.tool, "status": tool_result.status, "evidence": tool_result.evidence},
+                evidence={
+                    "tool": tool_result.tool,
+                    "status": tool_result.status,
+                    "evidence": tool_result.evidence,
+                    "ctf_scope": ctf_scope_evidence(ChallengeCategory.RECON),
+                },
                 hypothesis="HTTP metadata can guide web challenge strategy.",
                 confidence=0.7 if tool_result.status == "success" else 0.35,
                 next_action="Inspect routes, forms, and application-specific behavior.",

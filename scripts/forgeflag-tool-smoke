@@ -83,6 +83,11 @@ def _run_checks(fixtures: dict[str, Path | str], include_active_network: bool, i
     checks.append(_tool_check("ROPgadget", lambda: ctf.ropgadget_scan(str(fixtures["binary"]), depth=3)))
     checks.append(_tool_check("ropper", lambda: ctf.ropper_scan(str(fixtures["binary"]), search="ret")))
     checks.append(_tool_check("RsaCtfTool", lambda: ToolRunner(ScopePolicy()).run("RsaCtfTool", ["--help"], timeout_seconds=10), expected_text="usage"))
+    checks.append(_tool_check("objdump", lambda: ctf.objdump_disassemble(str(fixtures["binary"]))))
+    checks.append(_tool_check("readelf", lambda: ctf.readelf_sections(str(fixtures["binary"]))))
+    checks.append(_tool_check("radare2", lambda: ctf.radare2_info(str(fixtures["binary"]))))
+    checks.append(_tool_check("foremost", lambda: ctf.foremost_carve(str(fixtures["blob"]), str(Path(fixtures["webroot"]).parent / "foremost")), expected_text="Processing"))
+    checks.append(_tool_check("yara", lambda: ctf.yara_scan(str(fixtures["blob"]), output_dir=str(Path(fixtures["webroot"]).parent)), expected_text="ForgeFlag_Triage_Needles"))
 
     if include_cracking:
         checks.append(_hashcat_check(fixtures))

@@ -11,7 +11,24 @@ The project starts with the architecture discussed for a full-coverage competiti
 - `Verifier`: accepts only evidence-backed flag candidates before submission.
 - `MCP tools`: optional allowlisted wrappers around common CTF tools.
 
+ForgeFlag's role layer is documented in [docs/agent-roster.md](docs/agent-roster.md) and [docs/team-operating-model.md](docs/team-operating-model.md). The top-level `ForgeFlagManager` coordinates stream-aligned, enabling, complicated-subsystem, and platform responsibilities so solver work, evidence quality, UI workflow, and held-out benchmarks improve together.
+
 This repository is intentionally scoped for CTFs, labs, and authorized competitions. It is not designed for unauthorized scanning or exploitation.
+
+## CTF Research Scope
+
+ForgeFlag treats CTF solving as a controlled research workflow:
+
+- Default work is passive local artifact analysis, solver planning, replay reporting, and benchmark fixtures.
+- Active network actions require explicit operator intent through `--active-probe` plus allowlisted hosts such as `127.0.0.1`, `localhost`, or an authorized competition target.
+- MCP and Docker-backed tooling expose typed CTF wrappers through `ToolRunner`; they do not expose arbitrary shell access.
+- LLM output is planning guidance only. Specialist solvers, scoped wrappers, and verifier evidence remain authoritative.
+- Reports and prompts should describe findings as challenge evidence and reproducible CTF replay steps, not as instructions for unauthorized real-world use.
+- Local Codex/agent sessions should read [AGENTS.md](AGENTS.md) first so interactions start from the CTF/lab research context and avoid repeatedly re-litigating the project scope.
+- When you share a challenge inside this repository, ForgeFlag assumes it is a local or authorized CTF challenge with local/provided attachments and a flag-reproduction goal unless you explicitly say otherwise.
+- Every solver category should carry explicit CTF wording. Web, reverse, and pwn are the easiest to misread, but crypto, forensics, traffic, misc, recon, and infra findings also preserve `ctf_scope` evidence for reports, UI views, and LLM critique.
+
+See [docs/ctf-scope-audit.md](docs/ctf-scope-audit.md) for the reviewed project scope and category-specific wording guidance.
 
 ## Quick Start
 
@@ -39,10 +56,13 @@ Use the local control script for one-command setup and lifecycle checks:
 scripts/forgeflag-control start
 scripts/forgeflag-control status
 scripts/forgeflag-control smoke
+scripts/forgeflag-control gate
 scripts/forgeflag-control stop
 ```
 
-`start` launches the Web UI at [http://127.0.0.1:8080/](http://127.0.0.1:8080/) by default and records a managed PID under `.forgeflag/web.pid`. The Web UI includes a category workspace so Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra challenges can be filtered separately before running solvers. Start the optional MCP server only when you need it:
+`start` launches the Web UI at [http://127.0.0.1:8080/](http://127.0.0.1:8080/) by default and records a managed PID under `.forgeflag/web.pid`. `gate` runs the full practical readiness check: API suites, hard evidence scoring, browser-player smoke, and held-out manifest replay, then refreshes `.forgeflag/capability-benchmark-latest.json` for the Web UI Benchmark tab. `gate --llm` fails fast when the command-line LLM provider/key/model are missing, so an LLM-assisted scorecard cannot silently fall back to deterministic-only evidence. The Web UI includes a category workspace so Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra challenges can be filtered separately before running solvers. Start the optional MCP server only when you need it:
+
+For a complete workstation setup, dependency list, Docker/OrbStack toolchain, MCP/LLM configuration, release checks, and GitHub publish workflow, see [docs/dependencies-and-deployment.md](docs/dependencies-and-deployment.md).
 
 ```bash
 FORGEFLAG_ALLOWED_HOSTS=127.0.0.1,localhost scripts/forgeflag-control start --mcp
@@ -88,7 +108,7 @@ export ZAI_API_KEY="..."
 forgeflag --db .forgeflag/notebook.sqlite run forensic-01 --llm-provider zhipu --llm-model glm-5.1
 ```
 
-`LLMSolver` writes planning guidance to the notebook. If the model returns JSON with `summary`, `suggested_solvers`, `next_actions`, and `tool_hints`, ForgeFlag stores it as an `llm_solver_plan` observation and can insert suggested solvers into the remaining run queue. Specialist solvers still perform scoped tool execution and the verifier only accepts evidence-backed flags.
+`LLMSolver` writes planning guidance to the notebook. If the model returns JSON with `summary`, `suggested_solvers`, `next_actions`, `tool_hints`, and optional `flag_candidates`, ForgeFlag stores it as an `llm_solver_plan` observation and can insert suggested solvers into the remaining run queue. Candidate flags from the model are not auto-trusted: they are submitted through the same evidence-backed verifier as specialist solver output. Text attachments are previewed with both head and tail excerpts so source files that place ciphertext/output comments at the end still give the model useful context.
 
 ForgeFlag treats LLM rate limits as a normal runtime condition. LLM HTTP calls are serialized inside the process, retry `429`/temporary `5xx` responses with `Retry-After` or bounded exponential backoff, and enter a cooldown circuit breaker after the retry budget is exhausted. You can tune the defaults when needed:
 
@@ -117,7 +137,52 @@ Without installing the package, run commands with `PYTHONPATH=src`, or use:
 make test
 make smoke
 PYTHONPATH=src python3 -m forgeflag.cli tools
+PYTHONPATH=src python3 -m forgeflag.cli hints --category traffic
 ```
+
+To measure practical CTF-solving capability instead of only unit-test health, run the capability scorecard:
+
+```bash
+scripts/forgeflag-capability-benchmark --url http://127.0.0.1:8080
+```
+
+To make the latest result visible in the Workbench Benchmark tab, save it to the standard scorecard path:
+
+```bash
+scripts/forgeflag-capability-benchmark --url http://127.0.0.1:8080 --output .forgeflag/capability-benchmark-latest.json --history .forgeflag/capability-benchmark-history.jsonl
+```
+
+The Benchmark tab now shows a readiness gate in addition to pass rates. A smoke-only 7/7 run is marked `limited`; ForgeFlag only shows `ready` when the scorecard has no failures and includes hard evidence, browser UI flow, and held-out manifest coverage.
+
+For external CTF artifacts that should not be mixed with the internal corpus score, use:
+
+```bash
+scripts/forgeflag-capability-benchmark --url http://127.0.0.1:8080 --manifest-only --manifest .forgeflag/heldout-platform-manifest.json
+```
+
+Held-out manifest cases can include local Docker service startup and typed replay commands. This is how ForgeFlag checks proof-of-solve scripts against local or explicitly authorized challenge services without blending those results into the internal fixture score.
+
+To expand beyond handpicked cases, audit cached public contest artifacts and emit a manager-reviewed candidate manifest:
+
+```bash
+PYTHONPATH=src scripts/forgeflag-real-corpus-audit \
+  --root .forgeflag/heldout-cache \
+  --emit-manifest .forgeflag/real-contest-candidates-manifest.json \
+  --manifest-limit 20
+
+PYTHONPATH=src scripts/forgeflag-capability-benchmark \
+  --manifest .forgeflag/real-contest-candidates-manifest.json \
+  --manifest-only \
+  --output .forgeflag/real-contest-candidates-scorecard.json
+```
+
+The audit rejects handout artifacts that contain placeholder or template flags, strips README answer lines from benchmark descriptions, blocks Git LFS pointer files until real handout bytes are fetched, then assigns unsolved real cases to owner roles such as `CryptoMathAgent`, `ForensicsAgent`, `TrafficAgent`, `BinaryAgent`, and `WebExploitAgent`. Current real-corpus parsing covers DUCTF `ctfcli.yaml`, HTB Cyber Apocalypse README/`htb/` layouts, TJCTF and UMDCTF `challenge.yaml`, CTFd-style `challenge.yml` plus unpacked `dist` / `distribution` handouts, and IrisCTF README plus `dist/` layouts.
+
+See [docs/capability-benchmark.md](docs/capability-benchmark.md) for suites, metrics, readiness gates, role-owned backlog output, and the held-out manifest format.
+
+Recent real-contest replay notes:
+
+- Current cleaned 36-case real-contest scorecard remains 34/36 flags and 91/93 hard evidence. The remaining HTB `Maze of Mist` pwn item is now classified as a ret2vdso VM artifact-completeness blocker: `scripts/solve_maze_of_mist_static.py` parses the exploit constants, but refuses proof-of-solve until `vmlinuz-linux`, `initramfs.cpio.gz`, `run.sh`, and the rootfs `target` are available for local replay.
 
 ## Tooling
 
@@ -129,11 +194,15 @@ scripts/forgeflag-control docker-smoke
 scripts/forgeflag-control restart
 ```
 
-`docker-build` builds `forgeflag-ctf:latest`, writes `.forgeflag/docker.env`, and enables automatic Docker fallback for missing host tools. `ToolRunner` still prefers host commands when present, but can run container-backed wrappers such as `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, and `ffuf` with project paths mounted under `/workspace`. Use `scripts/forgeflag-control status`, `.venv/bin/forgeflag tools`, or `/api/tools` to inspect whether each wrapper is using `host`, `docker`, or `missing`.
+`docker-build` builds `forgeflag-ctf:latest`, writes `.forgeflag/docker.env`, and enables automatic Docker fallback for missing host tools. `ToolRunner` still prefers host commands when present, but can run container-backed wrappers such as `checksec`, `ROPgadget`, `ropper`, `RsaCtfTool`, `hashcat`, `john`, `ffuf`, `objdump`, `readelf`, `radare2`, `foremost`, and `yara` with project paths mounted under `/workspace`. Use `scripts/forgeflag-control status`, `.venv/bin/forgeflag tools`, or `/api/tools` to inspect whether each wrapper is using `host`, `docker`, or `missing`.
+
+The full dependency and deployment matrix is maintained in [docs/dependencies-and-deployment.md](docs/dependencies-and-deployment.md); the lower-level container profile notes are in [docs/tool-containers.md](docs/tool-containers.md).
+
+The Web UI Tools tab shows runnable wrappers, the recommended project catalog, and heavyweight Docker profiles. Profiles such as `forgeflag-volatility`, `forgeflag-sagemath`, and `forgeflag-ghidra-headless` are not part of the default image; the tab shows whether each profile image is built and includes the exact `docker build` / `docker image inspect` commands.
 
 Hashcat is installed in the image, but GPU/OpenCL access depends on the Docker runtime. On OrbStack without a passed-through cracking device, the smoke test reports hashcat as skipped while John CPU dictionary checks can still run.
 
-For manual Pwn work, select a `Pwn` challenge in the Web UI. ForgeFlag shows a "Pwn 本地环境" panel with copyable Docker, `socat`, and triage commands, plus a starter pwntools exploit template that can switch between local `process()` and remote `remote(host, port)` mode. The template can be copied or downloaded as `exploit.py`. The panel also includes a button that fills `tcp://127.0.0.1:31337`, `127.0.0.1,localhost`, and `Active probe` for the selected challenge. You can also enter the same environment directly:
+For manual Pwn work, select a `Pwn` challenge in the Web UI. ForgeFlag shows a "Pwn 本地环境" panel with copyable Docker, `socat`, and triage commands, plus a house-style pwntools exploit template that can switch between local `process()` and remote `remote(host, port)` mode. The template follows the local `freenote_x64.py` convention: debug-local default, `ELF`/`libc` setup, `debugf()`, menu helpers, separated `leak()` / `exploit()` / `proof()` phases, and a `--proof` mode that runs `cat flag` to verify the local test flag before treating a Pwn case as exploit-verified. The template can be copied or downloaded as `exploit.py`. The panel also includes a button that fills `tcp://127.0.0.1:31337`, `127.0.0.1,localhost`, and `Active probe` for the selected challenge. You can also enter the same environment directly:
 
 ```bash
 docker run --rm -it --platform linux/amd64 \
@@ -154,6 +223,10 @@ forgeflag-mcp
 
 See [docs/mcp.md](docs/mcp.md) for the current MCP tool list.
 
+## Knowledge Base
+
+ForgeFlag keeps reusable CTF solving experience in [docs/ctf-playbook.md](docs/ctf-playbook.md), concrete replay notes in [docs/ctf-casebook.md](docs/ctf-casebook.md), ad-hoc proof-of-solve helper alignment in [docs/solve-scripts.md](docs/solve-scripts.md), and practical capability scoring in [docs/capability-benchmark.md](docs/capability-benchmark.md). The same recurring patterns surface as Tools-tab analysis hints, `/api/analysis-hints`, and `forgeflag hints --category <category>`. Recent entries include matrix-conjugation crypto with bad-pivot factor recovery, stripped ELF `.rodata` inversion, self-synchronizing XOR key-slot crib recovery, right-shift XOR linear inversion, LFSR Berlekamp-Massey recovery, Python random prime-offset recovery, PRNG/stream-cipher local replay for LCG, LFSR, and MT19937 sample packs, shifted RSA factor-leak replay, RSA source-loop `c+k*n` low-exponent recovery, De Bruijn PIN replay, ChaCha state-as-keystream replay, composite-ring NTRU CRT lattice replay, recursive regex golf replay, Python eval blacklist suffix-comment replay, sparse adversarial pixel replay scaffolding with exact score-only evaluation, bounded unstable-pixel seed sweeps, and cached payload artifacts, Vivado DCP/EDIF LUT-netlist replay, I2C EEPROM schematic dump replay, Basic Auth prefix-compare replay, PHP pack/procfs replay, Web loopback-alias SSRF replay, Web Python class-pollution replay, Web HTTP/3-to-H1 request-smuggling replay, Web iframe-gated note-search substring oracle replay, Pwn escaped-byte ret2win replay, Pwn signed-short HP overflow replay, Pwn heap off-by-one overlap replay, Pwn fixed-suffix return-address alignment replay, Pwn UAF linked-list reuse replay, Pwn AArch64 PAC signing-oracle replay, Pwn glibc tcache malloc-hook replay, Pwn ret2vdso VM artifact-completeness checks, renderer SSRF rebinding, Prisoner Processor local Bun/Hono replay, ECDSA repeated-nonce recovery, visual-cryptography image shares, raw TCP data URI image recovery, RF image ASK/OOK Manchester recovery, HTTP webshell delimited flag extraction, bounded raw PCAP byte flag scanning, corrupt PCAP record resync plus IPv4 Identification stego, registry WiFi SSID recovery, BMP QuickStego/Braille transforms, OSINT building geolocation replay, OSINT music cross-reference replay, archive-contained mangled PNG repair with preserved visual transcription, Minecraft Anvil orphan-sector lore recovery, recipe-state Misc solving, decayed DoubleHelix Ruby source recovery, Reverse ELF argv repeating-XOR recovery, Reverse jmp-table popcount recovery, Reverse compiled byte equality-chain recovery, Reverse MLVM pixel-art recovery, Reverse Python VM perfect-number SHA1 recovery, Reverse Python 8x8 grid constraint solving, and current competition discovery habits for online and China-based events. Current external checks: held-out platform `8/8`; diversified real-contest `34/36`, `91/93`, readiness `blocked`; supplemental local replays include NUS Private Hidden Paths and Stack BOF School.
+
 ## Current Milestone
 
 The current milestone is a working skeleton plus the first scoped WebSolver, ForensicsSolver, TrafficSolver, and optional IDA MCP binary-analysis workflows:
@@ -167,8 +240,8 @@ The current milestone is a working skeleton plus the first scoped WebSolver, For
 7. When a flag is verified, generate a replay report with the shortest evidence path.
 8. Optionally ask an LLM provider for scoped solve strategy guidance and solver-order hints.
 9. For web challenges, probe allowlisted HTTP targets and extract visible HTML structure plus flag candidates.
-10. For forensics challenges, register local attachments and triage them with `file`, `strings`, `binwalk`, and `exiftool`.
-11. For traffic challenges and PCAP attachments, run PCAP-focused `tshark` summaries and extract evidence-backed flag candidates.
-12. For reverse and pwn binary attachments, optionally call a read-only IDA MCP adapter for function, string, and pivot evidence.
+10. For forensics challenges, register local attachments and triage them with `file`, `strings`, `binwalk`, `exiftool`, `foremost`, and `yara` where useful.
+11. For traffic challenges and PCAP/RF image attachments, run PCAP-focused `tshark` summaries or waveform decoding and extract evidence-backed flag candidates.
+12. For reverse and pwn binary attachments, preserve local `file`/`strings` evidence, run bounded binary wrappers such as `objdump`, `readelf`, `radare2`, `ROPgadget`, and `ropper`, and optionally call a read-only IDA MCP adapter for function, string, and pivot evidence.
 
 Future milestones add real solver depth for Web, Crypto, Reverse, Pwn, Forensics, and mixed attack-defense lab tasks.

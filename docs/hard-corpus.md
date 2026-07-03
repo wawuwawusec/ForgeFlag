@@ -61,6 +61,7 @@ Required evidence is intentionally broader than a flag: cases can score classifi
 | `hard-crypto-aes-gcm-reuse` | crypto | AES-GCM nonce reuse | classify GHASH/tag forbidden-attack workflow |
 | `hard-crypto-poly1305-reuse` | crypto | Poly1305 one-time key reuse | classify MAC algebra workflow |
 | `hard-crypto-rsa-low-exponent` | crypto | RSA low exponent without padding | recover exact integer-root plaintext and emit replay script |
+| `hard-crypto-rsa-modular-low-exponent` | crypto | RSA low exponent source loop | infer `e` from `iroot(c+n*i,e)`, recover `c+k*n` exact root, and emit replay script |
 | `hard-crypto-rsa-prime-modulus` | crypto | RSA prime modulus | recover private exponent with `phi=n-1` |
 | `hard-crypto-rsa-fermat` | crypto | RSA close primes | factor `n` with Fermat and decrypt |
 | `hard-crypto-rsa-common-modulus` | crypto | RSA common modulus pair | recover plaintext with extended-gcd ciphertext combination |
@@ -98,7 +99,7 @@ Result: 22/22 cases reached full score through the Web API.
 | Traffic | Follows shortlisted TCP streams and stores stream id, hints, payload sample, and recovered flags. |
 | Traffic | Exports HTTP objects and stores file name, path, size, SHA256, preview, and recovered flags. |
 | Traffic | Summarizes cleartext SMTP/FTP/IRC-style streams with protocol, commands, sample, and flags. |
-| Crypto | Recognizes AES-CTR nonce/keystream reuse and emits a crib/keystream solve helper; AES-GCM nonce reuse emits a GHASH/forbidden-attack scaffold; Poly1305 key reuse emits a Sage algebra helper; RSA low-exponent exact roots, prime moduli, close-prime Fermat factors, common-modulus pairs, shared-prime moduli, and broadcast e=3 cases recover flags and emit direct replay scripts. |
+| Crypto | Recognizes AES-CTR nonce/keystream reuse and emits a crib/keystream solve helper; AES-GCM nonce reuse emits a GHASH/forbidden-attack scaffold; Poly1305 key reuse emits a Sage algebra helper; RSA low-exponent exact roots, source-loop `c+k*n` exact roots, prime moduli, close-prime Fermat factors, common-modulus pairs, shared-prime moduli, and broadcast e=3 cases recover flags and emit direct replay scripts. |
 | Forensics | Re-runs transforms on decoded mail/PowerShell content and recovers nested base64 flags. |
 | Pwn | Recognizes source-level `printf(user_input)` format string sinks and emits a pwntools probe/write harness. |
 | Pwn | Recognizes ret2win source patterns and records crash harness, cyclic offset, and pwntools payload template guidance. |

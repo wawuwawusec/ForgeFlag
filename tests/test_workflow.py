@@ -6,6 +6,7 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import zipfile
 
 from forgeflag.agent_roster import AgentRoster, default_agent_roster
 from forgeflag.domain import Challenge, ChallengeCategory, Finding, RunConfig, SolverResult, ToolResult
@@ -121,6 +122,8 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(summary["status"], "completed")
         self.assertGreaterEqual(len(findings), 2)
         self.assertEqual(findings[0].solver, "ReconSolver")
+        self.assertEqual(findings[0].evidence["ctf_scope"]["category"], "recon")
+        self.assertEqual(findings[0].evidence["ctf_scope"]["research_context"], "local_or_authorized_ctf_lab")
         self.assertTrue(any(f.solver == "WebSolver" for f in findings))
 
     def test_unknown_category_still_runs_recon(self) -> None:
@@ -133,6 +136,65 @@ class WorkflowTest(unittest.TestCase):
 
         self.assertEqual(summary["status"], "completed")
         self.assertTrue(any("category=crypto" in f.finding for f in findings))
+
+    def test_pwn_exploit_plan_is_not_marked_as_solved_without_replay_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "2016-CCTF-pwn3"
+            binary.write_bytes(b"\x7fELF fake")
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="pwn3-proof",
+                    category=ChallengeCategory.PWN,
+                    attachment_paths=(str(binary),),
+                )
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.pwn.ctf.file_identify",
+                    return_value=ToolResult(tool="file", target=None, status="success", raw={"stdout": "ELF 32-bit LSB executable, Intel 80386"}),
+                ),
+                patch(
+                    "forgeflag.solvers.pwn.ctf.strings_extract",
+                    return_value=ToolResult(
+                        tool="strings",
+                        target=None,
+                        status="success",
+                        raw={
+                            "stdout": (
+                                "please enter the name of the file you want to upload:\n"
+                                "then, enter the content:\n"
+                                "enter the file name you want to get:\n"
+                                "%40s\nflag\ntoo young, too simple\nftp>\n"
+                                "Connected to ftp.hacker.server\n"
+                                "Name (ftp.hacker.server:Rainism):\n"
+                                "sysbdmin\nprintf\nstrcpy\nfread\nput_file\nget_file\n"
+                            )
+                        },
+                    ),
+                ),
+                patch(
+                    "forgeflag.solvers.pwn.ctf.checksec_binary",
+                    return_value=ToolResult(tool="checksec", target=None, status="success", raw={"stderr": "Partial RELRO\nNo canary found\nNX enabled\nNo PIE"}),
+                ),
+                patch(
+                    "forgeflag.solvers.pwn.ctf.ropgadget_scan",
+                    return_value=ToolResult(tool="ROPgadget", target=None, status="success", raw={"stdout": "Unique gadgets found: 113"}),
+                ),
+                patch(
+                    "forgeflag.solvers.pwn.ctf.ropper_scan",
+                    return_value=ToolResult(tool="ropper", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("pwn3-proof")
+
+        self.assertEqual(summary["status"], "exploit_plan")
+        self.assertEqual(summary["proof_status"], "exploit_plan")
+        self.assertEqual(summary["proof"]["label"], "Exploit plan only")
+        self.assertFalse(summary["proof"]["verified"])
+        self.assertIn("Run the exploit", summary["proof"]["next_action"])
+        self.assertEqual(summary["accepted_flags"], [])
 
     def test_recon_verifies_flag_like_token_from_challenge_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,7 +231,11 @@ class WorkflowTest(unittest.TestCase):
             for category in categories:
                 notebook.add_challenge(Challenge(challenge_id=f"{category.value}-01", category=category))
                 summary = Manager(notebook, RunConfig()).run_challenge(f"{category.value}-01")
-                self.assertEqual(summary["status"], "completed")
+                if category == ChallengeCategory.PWN:
+                    self.assertIn(summary["status"], {"analysis_only", "exploit_plan", "exploit_verified", "flag_found"})
+                    self.assertIn("proof_status", summary)
+                else:
+                    self.assertEqual(summary["status"], "completed")
 
                 findings = notebook.findings_for(f"{category.value}-01")
                 self.assertGreaterEqual(len(findings), 2)
@@ -208,6 +274,8 @@ class WorkflowTest(unittest.TestCase):
         web_finding = next(f for f in findings if f.finding == "Analyzed scoped HTTP response structure")
         self.assertEqual(web_finding.evidence["html"]["title"], "ForgeFlag Test")
         self.assertEqual(web_finding.evidence["html"]["forms"][0]["method"], "post")
+        self.assertEqual(web_finding.evidence["ctf_scope"]["category"], "web")
+        self.assertEqual(web_finding.evidence["ctf_scope"]["research_context"], "local_or_authorized_ctf_lab")
 
     def test_web_solver_extracts_header_cookie_flags(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), HeaderCookieFlagHandler)
@@ -371,6 +439,123 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("path traversal", source_finding.evidence["bug_class_hints"])
         self.assertIn("JWT/session", source_finding.evidence["bug_class_hints"])
         self.assertIn("route", source_finding.next_action.lower())
+
+    def test_web_solver_analyzes_source_archive_routes_and_yaml_hints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "web-source.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr(
+                    "challenge/src/index.ts",
+                    "import express from 'express';\n"
+                    "import YAML from 'yaml';\n"
+                    "const app = express();\n"
+                    "app.post('/convert', (req, res) => res.send(YAML.parse(req.body)));\n",
+                )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="web-source-archive",
+                    category=ChallengeCategory.WEB,
+                    attachment_paths=(str(archive),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("web-source-archive")
+            findings = notebook.findings_for("web-source-archive")
+
+        self.assertEqual(summary["status"], "completed")
+        source_finding = next(f for f in findings if f.finding == "Analyzed web source attachments")
+        self.assertIn("/convert", source_finding.evidence["routes"])
+        self.assertIn("YAML parser", source_finding.evidence["bug_class_hints"])
+        self.assertIn("challenge/src/index.ts", source_finding.evidence["source_archive_entries"])
+
+    def test_web_solver_extracts_flag_from_source_archive_flag_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "prisoner-processor.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr(
+                    "app/src/index.ts",
+                    "import { Hono } from 'hono';\n"
+                    "import { stringify } from 'yaml';\n"
+                    "const SIGNED_PREFIX = 'signed.';\n"
+                    "app.post('/convert-to-yaml', (c) => stringify(c.req.json()));\n",
+                )
+                zf.writestr("flag.txt", "DUCTF{source_archive_flag}\n")
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="web-source-archive-flag",
+                    category=ChallengeCategory.WEB,
+                    attachment_paths=(str(archive),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("web-source-archive-flag")
+            findings = notebook.findings_for("web-source-archive-flag")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["DUCTF{source_archive_flag}"])
+        source_finding = next(f for f in findings if f.finding == "Analyzed web source attachments")
+        self.assertIn("flag.txt", source_finding.evidence["source_archive_entries"])
+        self.assertIn("DUCTF{source_archive_flag}", source_finding.evidence["flag_candidates"])
+
+    def test_web_solver_rejects_placeholder_flag_and_records_prisoner_processor_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "prisoner-processor.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr(
+                    "prisoner-processor/src/app/src/index.ts",
+                    "import { Hono } from 'hono';\n"
+                    "import { stringify } from 'yaml';\n"
+                    "const SIGNED_PREFIX = 'signed.';\n"
+                    "const OUTPUT_YAML_FOLDER = '/app-data/yamls';\n"
+                    "const BANNED_STRINGS = ['app', 'src', '.ts', 'bun', 'index'];\n"
+                    "const getSignedData = (data: any): any => {\n"
+                    "  const signedParams: any = {};\n"
+                    "  for (const param in data) if (param.startsWith(SIGNED_PREFIX)) signedParams[param.slice(SIGNED_PREFIX.length)] = data[param];\n"
+                    "  return signedParams;\n"
+                    "};\n"
+                    "const convertJsonToYaml = (data: any, outputFileString: string): boolean => {\n"
+                    "  const outputFile = Bun.file(`${OUTPUT_YAML_FOLDER}/${outputFileString}`);\n"
+                    "  Bun.write(outputFile, stringify(data));\n"
+                    "  return true;\n"
+                    "};\n"
+                    "app.post('/convert-to-yaml', (c) => {\n"
+                    "  const outputPrefix = getSignedData(c.req.json()).outputPrefix ?? 'prisoner';\n"
+                    "  return convertJsonToYaml({}, `${outputPrefix}.yaml`);\n"
+                    "});\n",
+                )
+                zf.writestr(
+                    "prisoner-processor/src/flag.c",
+                    '#include <unistd.h>\nint main(){setuid(6969); system("/bin/getflag");}\n',
+                )
+                zf.writestr("prisoner-processor/src/flag.txt", "DUCTF{test_flag_real_flag_on_instance}\n")
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="web-prisoner-placeholder",
+                    category=ChallengeCategory.WEB,
+                    attachment_paths=(str(archive),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("web-prisoner-placeholder")
+            findings = notebook.findings_for("web-prisoner-placeholder")
+
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(summary["accepted_flags"], [])
+        source_finding = next(f for f in findings if f.finding == "Analyzed web source attachments")
+        self.assertNotIn("DUCTF{test_flag_real_flag_on_instance}", source_finding.evidence["flag_candidates"])
+        self.assertIn("DUCTF{test_flag_real_flag_on_instance}", source_finding.evidence["rejected_flag_candidates"])
+        chain = source_finding.evidence["proof_chain_hints"]
+        self.assertIn("prototype pollution via signed.__proto__", chain)
+        self.assertIn("Bun null byte path truncation", chain)
+        self.assertIn("/proc/self/fd overwrite pivot", chain)
+        self.assertIn("YAML-to-TypeScript payload shaping", chain)
+        self.assertIn("SUID getflag proof target", chain)
 
     def test_web_solver_records_scoped_ffuf_route_discovery(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), FlagHandler)

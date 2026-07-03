@@ -45,6 +45,45 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertEqual(report["flags"][0]["replay_steps"], ["Send candidates to Verifier."])
         self.assertEqual(report["flags"][0]["observations"][0]["summary"], "flag{short_path}")
 
+    def test_flag_report_prefers_latest_candidate_evidence_over_stale_payload_match(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="report-stale",
+                solver="TrafficSolver",
+                finding="Analyzed packet capture traffic",
+                evidence={"decoded_http_artifacts": ["X@Yflag{This_is_a_f10g} [S] /var/www/html [E] X@Y"], "flag_candidates": []},
+                confidence=0.62,
+                next_action="Add DNS, HTTP, or TCP stream-specific analysis based on protocol hierarchy and conversations.",
+                created_at="2026-06-30T03:05:46+00:00",
+            ),
+            Finding(
+                challenge_id="report-stale",
+                solver="TrafficSolver",
+                finding="Analyzed packet capture traffic",
+                evidence={"decoded_http_artifacts": ["flag{This_is_a_f10g}"], "flag_candidates": ["flag{This_is_a_f10g}"]},
+                confidence=0.82,
+                next_action="Send candidates to Verifier and preserve the packet capture as reproduction evidence.",
+                created_at="2026-06-30T03:12:19+00:00",
+            ),
+        ]
+        observations = [
+            Observation(
+                challenge_id="report-stale",
+                source="TrafficSolver",
+                kind="flag_candidate",
+                summary="flag{This_is_a_f10g}",
+                evidence={"candidate": "flag{This_is_a_f10g}"},
+            )
+        ]
+
+        report = ReportBuilder().build("report-stale", ("flag{This_is_a_f10g}",), findings, observations)
+
+        self.assertEqual(report["flags"][0]["path"][0]["evidence"]["flag_candidates"], ["flag{This_is_a_f10g}"])
+        self.assertEqual(
+            report["flags"][0]["path"][0]["next_action"],
+            "Send candidates to Verifier and preserve the packet capture as reproduction evidence.",
+        )
+
     def test_writeup_report_contains_ctf_sections_and_markdown(self) -> None:
         findings = [
             Finding(
@@ -305,6 +344,69 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("seed=3277", report["writeup"]["markdown"])
         self.assertNotIn("关键证据", report["writeup"]["markdown"])
 
+    def test_writeup_prioritizes_python_random_prime_offset_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="crypto-random-prime-offset",
+                solver="CryptoSolver",
+                finding="Recovered Python random prime-offset flag candidates",
+                evidence={
+                    "python_random_prime_offset": {
+                        "enc": "567785900217270586430439246129051365510368280197",
+                        "flags": ["ctf{true_0r_false??}"],
+                        "gift_hex": "12131e00001f0a1301",
+                        "key": "fake_seed",
+                        "method": "python_random_prime_offset",
+                        "plaintext_preview": "ctf{true_0r_false??}",
+                        "r": 9533,
+                        "randint_bounds": [[1048576, 2097152], [1000, 10000]],
+                        "seed_hex": "747275655f6c6f7665",
+                        "seed_int": "2148069922303422461541",
+                        "seed_text": "true_love",
+                        "t": 1713221,
+                    }
+                },
+                confidence=0.86,
+                hypothesis="A byte seed was recovered from key XOR gift output, then Python random reproduced prime offsets around the flag integer.",
+                next_action="Send recovered candidates to Verifier and preserve the XOR-derived seed and prime offsets for replay.",
+            )
+        ]
+        observations = [
+            Observation(
+                challenge_id="crypto-random-prime-offset",
+                source="CryptoSolver",
+                kind="flag_candidate",
+                summary="ctf{true_0r_false??}",
+                evidence={"candidate": "ctf{true_0r_false??}"},
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="crypto-random-prime-offset",
+            category=ChallengeCategory.CRYPTO,
+            attachment_paths=("/tmp/easy_random.py",),
+        )
+
+        report = ReportBuilder().build(
+            "crypto-random-prime-offset",
+            ("ctf{true_0r_false??}",),
+            findings,
+            observations,
+            challenge=challenge,
+        )
+
+        sections = {section["title"]: section for section in report["writeup"]["sections"]}
+        self.assertIn("key ^ gift", sections["解题思路"]["body"])
+        self.assertEqual(
+            sections["复现步骤"]["steps"],
+            [
+                "打开附件 easy_random.py，确认 key 与 gift 输出可异或恢复 Python random 的字节 seed。",
+                "计算 seed = key XOR gift，得到 seed=true_love。",
+                "按源码执行 random.seed(bytes_to_long(seed))，再计算 t=next_prime(randint(...)) 与 r=next_prime(randint(...))。",
+                "用输出整数减去 t 并加回 r，转 bytes 得到 ctf{true_0r_false??}。",
+            ],
+        )
+        self.assertIn("seed=true_love", report["writeup"]["markdown"])
+
     def test_writeup_describes_plain_transform_candidates_without_awkward_method_text(self) -> None:
         findings = [
             Finding(
@@ -379,6 +481,108 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("strings -n 4 reverse_0", report["writeup"]["markdown"])
         self.assertNotIn("关键证据", report["writeup"]["markdown"])
         self.assertNotIn("tool_samples", report["writeup"]["markdown"])
+
+    def test_writeup_describes_pe_stack_xor_key_check_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="reverse-pe-xor",
+                solver="ReverseSolver",
+                finding="Analyzed reverse binary artifact",
+                evidence={
+                    "artifact": "/tmp/reverseMe.exe",
+                    "flag_candidates": ["XCTF{5eacs6y8p1o9gitc9521}"],
+                    "pe_stack_xor_key_check": {
+                        "pattern": "PE stack byte array decrypted by generated XOR key before input compare",
+                        "source": "binary_bytes",
+                        "seed": 56,
+                        "length": 26,
+                        "encrypted_hex": "e376fb6fd828f270e87649804b9d568e62b226bd208402831ad8",
+                        "xor_key_preview_hex": "bb35af29a31d97118b057ff973ed67e1",
+                        "decoded_text": "XCTF{5eacs6y8p1o9gitc9521}",
+                        "flag_candidates": ["XCTF{5eacs6y8p1o9gitc9521}"],
+                    },
+                    "tool_samples": {
+                        "file_identify": {
+                            "stdout": "/tmp/reverseMe.exe: PE32 executable (console) Intel 80386, for MS Windows\n",
+                            "stderr": "",
+                        },
+                        "strings_extract": {
+                            "stdout": "please input the key:\nright!!!\nerror!!!\n",
+                            "stderr": "",
+                        },
+                    },
+                },
+                confidence=0.78,
+                hypothesis="Local reverse triage surfaced a flag-like token that should be verified.",
+                next_action="Send candidates to Verifier and preserve local tool outputs as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="reverse-pe-xor",
+            category=ChallengeCategory.REVERSE,
+            attachment_paths=("/tmp/reverseMe.exe",),
+        )
+
+        report = ReportBuilder().build("reverse-pe-xor", ("XCTF{5eacs6y8p1o9gitc9521}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("栈上初始化的加密字节", markdown)
+        self.assertIn("seed `56`", markdown)
+        self.assertIn("e376fb6fd828f270e87649804b9d568e62b226bd208402831ad8", markdown)
+        self.assertIn("XOR key", markdown)
+        self.assertIn("XCTF{5eacs6y8p1o9gitc9521}", markdown)
+        self.assertNotIn("strings 输出中看到", markdown)
+
+    def test_writeup_describes_elf_argv_repeating_xor_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="reverse-xor-nodebug",
+                solver="ReverseSolver",
+                finding="Analyzed reverse binary artifact",
+                evidence={
+                    "artifact": "/tmp/xor_nodebug",
+                    "flag_candidates": ["reverse_xor"],
+                    "elf_argv_repeating_xor": {
+                        "pattern": "ELF argv repeating XOR validation against .rodata string",
+                        "source": "objdump_disassemble+objdump_rodata",
+                        "key_hex": "010203050607",
+                        "key_length": 6,
+                        "ciphertext_address": "0x2015",
+                        "ciphertext": "sgu`ttd]{jt",
+                        "recovered_input": "reverse_xor",
+                        "flag_candidates": ["reverse_xor"],
+                    },
+                    "tool_samples": {
+                        "file_identify": {
+                            "stdout": "/tmp/xor_nodebug: ELF 64-bit LSB pie executable, x86-64\n",
+                            "stderr": "",
+                        },
+                        "strings_extract": {
+                            "stdout": "ptrace\nstrcmp\nstrlen\ndon't trace me:(\nsgu`ttd]{jt\nright\n",
+                            "stderr": "",
+                        },
+                    },
+                },
+                confidence=0.78,
+                hypothesis="Local reverse triage surfaced a recovered input that should be verified.",
+                next_action="Send candidates to Verifier and preserve local tool outputs as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="reverse-xor-nodebug",
+            category=ChallengeCategory.REVERSE,
+            attachment_paths=("/tmp/xor_nodebug",),
+        )
+
+        report = ReportBuilder().build("reverse-xor-nodebug", ("reverse_xor",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("argv 参数", markdown)
+        self.assertIn("0x2015", markdown)
+        self.assertIn("``sgu`ttd]{jt``", markdown)
+        self.assertIn("010203050607", markdown)
+        self.assertIn("reverse_xor", markdown)
+        self.assertNotIn("strings 输出中看到", markdown)
 
     def test_writeup_uses_transform_candidate_matching_accepted_flag(self) -> None:
         findings = [
@@ -495,6 +699,49 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("0x37", " ".join(steps))
         self.assertIn("flag{expanded_single_xor}", " ".join(steps))
 
+    def test_writeup_describes_lfsr_berlekamp_massey_recovery(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="lfsr-bm-report",
+                solver="CryptoSolver",
+                finding="Recovered LFSR Berlekamp-Massey flag candidates",
+                evidence={
+                    "lfsr_bm": {
+                        "method": "lfsr_berlekamp_massey",
+                        "flags": ["de1ctf{1224473d5e349dbf2946353444d727d8fa91da3275ed3ac0dedeb7e6a9ad8619}"],
+                        "plaintext_preview": "de1ctf{1224473d5e349dbf2946353444d727d8fa91da3275ed3ac0dedeb7e6a9ad8619}",
+                        "linear_complexity": 256,
+                        "free_variables": 7,
+                        "sequence_bits": 504,
+                        "key_sha256_prefix": "1224",
+                    }
+                },
+                confidence=0.86,
+                hypothesis="LFSR output was recovered with GF(2) linear algebra.",
+                next_action="Send recovered candidates to Verifier and preserve the sequence, key, mask, and free-variable evidence for replay.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="lfsr-bm-report",
+            category=ChallengeCategory.CRYPTO,
+            attachment_paths=("/tmp/BM.py",),
+        )
+
+        report = ReportBuilder().build(
+            "lfsr-bm-report",
+            ("de1ctf{1224473d5e349dbf2946353444d727d8fa91da3275ed3ac0dedeb7e6a9ad8619}",),
+            findings,
+            [],
+            challenge=challenge,
+        )
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("Berlekamp-Massey", markdown)
+        self.assertIn("504 bit", markdown)
+        self.assertIn("free variables=7", markdown)
+        self.assertIn("1224", markdown)
+        self.assertIn("de1ctf{1224473d5e349dbf2946353444d727d8fa91da3275ed3ac0dedeb7e6a9ad8619}", markdown)
+
     def test_rsa_writeup_outputs_reproducible_solve_script(self) -> None:
         findings = [
             Finding(
@@ -575,6 +822,47 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("if root is None", script)
         self.assertIn("flag{rsa_low_exponent}", report["writeup"]["markdown"])
         self.assertIn("### Solve 脚本", report["writeup"]["markdown"])
+
+    def test_rsa_modular_low_exponent_writeup_outputs_replay_script(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="rsa-modular-low-writeup",
+                solver="CryptoSolver",
+                finding="Recovered RSA flag candidates",
+                evidence={
+                    "rsa_recovery": {
+                        "method": "modular_low_exponent_root",
+                        "flags": ["flag{rsa_modular_low_exp}"],
+                        "plaintext_preview": "flag{rsa_modular_low_exp}",
+                        "parameters": {
+                            "n": str(2**521 - 1),
+                            "e": "7",
+                            "c": "123456789",
+                            "root_multiplier": "8",
+                            "root_search_limit": "10000",
+                        },
+                    }
+                },
+                confidence=0.86,
+                next_action="Send recovered candidates to Verifier and preserve the RSA parameters as replay evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="rsa-modular-low-writeup",
+            category=ChallengeCategory.CRYPTO,
+            title="RSA modular low exponent",
+        )
+
+        report = ReportBuilder().build("rsa-modular-low-writeup", ("flag{rsa_modular_low_exp}",), findings, [], challenge=challenge)
+
+        script = report["writeup"]["solve_script"]["content"]
+        self.assertEqual(report["writeup"]["solve_script"]["filename"], "solve_rsa_modular_low_writeup.py")
+        self.assertIn('METHOD = "modular_low_exponent_root"', script)
+        self.assertIn("for k in range(root_search_limit):", script)
+        self.assertIn("root = integer_nth_root(c + n * k, e)", script)
+        self.assertIn("c + k*n", report["writeup"]["markdown"])
+        self.assertIn("k=8", report["writeup"]["markdown"])
+        self.assertIn("flag{rsa_modular_low_exp}", report["writeup"]["markdown"])
 
     def test_rsa_common_modulus_writeup_outputs_replay_script(self) -> None:
         findings = [
@@ -998,6 +1286,63 @@ class ReportBuilderTest(unittest.TestCase):
         self.assertIn("tcp.stream eq 0", markdown)
         self.assertIn("flag{expanded_traffic_http_0}", markdown)
 
+    def test_writeup_describes_corrupt_pcap_ip_id_stego_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="traffic-ipid-writeup",
+                solver="TrafficSolver",
+                finding="Analyzed packet capture traffic",
+                evidence={
+                    "artifact": {"name": "findtheflag.cap"},
+                    "flag_candidates": ["flag{aha!_you_found_it!}"],
+                    "pcap_record_resync": {
+                        "method": "pcap_record_header_resync",
+                        "path": ".forgeflag/artifacts/traffic-ipid/pcap-repairs/findtheflag/findtheflag-resync.cap",
+                        "records_recovered": 1600,
+                        "repair_count": 166,
+                        "repairs": [
+                            {
+                                "record": 18,
+                                "old_incl_len": 386,
+                                "fixed_incl_len": 377,
+                                "next_header_offset": 2307,
+                            }
+                        ],
+                    },
+                    "ip_id_stego": {
+                        "method": "ipv4_identification_little_endian_pairs",
+                        "marker": "where is the flag?",
+                        "adjacent_deduped_ip_ids_hex": [
+                            "0x6c66",
+                            "0x6761",
+                            "0x617b",
+                            "0x6168",
+                        ],
+                        "flag_candidates": ["flag{aha!_you_found_it!}"],
+                    },
+                },
+                confidence=0.82,
+                next_action="Send candidates to Verifier and preserve the packet capture as reproduction evidence.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="traffic-ipid-writeup",
+            category=ChallengeCategory.TRAFFIC,
+            attachment_paths=("/tmp/findtheflag.cap",),
+        )
+
+        report = ReportBuilder().build("traffic-ipid-writeup", ("flag{aha!_you_found_it!}",), findings, [], challenge=challenge)
+
+        markdown = report["writeup"]["markdown"]
+        self.assertIn("PCAP", markdown)
+        self.assertIn("record 18", markdown)
+        self.assertIn("findtheflag-resync.cap", markdown)
+        self.assertIn("IPv4 Identification", markdown)
+        self.assertIn("where is the flag?", markdown)
+        self.assertIn("0x6c66 0x6761 0x617b 0x6168", markdown)
+        self.assertIn("little-endian", markdown)
+        self.assertIn("flag{aha!_you_found_it!}", markdown)
+
     def test_writeup_describes_antsword_reproduction_steps(self) -> None:
         findings = [
             Finding(
@@ -1363,6 +1708,62 @@ class ReportBuilderTest(unittest.TestCase):
         )
         self.assertIn("PNG LSB", sections["解题思路"]["body"])
         self.assertNotIn("关键证据", report["writeup"]["markdown"])
+
+    def test_writeup_describes_bmp_quickstego_braille_reproduction_steps(self) -> None:
+        findings = [
+            Finding(
+                challenge_id="bmp-braille-writeup",
+                solver="ForensicsSolver",
+                finding="Triaged forensic attachment",
+                evidence={
+                    "artifact": {"name": "coolguy.bmp", "path": "/tmp/coolguy.bmp"},
+                    "flag_candidates": ["csictf{ucbr4ill3}"],
+                    "image_stego": {
+                        "format": "bmp",
+                        "lsb_candidates": [
+                            {
+                                "recipe": "b1,row,lsb,file",
+                                "bit_plane": 1,
+                                "channel_order": "row",
+                                "bit_order": "lsb",
+                                "coordinate_order": "file",
+                                "text_preview": "2471491ED07C69930E8F994E383E415F",
+                            }
+                        ],
+                    },
+                    "decoded_image_text_candidates": [
+                        {
+                            "value": "csictf{ucbr4ill3}",
+                            "recipe": ["hex_braille_ascii_normalize"],
+                            "source": "2471491ED07C69930E8F994E383E415F",
+                        }
+                    ],
+                },
+                confidence=0.78,
+                hypothesis="Image stego evidence contains a flag-like token.",
+                next_action="Send image-derived flag candidates to Verifier and preserve the image evidence path.",
+            )
+        ]
+        challenge = Challenge(
+            challenge_id="bmp-braille-writeup",
+            category=ChallengeCategory.FORENSICS,
+            attachment_paths=("/tmp/coolguy.bmp",),
+        )
+
+        report = ReportBuilder().build("bmp-braille-writeup", ("csictf{ucbr4ill3}",), findings, [], challenge=challenge)
+
+        sections = {section["title"]: section for section in report["writeup"]["sections"]}
+        self.assertEqual(
+            sections["复现步骤"]["steps"],
+            [
+                "执行 `file coolguy.bmp` 确认附件是 BMP 图片。",
+                "按 recipe `b1,row,lsb,file` 提取 BMP 像素/行数据最低位，得到 QuickStego 风格文本 `2471491ED07C69930E8F994E383E415F`。",
+                "将该 hex 转为不补前导零的二进制，按 6-bit Braille ASCII 分组，并规范化数字/括号标记。",
+                "得到 csictf{ucbr4ill3}，提交该 flag。",
+            ],
+        )
+        self.assertIn("BMP/QuickStego", sections["解题思路"]["body"])
+        self.assertIn("Braille", report["writeup"]["markdown"])
 
     def test_writeup_describes_archive_preview_reproduction_steps(self) -> None:
         findings = [

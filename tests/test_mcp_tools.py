@@ -11,6 +11,22 @@ from forgeflag import mcp_server
 
 @unittest.skipIf(mcp_server.FastMCP is None, "MCP optional dependency is not installed")
 class McpToolTest(unittest.TestCase):
+    def test_analysis_hints_mcp_tool_returns_category_filtered_hints(self) -> None:
+        payload = mcp_server.analysis_hints("traffic")
+
+        self.assertTrue(payload)
+        self.assertTrue(all(row["category"] == "traffic" for row in payload))
+        self.assertIn("traffic-http-webshell-delimited-flag", {row["id"] for row in payload})
+        self.assertIn("traffic-data-uri-image", {row["id"] for row in payload})
+
+        crypto_payload = mcp_server.analysis_hints("crypto")
+        self.assertTrue(all(row["category"] == "crypto" for row in crypto_payload))
+        self.assertIn("crypto-python-random-prime-offset", {row["id"] for row in crypto_payload})
+
+        reverse_payload = mcp_server.analysis_hints("reverse")
+        self.assertTrue(all(row["category"] == "reverse" for row in reverse_payload))
+        self.assertIn("reverse-pe-stack-xor-key-check", {row["id"] for row in reverse_payload})
+
     def test_tshark_traffic_analysis_mcp_tool_returns_structured_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             pcap = Path(tmp) / "capture.pcap"
@@ -83,6 +99,66 @@ class McpToolTest(unittest.TestCase):
         self.assertEqual(payload["status"], "missing")
         self.assertEqual(payload["evidence"], ["not installed"])
 
+    def test_objdump_disassemble_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "rev"
+            binary.write_bytes(b"fake")
+            with patch(
+                "forgeflag.mcp_server.ctf.objdump_disassemble",
+                return_value=ToolResult(tool="objdump", target=None, status="success", raw={"stdout": "main:"}),
+            ) as objdump:
+                payload = mcp_server.objdump_disassemble(str(binary))
+
+        objdump.assert_called_once_with(str(binary.resolve()), mcp_server._scope_from_env())
+        self.assertEqual(payload["tool"], "objdump")
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["raw"]["stdout"], "main:")
+
+    def test_objdump_section_dump_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "rev"
+            binary.write_bytes(b"fake")
+            with patch(
+                "forgeflag.mcp_server.ctf.objdump_section_dump",
+                return_value=ToolResult(tool="objdump", target=None, status="success", raw={"stdout": "Contents"}),
+            ) as objdump:
+                payload = mcp_server.objdump_section_dump(str(binary), section=".data")
+
+        objdump.assert_called_once_with(str(binary.resolve()), ".data", mcp_server._scope_from_env())
+        self.assertEqual(payload["tool"], "objdump")
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["raw"]["stdout"], "Contents")
+
+    def test_readelf_sections_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "rev"
+            binary.write_bytes(b"fake")
+            with patch(
+                "forgeflag.mcp_server.ctf.readelf_sections",
+                return_value=ToolResult(tool="readelf", target=None, status="success", evidence=[".text"]),
+            ) as readelf:
+                payload = mcp_server.readelf_sections(str(binary))
+
+        readelf.assert_called_once_with(str(binary.resolve()), mcp_server._scope_from_env())
+        self.assertEqual(payload["tool"], "readelf")
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["evidence"], [".text"])
+
+    def test_radare2_info_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "rev"
+            binary.write_bytes(b"fake")
+            with patch(
+                "forgeflag.mcp_server.ctf.radare2_info",
+                return_value=ToolResult(tool="radare2", target=None, status="success", evidence=["izz"]),
+            ) as radare2:
+                payload = mcp_server.radare2_info(str(binary))
+
+        radare2.assert_called_once_with(str(binary.resolve()), mcp_server._scope_from_env())
+        self.assertEqual(payload["tool"], "radare2")
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["evidence"], ["izz"])
+
     def test_rsactftool_attack_mcp_tool_returns_structured_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             public_key = Path(tmp) / "pub.pem"
@@ -112,6 +188,43 @@ class McpToolTest(unittest.TestCase):
         self.assertEqual(payload["tool"], "hashcat")
         self.assertEqual(payload["status"], "missing")
         self.assertEqual(payload["evidence"], ["not installed"])
+
+    def test_foremost_carve_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "blob.bin"
+            output_dir = Path(tmp) / "carved"
+            artifact.write_bytes(b"fake")
+            with patch(
+                "forgeflag.mcp_server.ctf.foremost_carve",
+                return_value=ToolResult(tool="foremost", target=None, status="success", artifacts=[str(output_dir)]),
+            ) as foremost:
+                payload = mcp_server.foremost_carve(str(artifact), str(output_dir))
+
+        foremost.assert_called_once_with(str(artifact.resolve()), str(output_dir), mcp_server._scope_from_env())
+        self.assertEqual(payload["tool"], "foremost")
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["artifacts"], [str(output_dir)])
+
+    def test_yara_scan_mcp_tool_returns_structured_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "blob.bin"
+            output_dir = Path(tmp) / "rules"
+            artifact.write_bytes(b"fake")
+            with patch(
+                "forgeflag.mcp_server.ctf.yara_scan",
+                return_value=ToolResult(tool="yara", target=None, status="success", evidence=["flag_text"]),
+            ) as yara:
+                payload = mcp_server.yara_scan(str(artifact), {"flag_text": "flag{"}, str(output_dir))
+
+        yara.assert_called_once_with(
+            str(artifact.resolve()),
+            {"flag_text": "flag{"},
+            str(output_dir),
+            mcp_server._scope_from_env(),
+        )
+        self.assertEqual(payload["tool"], "yara")
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["evidence"], ["flag_text"])
 
     def test_ffuf_route_discovery_mcp_tool_returns_structured_payload(self) -> None:
         with patch(

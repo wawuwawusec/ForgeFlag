@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import base64
+import math
+import struct
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import ANY, patch
 
+from PIL import Image, ImageDraw
+
 from forgeflag.domain import Challenge, ChallengeCategory, RunConfig, ToolResult
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.solvers import TrafficSolver
+from forgeflag.solvers.traffic import _ip_id_stego_recovery, _pcap_record_resync_repair, _raw_capture_flag_scan
 
 
 class TrafficSolverTest(unittest.TestCase):
@@ -71,8 +77,190 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(summary["accepted_flags"], ["flag{pcap_payload}"])
         traffic_finding = next(f for f in findings if f.finding == "Analyzed packet capture traffic")
         self.assertEqual(traffic_finding.solver, "TrafficSolver")
+        self.assertEqual(traffic_finding.evidence["ctf_scope"]["category"], "traffic")
+        self.assertEqual(traffic_finding.evidence["ctf_scope"]["research_context"], "local_or_authorized_ctf_lab")
         self.assertIn("tshark_traffic_analysis", traffic_finding.evidence["tool_statuses"])
         self.assertIn("tshark_flag_scan", traffic_finding.evidence["tool_statuses"])
+
+    def test_traffic_solver_scans_raw_capture_bytes_for_plaintext_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "capture.pcap"
+            attachment.write_bytes(b"\xd4\xc3\xb2\xa1" + (b"A" * 1600) + b" raw HTTP object tjctf{raw_pcap_payload_flag}\x00tail")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-raw-flag",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-raw-flag")
+                finding = next(f for f in notebook.findings_for("traffic-raw-flag") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["tjctf{raw_pcap_payload_flag}"])
+        self.assertEqual(finding.evidence["raw_capture_flag_scan"]["flags"], ["tjctf{raw_pcap_payload_flag}"])
+
+    def test_raw_capture_flag_scan_reads_only_bounded_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            attachment = Path(tmp) / "large.pcap"
+            attachment.write_bytes(b"A" * 32 + b"flag{past_limit}")
+
+            scan = _raw_capture_flag_scan(str(attachment), max_bytes=16)
+
+        self.assertEqual(scan["bytes_scanned"], 16)
+        self.assertTrue(scan["truncated"])
+        self.assertEqual(scan["flags"], [])
+
+    def test_traffic_solver_repairs_corrupt_pcap_and_decodes_ip_id_stego(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "findtheflag.cap"
+            attachment.write_bytes(_corrupt_ip_id_stego_pcap("flag{pcap_resync}"))
+            repair_dir = root / "repairs"
+
+            repair = _pcap_record_resync_repair(str(attachment), repair_dir)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertGreaterEqual(len(repair["repairs"]), 1)
+            recovery = _ip_id_stego_recovery(str(repair["path"]))
+            self.assertEqual(recovery["flag_candidates"], ["flag{pcap_resync}"])
+
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-corrupt-ipid",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            tshark_error = ToolResult(
+                tool="tshark",
+                target=None,
+                status="error",
+                raw={"stdout": "", "stderr": "pcap: File has 3138333535-byte packet, bigger than maximum of 262144"},
+            )
+            with (
+                patch("forgeflag.solvers.traffic.ctf.tshark_pcap_summary", return_value=tshark_error),
+                patch("forgeflag.solvers.traffic.ctf.tshark_traffic_analysis", return_value=tshark_error),
+                patch("forgeflag.solvers.traffic.ctf.tshark_flag_scan", return_value=tshark_error),
+                patch("forgeflag.solvers.traffic.ctf.tshark_dns_summary", return_value=tshark_error),
+                patch("forgeflag.solvers.traffic.ctf.tshark_tcp_streams", return_value=tshark_error),
+                patch("forgeflag.solvers.traffic.ctf.tshark_http_requests", return_value=tshark_error),
+                patch("forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan", return_value=tshark_error),
+                patch("forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream", return_value=tshark_error),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-corrupt-ipid")
+                finding = next(f for f in notebook.findings_for("traffic-corrupt-ipid") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{pcap_resync}"])
+        self.assertEqual(finding.evidence["pcap_record_resync"]["recovered_flags"], ["flag{pcap_resync}"])
+        self.assertEqual(finding.evidence["ip_id_stego"]["flag_candidates"], ["flag{pcap_resync}"])
+
+    def test_traffic_solver_wraps_nikto_user_agent_tool_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "capture.pcap"
+            attachment.write_bytes(b"pcap fixture placeholder")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-nikto-version",
+                    category=ChallengeCategory.TRAFFIC,
+                    title="DUCTF 2024 - Baby's First Forensics",
+                    description="Tell us what tool they were using and its version. Wrap your answer in DUCTF{}.",
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.file_identify",
+                    return_value=ToolResult(tool="file", target=None, status="success", raw={"stdout": "pcap capture file"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "HTTP GET"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "Protocol Hierarchy: http"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(
+                        tool="tshark",
+                        target=None,
+                        status="success",
+                        raw={"stdout": "1|1|GET|/admin.php|Mozilla/5.00 (Nikto/2.1.6)"},
+                    ),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-nikto-version")
+                finding = next(f for f in notebook.findings_for("traffic-nikto-version") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["DUCTF{nikto_2.1.6}"])
+        self.assertEqual(finding.evidence["tool_version_flags"][0]["tool"], "nikto")
+        self.assertEqual(finding.evidence["tool_version_flags"][0]["version"], "2.1.6")
 
     def test_traffic_solver_decodes_http_artifact_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -139,6 +327,68 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(summary["accepted_flags"], ["f1ag{si11yb0yemmm}"])
         self.assertIn("f1ag{si11yb0yemmm}", finding.evidence["decoded_http_artifacts"][0])
         self.assertEqual(finding.evidence["tcp_streams"][0]["stream_id"], "16")
+
+    def test_traffic_solver_accepts_generic_flag_after_http_response_delimiter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "key.pcapng"
+            attachment.write_bytes(b"pcapng fixture placeholder")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-http-webshell",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+            payload = "X@Yflag{This_is_a_f10g}\n[S]\n/var/www/html\n[E]\nX@Y"
+            artifact_stdout = f"105|4|POST|/shell.php||{payload.encode().hex()}"
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "HTTP POST"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "http frames"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "105|4|10.0.0.2|4444|10.0.0.3|80|HTTP|POST /shell.php HTTP/1.1"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "105|4|POST|/shell.php|Mozilla/5.0"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": artifact_stdout}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_object_export",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-http-webshell")
+                finding = next(f for f in notebook.findings_for("traffic-http-webshell") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{This_is_a_f10g}"])
+        self.assertIn("flag{This_is_a_f10g}", finding.evidence["decoded_http_artifacts"])
+        self.assertEqual(finding.evidence["flag_candidates"], ["flag{This_is_a_f10g}"])
 
     def test_traffic_solver_summarizes_dns_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -258,6 +508,32 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(summary["status"], "flag_found")
         self.assertEqual(summary["accepted_flags"], ["flag{dns_subdomain}"])
         self.assertIn("flag{dns_subdomain}", finding.evidence["dns_summary"]["decoded_query_hints"])
+
+    def test_traffic_solver_decodes_ask_manchester_waveform_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "spicy-sines.png"
+            _write_ask_manchester_waveform_png(attachment, "flag{ask_manchester_image}")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-rf-image",
+                    category=ChallengeCategory.TRAFFIC,
+                    title="Spicy Sines",
+                    description="ASK/OOK radio waveform image with Manchester encoding.",
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig(), solvers=[TrafficSolver()]).run_challenge("traffic-rf-image")
+            finding = next(f for f in notebook.findings_for("traffic-rf-image") if f.solver == "TrafficSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{ask_manchester_image}"])
+        self.assertEqual(finding.finding, "Decoded RF image waveform")
+        self.assertEqual(finding.evidence["rf_image_waveform"]["encoding"], "ask_ook_manchester")
+        self.assertEqual(finding.evidence["rf_image_waveform"]["flag_candidates"], ["flag{ask_manchester_image}"])
+        self.assertIn("low_high_is_one", finding.evidence["rf_image_waveform"]["manchester_mapping"])
 
     def test_traffic_solver_follows_shortlisted_tcp_streams_for_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -396,6 +672,73 @@ class TrafficSolverTest(unittest.TestCase):
         self.assertEqual(finding.evidence["protocol_streams"][0]["stream_id"], "7")
         self.assertIn("EHLO", finding.evidence["protocol_streams"][0]["commands"])
         self.assertIn("flag{smtp_stream_summary}", finding.evidence["protocol_streams"][0]["flags"])
+
+    def test_traffic_solver_extracts_data_uri_images_from_tcp_streams(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "data-uri.pcap"
+            attachment.write_bytes(b"pcap fixture placeholder")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="traffic-data-uri",
+                    category=ChallengeCategory.TRAFFIC,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+            image_bytes = b"\xff\xd8" + (b"A" * 1800) + b" visual flag{data_uri_image}\xff\xd9"
+            data_uri = "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode("ascii")
+
+            with (
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_pcap_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "TCP"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_traffic_analysis",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": "tcp frames"}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_flag_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_dns_summary",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_tcp_streams",
+                    return_value=ToolResult(
+                        tool="tshark",
+                        target=None,
+                        status="success",
+                        raw={"stdout": "15|2|10.0.0.2|25697|10.0.0.3|29793|TCP|data:image/jpeg;base64"},
+                    ),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_requests",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_http_artifact_scan",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": ""}),
+                ),
+                patch(
+                    "forgeflag.solvers.traffic.ctf.tshark_follow_tcp_stream",
+                    return_value=ToolResult(tool="tshark", target=None, status="success", raw={"stdout": data_uri}),
+                ),
+            ):
+                summary = Manager(notebook, RunConfig()).run_challenge("traffic-data-uri")
+                finding = next(f for f in notebook.findings_for("traffic-data-uri") if f.solver == "TrafficSolver")
+                data_uri_artifact = finding.evidence["data_uri_artifacts"][0]
+                artifact_exists = Path(data_uri_artifact["path"]).is_file()
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{data_uri_image}"])
+        self.assertEqual(data_uri_artifact["stream_id"], "2")
+        self.assertEqual(data_uri_artifact["media_type"], "image/jpeg")
+        self.assertTrue(artifact_exists)
+        self.assertIn("flag{data_uri_image}", data_uri_artifact["flags"])
 
     def test_traffic_solver_exports_http_objects_and_records_file_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -667,6 +1010,73 @@ class TrafficSolverTest(unittest.TestCase):
 
         self.assertEqual(summary["status"], "completed")
         self.assertEqual(findings[0].finding, "Traffic solver found no packet captures")
+
+
+def _corrupt_ip_id_stego_pcap(flag: str) -> bytes:
+    records: list[bytes] = []
+    first_packet = _ether_ipv4_tcp_packet(0x1234, b"warmup", sport=12345)
+    records.append(_pcap_record(1_700_000_000, 1, first_packet, incl_len=len(first_packet) + 7))
+    encoded = flag.encode("ascii")
+    if len(encoded) % 2:
+        encoded += b"\x00"
+    for index in range(0, len(encoded), 2):
+        ip_id = int.from_bytes(encoded[index : index + 2], "little")
+        packet = _ether_ipv4_tcp_packet(ip_id, b"where is the flag?", sport=20000 + index)
+        records.append(_pcap_record(1_700_000_000, 2 + index, packet))
+    global_header = struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 262144, 1)
+    return global_header + b"".join(records)
+
+
+def _pcap_record(ts_sec: int, ts_usec: int, packet: bytes, incl_len: int | None = None) -> bytes:
+    captured_length = len(packet) if incl_len is None else incl_len
+    return struct.pack("<IIII", ts_sec, ts_usec, captured_length, max(captured_length, len(packet))) + packet
+
+
+def _ether_ipv4_tcp_packet(ip_id: int, payload: bytes, sport: int = 12345, dport: int = 2222) -> bytes:
+    eth = b"\x02\x00\x00\x00\x00\x02" + b"\x02\x00\x00\x00\x00\x01" + b"\x08\x00"
+    src = bytes([10, 0, 0, 1])
+    dst = bytes([10, 0, 0, 2])
+    tcp_header_len = 20
+    total_length = 20 + tcp_header_len + len(payload)
+    ip_header = struct.pack(
+        "!BBHHHBBH4s4s",
+        0x45,
+        0,
+        total_length,
+        ip_id,
+        0,
+        64,
+        6,
+        0,
+        src,
+        dst,
+    )
+    tcp_header = struct.pack("!HHIIHHHH", sport, dport, 1, 0, 0x5000, 8192, 0, 0)
+    return eth + ip_header + tcp_header + payload
+
+
+def _write_ask_manchester_waveform_png(path: Path, message: str) -> None:
+    start = 128
+    half_width = 16
+    carrier_period = 8.0
+    amplitude = 34
+    height = 120
+    mid = height // 2
+    bits = "".join(f"{byte:08b}" for byte in message.encode("ascii"))
+    manchester_halves: list[int] = []
+    for bit in bits:
+        manchester_halves.extend((0, 1) if bit == "1" else (1, 0))
+    width = start + len(manchester_halves) * half_width + 128
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    points: list[tuple[int, int]] = []
+    for x in range(width):
+        half_index = int((x - start) // half_width)
+        active = 0 <= half_index < len(manchester_halves) and manchester_halves[half_index]
+        offset = amplitude * math.sin(2 * math.pi * x / carrier_period) if active else 0
+        points.append((x, int(round(mid + offset))))
+    draw.line(points, fill=(0, 80, 255), width=2)
+    image.save(path)
 
 
 if __name__ == "__main__":

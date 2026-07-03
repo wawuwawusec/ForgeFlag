@@ -44,11 +44,19 @@ class ReportBuilder:
         observations: list[Observation],
         solve_trace: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        path = _dedupe_steps(
+        matching_findings = sorted(
             [
-                self._finding_step(finding)
+                finding
                 for finding in findings
                 if flag in str(finding.evidence) or flag in finding.finding
+            ],
+            key=lambda finding: (_finding_flag_rank(flag, finding), finding.created_at),
+            reverse=True,
+        )
+        path = _dedupe_steps_preserve_first(
+            [
+                self._finding_step(finding)
+                for finding in matching_findings
             ],
             ("solver", "finding", "next_action"),
         )
@@ -165,10 +173,40 @@ def _compact_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(value, list):
             compact[key] = value[:10]
         elif isinstance(value, dict):
-            compact[key] = {subkey: value[subkey] for subkey in list(value)[:10]}
+            compact[key] = _compact_mapping(value)
         else:
             compact[key] = value
     return compact
+
+
+def _compact_mapping(value: dict[str, Any], limit: int = 14) -> dict[str, Any]:
+    priority = (
+        "method",
+        "flags",
+        "flag_candidates",
+        "plaintext_preview",
+        "seed",
+        "seed_text",
+        "seed_hex",
+        "key",
+        "gift_hex",
+        "key_bits",
+        "enc",
+        "t",
+        "r",
+        "randint_bounds",
+    )
+    selected: dict[str, Any] = {}
+    for key in priority:
+        if key in value:
+            selected[key] = value[key]
+    for key in value:
+        if key in selected:
+            continue
+        selected[key] = value[key]
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def _non_empty_items(items: list[tuple[str, str | None]]) -> list[dict[str, str]]:
@@ -187,27 +225,91 @@ def _dedupe_steps(steps: list[dict[str, Any]], keys: tuple[str, ...]) -> list[di
     return list(reversed(deduped))
 
 
+def _dedupe_steps_preserve_first(steps: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, ...]] = set()
+    deduped: list[dict[str, Any]] = []
+    for step in steps:
+        identity = tuple(str(step.get(key) or "") for key in keys)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        deduped.append(step)
+    return deduped
+
+
+def _finding_flag_rank(flag: str, finding: Finding) -> int:
+    evidence = finding.evidence
+    direct_candidates = [
+        *_string_list(evidence.get("flag_candidates")),
+        *_string_list(evidence.get("flags")),
+    ]
+    if flag in direct_candidates:
+        return 3
+    if flag in finding.finding:
+        return 2
+    return 1
+
+
 def _approach_summary(path_steps: list[dict[str, Any]], findings: list[Finding]) -> str:
+    pcap_ip_id = _first_pcap_resync_ip_id_stego(path_steps)
+    if pcap_ip_id:
+        return (
+            "关键点是流量包本身有 classic PCAP record 长度错位，导致 tshark 提前停止。"
+            "先按合理时间戳和包长重同步 record header 写出修复后的 PCAP，"
+            "再从包含 `where is the flag?` 的短 TCP 包里读取 IPv4 Identification 字段；"
+            "这些字段是 little-endian 两字节隐写，去掉相邻重复后即可拼出 flag。"
+        )
     antsword_recovery = _first_antsword_recovery(path_steps)
     if antsword_recovery:
         return "关键点是 AntSword/JSP webshell 流量：HTTP object 中一处记录了反向的 `cut -c N /flag` 命令，另一处记录了经过 ROT13 的逐字符回显；按位置重排即可还原 flag。"
+    bmp_braille = _first_bmp_braille_recovery(path_steps)
+    if bmp_braille:
+        return "关键点是 BMP/QuickStego 风格隐写后的二阶段解码：先从 BMP 像素或行数据最低位提取 hex，再按 Braille ASCII 语义规范化得到 flag。"
     image_lsb = _first_image_lsb_recovery(path_steps)
     if image_lsb:
         recipe = image_lsb.get("recipe") or "LSB"
-        return f"关键点是 PNG LSB 隐写：按 {recipe} 提取低位比特流，必要时再做文本解码，即可得到 flag。"
+        image_format = str(image_lsb.get("format") or "PNG").upper()
+        return f"关键点是 {image_format} LSB 隐写：按 {recipe} 提取低位比特流，必要时再做文本解码，即可得到 flag。"
     encoded_image_text = _first_encoded_image_text_recovery(path_steps)
     if encoded_image_text:
         location = encoded_image_text.get("location") or "图片文本线索"
         method = encoded_image_text.get("method") or "可逆编码"
         return f"关键点是图片元数据/注释隐藏了编码文本：先定位 {location}，再执行 {method} 解码得到 flag。"
+    elf_argv_xor = _first_elf_argv_repeating_xor(path_steps)
+    if elf_argv_xor:
+        return "关键点是 ELF 的 argv 参数校验：程序把用户输入逐字节与栈上初始化的循环 XOR key 组合，再和 `.rodata` 里的密文字符串做 `strcmp`；反向异或即可得到正确提交值。"
+    pe_stack_xor = _first_pe_stack_xor_key_check(path_steps)
+    if pe_stack_xor:
+        return "关键点是 PE 校验函数把加密字节逐个写到栈上，再用 seed 生成 XOR key 原地解密；复现该 XOR 流后即可得到正确输入，也就是 flag。"
     reverse_strings = _first_reverse_strings_step(path_steps)
     if reverse_strings:
         return "关键点是二进制明文字符串泄露：先确认附件类型，再用 strings 提取可打印字符串，直接发现 flag。"
     random_xor = _first_nested(path_steps, "python_random_xor")
     if random_xor:
         return "关键点是弱随机种子：题目用小范围 seed 初始化 Python random，再生成 XOR key；遍历 seed 后即可还原明文。"
+    random_prime_offset = _first_nested(path_steps, "python_random_prime_offset")
+    if random_prime_offset:
+        return "关键点是 key ^ gift 泄露了 Python random 的字节 seed；复现 seed 后重新生成两个 next_prime(randint(...)) 偏移，即可从输出整数还原 flag。"
+    lfsr_bm = _first_nested(path_steps, "lfsr_bm")
+    if lfsr_bm:
+        sequence_bits = lfsr_bm.get("sequence_bits") or "若干"
+        free_variables = lfsr_bm.get("free_variables")
+        prefix = lfsr_bm.get("key_sha256_prefix")
+        suffix = (
+            f"；剩余 free variables={free_variables} 用 SHA256(KEY) 前缀 {prefix} 筛选"
+            if free_variables is not None and prefix
+            else ""
+        )
+        return f"关键点是 LFSR 输出序列恢复：从源码里的 {sequence_bits} bit 输出建立 GF(2) 线性方程，用 Berlekamp-Massey/线性代数恢复 key 和 mask{suffix}，再按题面公式计算 flag。"
     rsa_recovery = _first_nested(path_steps, "rsa_recovery")
     if rsa_recovery:
+        if rsa_recovery.get("method") == "modular_low_exponent_root":
+            parameters = rsa_recovery.get("parameters") if isinstance(rsa_recovery.get("parameters"), dict) else {}
+            exponent = parameters.get("e") or "e"
+            multiplier = parameters.get("root_multiplier")
+            if multiplier is not None:
+                return f"关键点是低指数 RSA 未填充：源码提示遍历 k，让 c + k*n 成为精确 {exponent} 次方；命中 k={multiplier} 后开根即可得到明文 flag。"
+            return f"关键点是低指数 RSA 未填充：源码提示遍历 k，让 c + k*n 成为精确 {exponent} 次方，开根即可得到明文 flag。"
         return "关键点是 RSA 参数足够恢复私钥或明文；利用已知因子/私钥参数计算明文后提取 flag。"
     if path_steps:
         solvers = " -> ".join(step.get("solver") or "solver" for step in path_steps)
@@ -267,6 +369,26 @@ def _evidence_items(path_steps: list[dict[str, Any]], observation_steps: list[di
 
 
 def _human_evidence_items(step: dict[str, Any], evidence: dict[str, Any]) -> list[dict[str, str]]:
+    elf_argv_xor = evidence.get("elf_argv_repeating_xor")
+    if isinstance(elf_argv_xor, dict):
+        items = [
+            ("附件", _basename(str(evidence.get("artifact") or ""))),
+            ("密文地址", elf_argv_xor.get("ciphertext_address")),
+            ("密文字符串", elf_argv_xor.get("ciphertext")),
+            ("XOR key", elf_argv_xor.get("key_hex")),
+            ("还原输入", elf_argv_xor.get("recovered_input") or ", ".join(_string_list(elf_argv_xor.get("flag_candidates")))),
+        ]
+        return [{"label": label, "value": str(value).strip()} for label, value in items if value not in (None, "")]
+    pe_stack_xor = evidence.get("pe_stack_xor_key_check")
+    if isinstance(pe_stack_xor, dict):
+        items = [
+            ("附件", _basename(str(evidence.get("artifact") or ""))),
+            ("seed", pe_stack_xor.get("seed")),
+            ("密文字节", pe_stack_xor.get("encrypted_hex")),
+            ("XOR key", pe_stack_xor.get("xor_key_preview_hex")),
+            ("还原结果", pe_stack_xor.get("decoded_text") or ", ".join(_string_list(pe_stack_xor.get("flag_candidates")))),
+        ]
+        return [{"label": label, "value": str(value).strip()} for label, value in items if value not in (None, "")]
     reverse_strings = _reverse_strings_evidence(evidence)
     if reverse_strings:
         items = [
@@ -283,6 +405,17 @@ def _human_evidence_items(step: dict[str, Any], evidence: dict[str, Any]) -> lis
             ("key 位数", random_xor.get("key_bits")),
             ("命中 seed", random_xor.get("seed")),
             ("还原明文", random_xor.get("plaintext_preview") or ", ".join(_string_list(random_xor.get("flags")))),
+        ]
+        return [{"label": label, "value": str(value)} for label, value in items if value not in (None, "")]
+    random_prime_offset = evidence.get("python_random_prime_offset")
+    if isinstance(random_prime_offset, dict):
+        items = [
+            ("输出整数", random_prime_offset.get("enc")),
+            ("key", random_prime_offset.get("key")),
+            ("gift hex", random_prime_offset.get("gift_hex")),
+            ("恢复 seed", random_prime_offset.get("seed_text") or random_prime_offset.get("seed_hex")),
+            ("t/r", f"{random_prime_offset.get('t')} / {random_prime_offset.get('r')}"),
+            ("还原明文", random_prime_offset.get("plaintext_preview") or ", ".join(_string_list(random_prime_offset.get("flags")))),
         ]
         return [{"label": label, "value": str(value)} for label, value in items if value not in (None, "")]
     rsa_recovery = evidence.get("rsa_recovery")
@@ -319,6 +452,36 @@ def _reproduction_steps(
     attachments: list[str],
     accepted_flag: str | None = None,
 ) -> list[str]:
+    elf_argv_xor = _first_elf_argv_repeating_xor(path_steps, accepted_flag=accepted_flag)
+    if elf_argv_xor:
+        filename = elf_argv_xor.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
+        ciphertext_address = elf_argv_xor.get("ciphertext_address") or ".rodata 地址"
+        ciphertext = elf_argv_xor.get("ciphertext") or "密文字符串"
+        key_hex = elf_argv_xor.get("key_hex") or "XOR key"
+        recovered_input = elf_argv_xor.get("recovered_input") or accepted_flag or _first_string(elf_argv_xor.get("flag_candidates")) or "提交值"
+        return [
+            f"执行 `file {filename}` 确认附件是 ELF x86-64 本地二进制，再用 `strings -n 4 {filename}` 看到 `ptrace`、`strcmp`、`strlen`、`right` 等校验线索。",
+            f"用 `objdump -d -M intel {filename}` 查看 `main`，确认程序读取 argv 参数后做循环 XOR，并在 `strcmp` 前引用 `.rodata` 地址 `{ciphertext_address}`。",
+            f"用 `objdump -s -j .rodata {filename}` 读取该地址处密文 {_markdown_code(ciphertext)}。",
+            f"从栈初始化指令恢复小端 XOR key：`{key_hex}`。",
+            f"按 `plaintext[i] = ciphertext[i] ^ key[i % len(key)]` 反向异或，得到提交值 `{recovered_input}`。",
+            f"提交 {recovered_input}，verifier 验证通过。",
+        ]
+    pe_stack_xor = _first_pe_stack_xor_key_check(path_steps, accepted_flag=accepted_flag)
+    if pe_stack_xor:
+        filename = pe_stack_xor.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
+        seed = pe_stack_xor.get("seed") or "恢复出的 seed"
+        length = pe_stack_xor.get("length") or "目标长度"
+        encrypted = pe_stack_xor.get("encrypted_hex") or "密文字节"
+        key_preview = pe_stack_xor.get("xor_key_preview_hex") or "XOR key preview"
+        flag = pe_stack_xor.get("decoded_text") or accepted_flag or _first_string(pe_stack_xor.get("flag_candidates")) or "flag 候选"
+        return [
+            f"执行 `file {filename}` 确认附件是 PE32/i386 控制台程序，并用 `strings -n 4 {filename}` 看到 `please input the key:`、`right!!!`、`error!!!` 等提示。",
+            "定位输入校验函数，观察它先把 26 字节左右的密文逐个写到栈上，再调用一个本地解密函数。",
+            f"记录栈上初始化的加密字节 `{encrypted}`，长度为 {length}。",
+            f"复现解密函数：用 seed `{seed}` 计算 `step = seed * 2 + 0x0a`，从 `step * 10 - 9` 开始逐字节生成 XOR key；前缀为 `{key_preview}`。",
+            f"将密文字节与 XOR key 异或，得到 {flag}，提交该 flag。",
+        ]
     reverse_strings = _first_reverse_strings_step(path_steps)
     if reverse_strings:
         filename = reverse_strings.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
@@ -342,11 +505,60 @@ def _reproduction_steps(
             "用 ciphertext XOR key 还原明文，并按 flag 格式筛选候选结果。",
             f"命中 seed={seed}，明文为 {preview}。" if seed is not None else f"得到明文 {preview}。",
         ]
+    random_prime_offset = _first_nested(path_steps, "python_random_prime_offset")
+    if random_prime_offset:
+        filename = _basename(attachments[0]) if attachments else "题目附件"
+        seed = random_prime_offset.get("seed_text") or random_prime_offset.get("seed_hex") or "恢复出的 seed"
+        preview = random_prime_offset.get("plaintext_preview") or _first_string(random_prime_offset.get("flags")) or accepted_flag or "flag 候选"
+        t_value = random_prime_offset.get("t")
+        r_value = random_prime_offset.get("r")
+        return [
+            f"打开附件 {filename}，确认 key 与 gift 输出可异或恢复 Python random 的字节 seed。",
+            f"计算 seed = key XOR gift，得到 seed={seed}。",
+            f"按源码执行 random.seed(bytes_to_long(seed))，再计算 t=next_prime(randint(...)) 与 r=next_prime(randint(...))。",
+            f"用输出整数减去 t 并加回 r，转 bytes 得到 {preview}。" if t_value is not None and r_value is not None else f"用输出整数抵消 t-r 偏移，转 bytes 得到 {preview}。",
+        ]
+    lfsr_bm = _first_nested(path_steps, "lfsr_bm")
+    if lfsr_bm:
+        filename = _basename(attachments[0]) if attachments else "题目附件"
+        sequence_bits = lfsr_bm.get("sequence_bits") or "输出"
+        free_variables = lfsr_bm.get("free_variables")
+        prefix = lfsr_bm.get("key_sha256_prefix")
+        preview = lfsr_bm.get("plaintext_preview") or _first_string(lfsr_bm.get("flags")) or accepted_flag or "flag 候选"
+        filter_step = (
+            f"由于输出不足完整确定 256-bit mask，枚举剩余 free variables={free_variables}，用题面给出的 SHA256(KEY) 前缀 {prefix} 过滤候选。"
+            if free_variables is not None and prefix
+            else "用题面给出的 flag/hash 约束过滤候选 key。"
+        )
+        return [
+            f"打开附件 {filename}，确认它是 256-bit LFSR，输出序列写在源码注释或输出文本中。",
+            f"把 {sequence_bits} bit 输出转成 GF(2) 序列，对后半段建立 mask 线性方程，并用 Berlekamp-Massey/高斯消元恢复候选递推。",
+            "按源码状态更新方向倒推初始 KEY，并重新生成输出序列验证 key/mask 与题目输出一致。",
+            filter_step,
+            f"计算 de1ctf{{sha256(hex(KEY)[2:])}}，得到 {preview}。",
+        ]
     rsa_recovery = _first_nested(path_steps, "rsa_recovery")
     if rsa_recovery:
         method = rsa_recovery.get("method") or "RSA recovery"
         flags = _string_list(rsa_recovery.get("flags"))
         result = flags[0] if flags else "flag 候选"
+        parameters = rsa_recovery.get("parameters") if isinstance(rsa_recovery.get("parameters"), dict) else {}
+        if method == "modular_low_exponent_root":
+            exponent = parameters.get("e") or "e"
+            multiplier = parameters.get("root_multiplier")
+            search_limit = parameters.get("root_search_limit") or "给定范围"
+            hit_step = (
+                f"在 0..{search_limit} 的窗口里命中 k={multiplier}，因此 c + k*n 是精确 {exponent} 次方。"
+                if multiplier is not None
+                else f"在 0..{search_limit} 的窗口里搜索 k，使 c + k*n 成为精确 {exponent} 次方。"
+            )
+            return [
+                "从附件源码提取 RSA 参数 n/c，并从 iroot(c+n*i, e) 形式推断低指数 e。",
+                f"遍历 k，检查 c + k*n 是否为精确 {exponent} 次方。",
+                hit_step,
+                "把开根得到的明文整数转回 bytes，并按 flag 格式提取结果。",
+                f"得到 {result}。",
+            ]
         return [
             "从题目文本或附件中提取 RSA 参数 n/e/c 以及可用的 p/q/d 等信息。",
             f"使用 {method} 恢复私钥或直接计算明文整数。",
@@ -401,6 +613,18 @@ def _reproduction_steps(
             f"打开附件 {filename}，读取题面文本和文件内容。",
             _transform_reproduction_step(method),
             f"得到候选 {value}，交给 verifier 验证通过。",
+        ]
+    bmp_braille = _first_bmp_braille_recovery(path_steps, accepted_flag=accepted_flag)
+    if bmp_braille:
+        filename = bmp_braille.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
+        recipe = bmp_braille.get("recipe") or "b1,row,lsb,file"
+        source = bmp_braille.get("source") or "QuickStego hex"
+        flag = bmp_braille.get("flag") or accepted_flag or "flag 候选"
+        return [
+            f"执行 `file {filename}` 确认附件是 BMP 图片。",
+            f"按 recipe `{recipe}` 提取 BMP 像素/行数据最低位，得到 QuickStego 风格文本 `{source}`。",
+            "将该 hex 转为不补前导零的二进制，按 6-bit Braille ASCII 分组，并规范化数字/括号标记。",
+            f"得到 {flag}，提交该 flag。",
         ]
     encoded_image_text = _first_encoded_image_text_recovery(path_steps, accepted_flag=accepted_flag)
     if encoded_image_text:
@@ -528,6 +752,25 @@ def _reproduction_steps(
             f"查看 {output_object}，提取每行单字符回显；对这些字符做 {transform} 解码。",
             "按第 3 步的位置顺序把第 4 步得到的字符放回对应下标，拼出完整 flag。",
             f"得到 {flag}，提交该 flag。",
+        ]
+    pcap_ip_id = _first_pcap_resync_ip_id_stego(path_steps, accepted_flag=accepted_flag)
+    if pcap_ip_id:
+        filename = pcap_ip_id.get("artifact_name") or (_basename(attachments[0]) if attachments else "题目附件")
+        repaired_path = pcap_ip_id.get("repaired_path") or f"{filename}-resync.pcap"
+        record = pcap_ip_id.get("first_record") or "?"
+        old_len = pcap_ip_id.get("old_incl_len") or "?"
+        fixed_len = pcap_ip_id.get("fixed_incl_len") or "?"
+        next_header = pcap_ip_id.get("next_header_offset") or "?"
+        marker = pcap_ip_id.get("marker") or "where is the flag?"
+        hex_words = pcap_ip_id.get("hex_words") or "IP-ID hex words"
+        flag = pcap_ip_id.get("flag") or accepted_flag or "flag 候选"
+        return [
+            f"打开附件 {filename}，tshark 只能解析前几帧并提示 classic PCAP 长度损坏。",
+            f"按 record header 重同步修复 PCAP；首个关键修复点是 record {record}: incl_len {old_len} -> {fixed_len}，下一条 header offset={next_header}。",
+            f"使用修复后的文件 {repaired_path} 继续分析流量。",
+            f"筛选包含 `{marker}` 的短 TCP 包，例如 `tshark -r {repaired_path} -Y 'tcp.dstport==2222 && frame contains \"{marker}\"' -T fields -e frame.number -e ip.id -e data.data`。",
+            f"取这些包的 IPv4 Identification 字段，相邻去重后得到 `{hex_words}`。",
+            f"把每个 IP-ID 按 little-endian 两字节转成 ASCII，拼出 {flag}，提交该 flag。",
         ]
     traffic_pcap = _first_traffic_pcap_recovery(path_steps, accepted_flag=accepted_flag)
     if traffic_pcap:
@@ -713,7 +956,24 @@ def _rsa_solve_script(recovery: dict[str, Any]) -> str:
     parameters = recovery.get("parameters") if isinstance(recovery.get("parameters"), dict) else {}
     values = {
         name: str(parameters.get(name) or "0")
-        for name in ("n", "e", "c", "p", "q", "d", "e1", "e2", "c1", "c2", "c3", "n1", "n2", "n3")
+        for name in (
+            "n",
+            "e",
+            "c",
+            "p",
+            "q",
+            "d",
+            "e1",
+            "e2",
+            "c1",
+            "c2",
+            "c3",
+            "n1",
+            "n2",
+            "n3",
+            "root_multiplier",
+            "root_search_limit",
+        )
     }
     method = str(recovery.get("method") or "rsa_recovery")
     return f"""#!/usr/bin/env python3
@@ -743,6 +1003,8 @@ c3 = {values["c3"]}
 n1 = {values["n1"]}
 n2 = {values["n2"]}
 n3 = {values["n3"]}
+root_multiplier = {values["root_multiplier"]}
+root_search_limit = {values["root_search_limit"]}
 
 
 def egcd(left, right):
@@ -829,6 +1091,14 @@ def broadcast_recover(ciphertexts, moduli, exponent):
     return root
 
 
+def modular_low_exponent_recover(n, c, e, root_search_limit):
+    for k in range(root_search_limit):
+        root = integer_nth_root(c + n * k, e)
+        if root is not None:
+            return root
+    raise SystemExit("No exact root found in c + k*n search window; increase root_search_limit if challenge evidence supports it.")
+
+
 def integer_nth_root(value, degree):
     low = 0
     high = 1 << ((value.bit_length() + degree - 1) // degree)
@@ -860,6 +1130,9 @@ def main():
         if root is None:
             raise SystemExit("Ciphertext is not an exact e-th power; try Sage/Coppersmith/RsaCtfTool.")
         m = root
+    elif METHOD == "modular_low_exponent_root":
+        search_limit = root_search_limit or max(root_multiplier + 1, 100000)
+        m = modular_low_exponent_recover(n, c, e, search_limit)
     elif METHOD == "prime_modulus":
         m = decrypt_prime_modulus(n, e, c)
     elif METHOD == "common_modulus":
@@ -1524,6 +1797,38 @@ def _first_traffic_pcap_recovery(steps: list[dict[str, Any]], accepted_flag: str
     return {}
 
 
+def _first_pcap_resync_ip_id_stego(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, str]:
+    for step in steps:
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        repair = evidence.get("pcap_record_resync")
+        stego = evidence.get("ip_id_stego")
+        if not isinstance(repair, dict) or not isinstance(stego, dict):
+            continue
+        flags = _string_list(stego.get("flag_candidates"))
+        if accepted_flag and accepted_flag not in flags:
+            continue
+        artifact = evidence.get("artifact")
+        artifact_name = artifact.get("name") if isinstance(artifact, dict) else ""
+        repairs = repair.get("repairs")
+        first_repair = repairs[0] if isinstance(repairs, list) and repairs and isinstance(repairs[0], dict) else {}
+        hex_values = _string_list(stego.get("adjacent_deduped_ip_ids_hex")) or _string_list(stego.get("ip_ids_hex"))
+        marker = str(stego.get("marker") or "where is the flag?")
+        return {
+            "artifact_name": str(artifact_name or ""),
+            "repaired_path": str(repair.get("path") or ""),
+            "first_record": str(first_repair.get("record") or ""),
+            "old_incl_len": str(first_repair.get("old_incl_len") or ""),
+            "fixed_incl_len": str(first_repair.get("fixed_incl_len") or ""),
+            "next_header_offset": str(first_repair.get("next_header_offset") or ""),
+            "marker": marker,
+            "hex_words": " ".join(hex_values[:16]),
+            "flag": accepted_flag or (flags[0] if flags else ""),
+        }
+    return {}
+
+
 def _first_antsword_recovery(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, str]:
     for step in steps:
         evidence = step.get("evidence")
@@ -1748,6 +2053,7 @@ def _first_image_lsb_recovery(steps: list[dict[str, Any]], accepted_flag: str | 
             flag = accepted_flag or (candidate_flags[0] if candidate_flags else (flags[0] if flags else _first_flag_like(text)))
             recovery = {
                 "artifact_name": artifact_name,
+                "format": str(image_stego.get("format") or ""),
                 "recipe": str(candidate.get("recipe") or ""),
                 "bit_plane": candidate.get("bit_plane"),
                 "channel_order": str(candidate.get("channel_order") or ""),
@@ -1764,6 +2070,52 @@ def _first_image_lsb_recovery(steps: list[dict[str, Any]], accepted_flag: str | 
             elif not fallback:
                 fallback = recovery
     return fallback
+
+
+def _first_bmp_braille_recovery(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, Any]:
+    fallback: dict[str, Any] = {}
+    for step in steps:
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        image_stego = evidence.get("image_stego")
+        if not isinstance(image_stego, dict) or str(image_stego.get("format") or "").lower() != "bmp":
+            continue
+        candidates = evidence.get("decoded_image_text_candidates")
+        if not isinstance(candidates, list):
+            continue
+        lsb_candidate = _first_bmp_lsb_candidate(image_stego)
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            recipe = candidate.get("recipe")
+            recipe_text = _recipe_text(recipe)
+            if "hex_braille_ascii" not in str(recipe_text or recipe or ""):
+                continue
+            value = str(candidate.get("value") or "")
+            if accepted_flag and accepted_flag not in value:
+                continue
+            result = {
+                "artifact_name": _evidence_artifact_name(evidence),
+                "recipe": str(lsb_candidate.get("recipe") or ""),
+                "source": str(candidate.get("source") or lsb_candidate.get("text_preview") or ""),
+                "flag": accepted_flag or value or _first_string(evidence.get("flag_candidates")) or "",
+            }
+            if accepted_flag:
+                return result
+            if not fallback:
+                fallback = result
+    return fallback
+
+
+def _first_bmp_lsb_candidate(image_stego: dict[str, Any]) -> dict[str, Any]:
+    lsb_candidates = image_stego.get("lsb_candidates")
+    if not isinstance(lsb_candidates, list):
+        return {}
+    for candidate in lsb_candidates:
+        if isinstance(candidate, dict):
+            return candidate
+    return {}
 
 
 def _first_archive_recovery(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, str]:
@@ -1834,6 +2186,62 @@ def _first_reverse_strings_step(steps: list[dict[str, Any]]) -> dict[str, Any]:
     return {}
 
 
+def _first_pe_stack_xor_key_check(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, Any]:
+    for step in steps:
+        if step.get("solver") != "ReverseSolver":
+            continue
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        recovery = evidence.get("pe_stack_xor_key_check")
+        if not isinstance(recovery, dict):
+            continue
+        flags = _string_list(recovery.get("flag_candidates")) or _string_list(evidence.get("flag_candidates"))
+        decoded_text = str(recovery.get("decoded_text") or "")
+        if accepted_flag and accepted_flag not in flags and accepted_flag != decoded_text:
+            continue
+        artifact = evidence.get("artifact")
+        artifact_path = str(artifact) if artifact else ""
+        return {
+            "artifact_name": _basename(artifact_path) if artifact_path else "",
+            "seed": recovery.get("seed"),
+            "length": recovery.get("length"),
+            "encrypted_hex": recovery.get("encrypted_hex"),
+            "xor_key_preview_hex": recovery.get("xor_key_preview_hex"),
+            "decoded_text": decoded_text,
+            "flag_candidates": flags,
+        }
+    return {}
+
+
+def _first_elf_argv_repeating_xor(steps: list[dict[str, Any]], accepted_flag: str | None = None) -> dict[str, Any]:
+    for step in steps:
+        if step.get("solver") != "ReverseSolver":
+            continue
+        evidence = step.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        recovery = evidence.get("elf_argv_repeating_xor")
+        if not isinstance(recovery, dict):
+            continue
+        flags = _string_list(recovery.get("flag_candidates")) or _string_list(evidence.get("flag_candidates"))
+        recovered_input = str(recovery.get("recovered_input") or "")
+        if accepted_flag and accepted_flag not in flags and accepted_flag != recovered_input:
+            continue
+        artifact = evidence.get("artifact")
+        artifact_path = str(artifact) if artifact else ""
+        return {
+            "artifact_name": _basename(artifact_path) if artifact_path else "",
+            "ciphertext_address": recovery.get("ciphertext_address"),
+            "ciphertext": recovery.get("ciphertext"),
+            "key_hex": recovery.get("key_hex"),
+            "key_length": recovery.get("key_length"),
+            "recovered_input": recovered_input,
+            "flag_candidates": flags,
+        }
+    return {}
+
+
 def _reverse_strings_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
     tool_samples = evidence.get("tool_samples")
     if not isinstance(tool_samples, dict):
@@ -1844,6 +2252,8 @@ def _reverse_strings_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
     strings_stdout = str(strings_extract.get("stdout") or "").strip()
     flags = _string_list(evidence.get("flag_candidates"))
     if not strings_stdout or not flags:
+        return {}
+    if not any(flag in strings_stdout for flag in flags):
         return {}
     artifact = evidence.get("artifact")
     artifact_path = str(artifact) if artifact else ""
@@ -1989,3 +2399,10 @@ def _markdown_writeup(
         content = solve_script.get("content") or ""
         lines.extend(["### Solve 脚本", "", f"`{filename}`", "", f"```{language}", content.rstrip(), "```", ""])
     return "\n".join(lines).strip() + "\n"
+
+
+def _markdown_code(value: object) -> str:
+    text = str(value)
+    if "`" in text:
+        return f"``{text}``"
+    return f"`{text}`"

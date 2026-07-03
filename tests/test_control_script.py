@@ -56,6 +56,127 @@ class ControlScriptTest(unittest.TestCase):
             self.assertIsNotNone(sleeper.returncode)
             self.assertFalse((state / "web.pid").exists())
 
+    def test_gate_runs_full_capability_benchmark_without_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_control_script(Path(tmp))
+            state = root / ".forgeflag"
+            state.mkdir()
+            benchmark = root / "scripts" / "forgeflag-capability-benchmark"
+            benchmark.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$@\" > \"$PWD/gate.args\"\n",
+                encoding="utf-8",
+            )
+            benchmark.chmod(0o755)
+
+            completed = subprocess.run(
+                [
+                    str(root / "scripts" / "forgeflag-control"),
+                    "gate",
+                    "--no-start",
+                    "--url",
+                    "http://127.0.0.1:9999",
+                    "--timeout",
+                    "9",
+                ],
+                cwd=root,
+                env={**os.environ, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("ForgeFlag release gate", completed.stdout)
+            args = (root / "gate.args").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(
+                args,
+                [
+                    "--url",
+                    "http://127.0.0.1:9999",
+                    "--manifest",
+                    str(state / "heldout-platform-manifest.json"),
+                    "--timeout",
+                    "9",
+                    "--output",
+                    str(state / "capability-benchmark-latest.json"),
+                    "--history",
+                    str(state / "capability-benchmark-history.jsonl"),
+                ],
+            )
+
+    def test_gate_llm_requires_configured_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_control_script(Path(tmp))
+            (root / ".forgeflag").mkdir()
+            benchmark = root / "scripts" / "forgeflag-capability-benchmark"
+            benchmark.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+            benchmark.chmod(0o755)
+            env = {**os.environ, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+            for name in (
+                "FORGEFLAG_LLM_PROVIDER",
+                "FORGEFLAG_LLM_MODEL",
+                "FORGEFLAG_LLM_API_KEY",
+                "OPENAI_API_KEY",
+                "ZAI_API_KEY",
+                "ZHIPU_API_KEY",
+                "ZHIPUAI_API_KEY",
+                "BIGMODEL_API_KEY",
+            ):
+                env.pop(name, None)
+
+            completed = subprocess.run(
+                [
+                    str(root / "scripts" / "forgeflag-control"),
+                    "gate",
+                    "--no-start",
+                    "--llm",
+                ],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("LLM gate requested but runtime is not configured", completed.stderr)
+
+    def test_gate_llm_appends_llm_flag_when_runtime_is_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_control_script(Path(tmp))
+            (root / ".forgeflag").mkdir()
+            benchmark = root / "scripts" / "forgeflag-capability-benchmark"
+            benchmark.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$@\" > \"$PWD/gate.args\"\n",
+                encoding="utf-8",
+            )
+            benchmark.chmod(0o755)
+
+            completed = subprocess.run(
+                [
+                    str(root / "scripts" / "forgeflag-control"),
+                    "gate",
+                    "--no-start",
+                    "--llm",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                    "FORGEFLAG_LLM_PROVIDER": "zhipu",
+                    "ZAI_API_KEY": "zai-test",
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            args = (root / "gate.args").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(args[-1], "--llm")
+
 
 def _copy_control_script(tmp_root: Path) -> Path:
     scripts = tmp_root / "scripts"

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from forgeflag.agent_roster import agent_roster_path_for_db, load_agent_roster, write_default_agent_roster
+from forgeflag.analysis_hints import recommended_analysis_hints
 from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
 from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
 from forgeflag.manager import Manager
@@ -59,6 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
     agents.add_argument("--write-default", action="store_true", help="Write the default roster to .forgeflag/agent-roster.json")
     catalog = subparsers.add_parser("catalog", help="List recommended CTF projects and integration candidates")
     catalog.add_argument("--category", choices=[c.value for c in ChallengeCategory])
+    hints = subparsers.add_parser("hints", help="List recommended CTF analysis hints from recent solve patterns")
+    hints.add_argument("--category", choices=[c.value for c in ChallengeCategory])
 
     web = subparsers.add_parser("web", help="Start the local ForgeFlag web UI")
     web.add_argument("--host", default="127.0.0.1")
@@ -192,6 +195,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "catalog":
         print(json.dumps(recommended_projects(args.category), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "hints":
+        print(json.dumps(recommended_analysis_hints(args.category), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "web":

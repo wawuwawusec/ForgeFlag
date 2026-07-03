@@ -5,7 +5,13 @@ import unittest
 from pathlib import Path
 
 from forgeflag.image import analyze_image_stego_hints, analyze_magic_extension_mismatch
-from tests.png_fixtures import png_with_extra_compressed_idat, png_with_rgb_lsb_payload, png_with_text_and_trailing_data
+from tests.png_fixtures import (
+    bmp_with_bgr_lsb_payload,
+    bmp_with_full_row_lsb_payload,
+    png_with_extra_compressed_idat,
+    png_with_rgb_lsb_payload,
+    png_with_text_and_trailing_data,
+)
 
 
 class ImageAnalysisTest(unittest.TestCase):
@@ -126,6 +132,34 @@ class ImageAnalysisTest(unittest.TestCase):
         self.assertEqual(candidate["recipe"], "b1,rgb,lsb,xy")
         self.assertIn("html_unescape", candidate["decoders"])
         self.assertIn("flag{png_lsb}", candidate["flag_like_strings"])
+
+    def test_bmp_stego_hints_extract_quickstego_style_hex_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "quick.bmp"
+            image.write_bytes(bmp_with_bgr_lsb_payload("2471491ED07C69930E8F994E383E415F"))
+
+            summary = analyze_image_stego_hints(image)
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["format"], "bmp")
+        self.assertIn("lsb_candidates", summary)
+        candidate = summary["lsb_candidates"][0]
+        self.assertEqual(candidate["recipe"], "b1,bgr,lsb,file")
+        self.assertIn("2471491ED07C69930E8F994E383E415F", candidate["text_preview"])
+
+    def test_bmp_stego_hints_extract_full_row_padding_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "quick-padding.bmp"
+            image.write_bytes(bmp_with_full_row_lsb_payload("2471491ED07C69930E8F994E383E415F", width=1, height=80))
+
+            summary = analyze_image_stego_hints(image)
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        candidate = summary["lsb_candidates"][0]
+        self.assertEqual(candidate["recipe"], "b1,row,lsb,file")
+        self.assertIn("2471491ED07C69930E8F994E383E415F", candidate["text_preview"])
 
 
 if __name__ == "__main__":

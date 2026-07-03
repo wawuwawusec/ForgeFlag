@@ -1,0 +1,705 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import tarfile
+from pathlib import Path
+import sys
+from typing import Any
+import zipfile
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from forgeflag.agent_roster import default_agent_roster  # noqa: E402
+from forgeflag.domain import ChallengeCategory  # noqa: E402
+from forgeflag.flags import extract_flags  # noqa: E402
+
+
+DEFAULT_ROOT = ROOT / ".forgeflag" / "heldout-cache"
+DUCTF_CTFCLI = "ctfcli.yaml"
+HTB_README_NAMES = {"README.md", "Readme.md", "readme.md"}
+PLACEHOLDER_FLAG_MARKERS = ("dummy_flag", "testflag", "test_flag", "placeholder", "fake_flag", "real_flag_on_instance", "xxxxxxxx")
+GENERIC_CHALLENGE_FILES = ("challenge.yaml", "challenge.yml")
+HANDOUT_DIR_NAMES = ("dist", "distribution", "handout", "provided", "public", "publish")
+SOLUTION_NAME_MARKERS = ("solve", "solver", "solution", "writeup", "howtosolve")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audit local real CTF challenge caches for ForgeFlag benchmark candidates.")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT), help="real challenge cache root")
+    parser.add_argument("--limit", type=int, default=80, help="max cases to print in the audit payload")
+    parser.add_argument("--category", action="append", help="filter ForgeFlag category; may be repeated")
+    parser.add_argument("--emit-manifest", help="write a manifest JSON with manifest-ready cases")
+    parser.add_argument("--manifest-limit", type=int, default=24, help="max manifest cases to emit")
+    args = parser.parse_args()
+
+    root = Path(args.root)
+    cases = audit_real_corpus(root)
+    if args.category:
+        categories = set(args.category)
+        cases = [case for case in cases if case["category"] in categories]
+    payload = build_audit_payload(root, cases, limit=args.limit)
+    if args.emit_manifest:
+        manifest_path = Path(args.emit_manifest)
+        manifest = build_manifest(cases, limit=args.manifest_limit)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        payload["emitted_manifest"] = {"path": str(manifest_path), "cases": len(manifest["cases"])}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def audit_real_corpus(root: Path) -> list[dict[str, Any]]:
+    if not root.exists():
+        return []
+    cases: list[dict[str, Any]] = []
+    cases.extend(_ductf_cases(root / "ductf2024"))
+    cases.extend(_htb_cases(root / "htb2024"))
+    cases.extend(_generic_challenge_yaml_cases(root / "tjctf2024", "TJCTF 2024"))
+    cases.extend(_generic_challenge_yaml_cases(root / "nus-welcome-ctf-2024", "NUS Greyhats Welcome CTF 2024"))
+    cases.extend(_generic_challenge_yaml_cases(root / "umdctf2024", "UMDCTF 2024"))
+    cases.extend(_irisctf_cases(root / "irisctf2024"))
+    return sorted(cases, key=lambda item: (str(item["platform"]), str(item["category"]), str(item["challenge_id"])))
+
+
+def build_audit_payload(root: Path, cases: list[dict[str, Any]], limit: int = 80) -> dict[str, Any]:
+    categories: dict[str, dict[str, int]] = {}
+    platforms: dict[str, dict[str, int]] = {}
+    roles: dict[str, dict[str, int]] = {}
+    backlog: list[dict[str, Any]] = []
+    for case in cases:
+        platform = str(case["platform"])
+        platforms.setdefault(platform, {"total": 0, "manifest_ready": 0})
+        platforms[platform]["total"] += 1
+        if case["manifest_ready"]:
+            platforms[platform]["manifest_ready"] += 1
+        category = str(case["category"])
+        categories.setdefault(category, {"total": 0, "manifest_ready": 0})
+        categories[category]["total"] += 1
+        if case["manifest_ready"]:
+            categories[category]["manifest_ready"] += 1
+        for role in case["owner_roles"]:
+            roles.setdefault(role, {"total": 0, "manifest_ready": 0})
+            roles[role]["total"] += 1
+            if case["manifest_ready"]:
+                roles[role]["manifest_ready"] += 1
+        if not case["manifest_ready"]:
+            backlog.append(
+                {
+                    "challenge_id": case["challenge_id"],
+                    "category": category,
+                    "owner_roles": case["owner_roles"],
+                    "reason": case["readiness_reason"],
+                    "next_action": case["recommended_action"],
+                }
+            )
+    return {
+        "audit": "forgeflag-real-corpus",
+        "source_root": str(root),
+        "totals": {
+            "cases": len(cases),
+            "with_artifacts": sum(1 for case in cases if case["publish_artifacts"]),
+            "with_oracle_flags": sum(1 for case in cases if case["oracle_flags"]),
+            "manifest_ready": sum(1 for case in cases if case["manifest_ready"]),
+        },
+        "platforms": platforms,
+        "categories": categories,
+        "roles": roles,
+        "manager_backlog": backlog[:limit],
+        "cases": cases[:limit],
+    }
+
+
+def build_manifest(cases: list[dict[str, Any]], limit: int = 24) -> dict[str, Any]:
+    manifest_cases: list[dict[str, Any]] = []
+    for case in _round_robin_manifest_cases([case for case in cases if case["manifest_ready"]]):
+        manifest_cases.append(
+            {
+                "challenge_id": f"real-{case['challenge_id']}",
+                "category": case["category"],
+                "title": case["title"],
+                "description": f"Platform: {case['platform']}\n{case['description']}",
+                "attachments": case["publish_artifacts"],
+                "expected_flag": case["oracle_flags"][0],
+                "required_evidence": case["required_evidence"],
+            }
+        )
+        if len(manifest_cases) >= limit:
+            break
+    return {
+        "description": "Auto-generated real contest CTF candidates from local heldout-cache. Review before using as a readiness gate.",
+        "cases": manifest_cases,
+    }
+
+
+def _round_robin_manifest_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for case in cases:
+        key = (str(case["platform"]), str(case["category"]))
+        buckets.setdefault(key, []).append(case)
+    for bucket in buckets.values():
+        bucket.sort(key=lambda case: (str(case["difficulty"]), str(case["challenge_id"])))
+    ordered: list[dict[str, Any]] = []
+    keys = sorted(buckets)
+    while keys:
+        next_keys: list[tuple[str, str]] = []
+        for key in keys:
+            bucket = buckets[key]
+            if bucket:
+                ordered.append(bucket.pop(0))
+            if bucket:
+                next_keys.append(key)
+        keys = next_keys
+    return ordered
+
+
+def _ductf_cases(root: Path) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    for ctfcli in root.glob(f"*/*/{DUCTF_CTFCLI}"):
+        text = _read_text(ctfcli)
+        challenge_root = ctfcli.parent
+        challenge_id = _yaml_scalar(text, "id") or challenge_root.name
+        raw_category = _yaml_scalar(text, "category") or challenge_root.parent.name
+        category = _forgeflag_category(raw_category)
+        title = _yaml_scalar(text, "name") or challenge_id.replace("-", " ")
+        description = _yaml_literal_block(text, "description") or _yaml_scalar(text, "description") or f"DownUnderCTF 2024 {title}."
+        tags = _yaml_list_block(text, "tags")
+        files = _yaml_list_block(text, "files")
+        artifacts = [_resolved_case_file(challenge_root, item) for item in files]
+        artifacts = [str(path) for path in artifacts if path is not None and path.is_file()]
+        flags = _flags_from_block(text, "flags")
+        cases.append(_case_payload("DownUnderCTF 2024", challenge_root, challenge_id, category, title, description, tags, artifacts, flags))
+    return cases
+
+
+def _htb_cases(root: Path) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    seen: set[tuple[Path, str]] = set()
+    for readme in root.glob("*/*/README.md"):
+        resolved = (readme.parent.resolve(), readme.name.lower())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        cases.append(_htb_case_from_readme(readme))
+    for readme in root.glob("*/*/Readme.md"):
+        resolved = (readme.parent.resolve(), readme.name.lower())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        cases.append(_htb_case_from_readme(readme))
+    return [case for case in cases if case is not None]
+
+
+def _htb_case_from_readme(readme: Path) -> dict[str, Any] | None:
+    text = _read_text(readme)
+    flags = [flag for flag in extract_flags(text) if "REDACTED" not in flag]
+    challenge_root = readme.parent
+    raw_category = challenge_root.parent.name
+    category = _forgeflag_category(raw_category)
+    title = challenge_root.name
+    description = _readme_description(text, title)
+    challenge_id = _slug(f"htb2024-{raw_category}-{title}")
+    artifacts = _htb_artifacts(challenge_root)
+    if not flags and not artifacts:
+        return None
+    return _case_payload("HTB Cyber Apocalypse 2024", challenge_root, challenge_id, category, title, description, [], artifacts, flags)
+
+
+def _irisctf_cases(root: Path) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    if not root.exists():
+        return cases
+    for readme in sorted(root.glob("*/README.md")):
+        case = _irisctf_case_from_readme(root, readme)
+        if case is not None:
+            cases.append(case)
+    return cases
+
+
+def _irisctf_case_from_readme(root: Path, readme: Path) -> dict[str, Any] | None:
+    text = _read_text(readme)
+    challenge_root = readme.parent
+    title, raw_category = _title_and_category_from_iris_readme(text, challenge_root.name)
+    category = _forgeflag_category(raw_category)
+    challenge_id = _slug(f"{root.name}-{raw_category}-{title}")
+    flags = list(extract_flags(text))
+    artifacts = _default_handout_artifacts(challenge_root)
+    if not flags and not artifacts:
+        return None
+    description = _readme_description(text, title)
+    tags = [raw_category] if raw_category and raw_category != "misc" else []
+    return _case_payload("IrisCTF 2024", challenge_root, challenge_id, category, title, description, tags, artifacts, flags)
+
+
+def _title_and_category_from_iris_readme(text: str, fallback_title: str) -> tuple[str, str]:
+    first_heading = next((line[1:].strip() for line in text.splitlines() if line.startswith("# ")), "")
+    if not first_heading:
+        return fallback_title, "misc"
+    parts = [part.strip() for part in first_heading.split(" - ") if part.strip()]
+    title = parts[0] if parts else fallback_title
+    raw_category = parts[1] if len(parts) > 1 else "misc"
+    return title, raw_category
+
+
+def _generic_challenge_yaml_cases(root: Path, platform: str) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    if not root.exists():
+        return cases
+    for yaml_path in sorted(_generic_challenge_yaml_paths(root)):
+        text = _read_text(yaml_path)
+        challenge_root = yaml_path.parent
+        raw_category = _yaml_scalar(text, "category") or _category_from_path(root, challenge_root)
+        category = _forgeflag_category(raw_category)
+        title = _yaml_scalar(text, "name") or challenge_root.name
+        challenge_id = _slug(f"{root.name}-{raw_category}-{title}")
+        description = _yaml_literal_block(text, "description") or _yaml_scalar(text, "description") or f"{platform} {title}."
+        tags = _yaml_list_block(text, "tags")
+        artifacts = _challenge_yaml_artifacts(challenge_root, text)
+        flags = _challenge_yaml_flags(challenge_root, text)
+        cases.append(_case_payload(platform, challenge_root, challenge_id, category, title, description, tags, artifacts, flags))
+    return cases
+
+
+def _generic_challenge_yaml_paths(root: Path) -> list[Path]:
+    paths: list[Path] = []
+    for name in GENERIC_CHALLENGE_FILES:
+        paths.extend(path for path in root.glob(f"*/*/{name}") if not path.name.startswith("."))
+    return paths
+
+
+def _category_from_path(root: Path, challenge_root: Path) -> str:
+    try:
+        relative = challenge_root.relative_to(root)
+    except ValueError:
+        return challenge_root.parent.name
+    return relative.parts[0] if relative.parts else challenge_root.parent.name
+
+
+def _challenge_yaml_flags(challenge_root: Path, text: str) -> list[str]:
+    flags: list[str] = []
+    flags.extend(_flags_from_block(text, "flags"))
+    flag_scalar = _yaml_scalar(text, "flag")
+    if flag_scalar:
+        flags.extend(extract_flags(flag_scalar))
+    flag_file = _yaml_nested_scalar(text, "flag", "file")
+    if flag_file:
+        path = _resolved_case_file(challenge_root, flag_file)
+        if path is not None and path.is_file():
+            flags.extend(extract_flags(_read_text(path)))
+    return list(dict.fromkeys(flags))
+
+
+def _challenge_yaml_artifacts(challenge_root: Path, text: str) -> list[str]:
+    requested = [*_yaml_list_block(text, "provide"), *_yaml_list_block(text, "files")]
+    artifacts: list[Path] = []
+    for item in requested:
+        artifacts.extend(_resolve_handout_item(challenge_root, item))
+    if not artifacts:
+        artifacts.extend(Path(path) for path in _default_handout_artifacts(challenge_root))
+    return [str(path) for path in _dedupe_paths(path for path in artifacts if _is_safe_artifact(path))]
+
+
+def _default_handout_artifacts(challenge_root: Path) -> list[str]:
+    artifacts: list[Path] = []
+    for dirname in HANDOUT_DIR_NAMES:
+        directory = challenge_root / dirname
+        if directory.is_dir():
+            artifacts.extend(_handout_files(directory))
+    return [str(path) for path in _dedupe_paths(artifacts)]
+
+
+def _resolve_handout_item(challenge_root: Path, item: str) -> list[Path]:
+    cleaned = item.strip().strip("\"'")
+    if not cleaned:
+        return []
+    direct = _resolved_case_file(challenge_root, cleaned)
+    if direct is not None and direct.is_file():
+        return [direct]
+    basename = Path(cleaned).name
+    resolved: list[Path] = []
+    for dirname in HANDOUT_DIR_NAMES:
+        directory = challenge_root / dirname
+        if not directory.is_dir():
+            continue
+        exact = directory / cleaned
+        if exact.is_file():
+            resolved.append(exact.resolve())
+        by_name = directory / basename
+        if by_name.is_file():
+            resolved.append(by_name.resolve())
+    if resolved:
+        return list(_dedupe_paths(resolved))
+    for dirname in HANDOUT_DIR_NAMES:
+        directory = challenge_root / dirname
+        if directory.is_dir():
+            return _handout_files(directory)
+    return []
+
+
+def _handout_files(directory: Path, limit: int = 12) -> list[Path]:
+    files: list[Path] = []
+    for path in sorted(directory.rglob("*")):
+        if len(files) >= limit:
+            break
+        if not path.is_file():
+            continue
+        if _is_safe_artifact(path):
+            files.append(path.resolve())
+    return files
+
+
+def _is_safe_artifact(path: Path) -> bool:
+    lowered = path.name.lower()
+    if lowered in {"flag", "flag.txt", ".env"}:
+        return False
+    if any(marker in lowered for marker in SOLUTION_NAME_MARKERS):
+        return False
+    if any(part.lower() in {"solution", "solutions", "soln", "writeup", "writeups"} for part in path.parts):
+        return False
+    return True
+
+
+def _case_payload(
+    platform: str,
+    challenge_root: Path,
+    challenge_id: str,
+    category: str,
+    title: str,
+    description: str,
+    tags: list[str],
+    artifacts: list[str],
+    flags: list[str],
+) -> dict[str, Any]:
+    owner_roles = _owner_roles_for_category(category)
+    placeholder_flags = _placeholder_flags_from_artifacts(artifacts)
+    git_lfs_pointer_artifacts = _git_lfs_pointer_artifacts(artifacts)
+    manifest_ready = bool(artifacts and flags and not placeholder_flags and not git_lfs_pointer_artifacts)
+    readiness_reason = (
+        "ready"
+        if manifest_ready
+        else _readiness_reason(artifacts, flags, placeholder_flags, git_lfs_pointer_artifacts)
+    )
+    return {
+        "platform": platform,
+        "challenge_id": _slug(challenge_id),
+        "category": category,
+        "title": title,
+        "path": str(challenge_root),
+        "tags": tags,
+        "difficulty": _difficulty_from_tags_or_title(tags, title),
+        "publish_artifacts": artifacts,
+        "oracle_flags": list(dict.fromkeys(flags)),
+        "placeholder_flags": placeholder_flags,
+        "git_lfs_pointer_artifacts": git_lfs_pointer_artifacts,
+        "required_evidence": _required_evidence_for(category, artifacts, title),
+        "owner_roles": owner_roles,
+        "manifest_ready": manifest_ready,
+        "readiness_reason": readiness_reason,
+        "recommended_action": _recommended_action(category, manifest_ready, readiness_reason),
+        "description": description,
+    }
+
+
+def _yaml_scalar(text: str, key: str) -> str | None:
+    match = re.search(rf"(?m)^{re.escape(key)}:\s*(.+?)\s*$", text)
+    if not match:
+        return None
+    return _strip_yaml_comment(match.group(1).strip().strip("\"'"))
+
+
+def _yaml_list_block(text: str, key: str) -> list[str]:
+    values: list[str] = []
+    in_block = False
+    for line in text.splitlines():
+        if not in_block:
+            if re.match(rf"^{re.escape(key)}:\s*$", line):
+                in_block = True
+            continue
+        if line and not line.startswith((" ", "\t", "-")):
+            break
+        item_match = re.match(r"[ \t]*-\s+(.+?)\s*$", line)
+        if item_match:
+            values.append(_strip_yaml_comment(item_match.group(1).strip().strip("\"'")))
+    return values
+
+
+def _yaml_nested_scalar(text: str, key: str, nested_key: str) -> str | None:
+    in_block = False
+    for line in text.splitlines():
+        if not in_block:
+            if re.match(rf"^{re.escape(key)}:\s*$", line):
+                in_block = True
+            continue
+        if line and not line.startswith((" ", "\t")):
+            break
+        match = re.match(rf"[ \t]+{re.escape(nested_key)}:\s*(.+?)\s*$", line)
+        if match:
+            return _strip_yaml_comment(match.group(1).strip().strip("\"'"))
+    return None
+
+
+def _yaml_literal_block(text: str, key: str) -> str | None:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not re.match(rf"^{re.escape(key)}:\s*[>|]?\s*$", line):
+            continue
+        collected: list[str] = []
+        for body_line in lines[index + 1 :]:
+            if body_line and not body_line.startswith((" ", "\t")):
+                break
+            collected.append(body_line.strip())
+        value = "\n".join(line for line in collected if line).strip()
+        return value or None
+    return None
+
+
+def _strip_yaml_comment(value: str) -> str:
+    return re.sub(r"\s+#.*$", "", value).strip()
+
+
+def _flags_from_block(text: str, key: str) -> list[str]:
+    flags: list[str] = []
+    for item in _yaml_list_block(text, key):
+        flags.extend(extract_flags(item))
+    return list(dict.fromkeys(flags))
+
+
+def _resolved_case_file(challenge_root: Path, item: str) -> Path | None:
+    cleaned = item.strip().strip("\"'")
+    if not cleaned:
+        return None
+    path = (challenge_root / cleaned).resolve()
+    try:
+        path.relative_to(challenge_root.resolve())
+    except ValueError:
+        return None
+    return path
+
+
+def _htb_artifacts(challenge_root: Path) -> list[str]:
+    htb_dir = challenge_root / "htb"
+    if not htb_dir.is_dir():
+        return []
+    artifacts = []
+    for path in sorted(htb_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.name.lower().startswith(("solve", "solver", "sol.")):
+            continue
+        artifacts.append(str(path))
+    return artifacts[:8]
+
+
+def _forgeflag_category(raw: str) -> str:
+    lowered = raw.lower().strip()
+    normalized = re.sub(r"\s+", " ", lowered)
+    mapping = {
+        "rev": "reverse",
+        "reversing": "reverse",
+        "pwn": "pwn",
+        "dojo-pwn": "pwn",
+        "binary exploitation": "pwn",
+        "binary": "pwn",
+        "web": "web",
+        "crypto": "crypto",
+        "forensics": "forensics",
+        "traffic": "traffic",
+        "radio frequency": "traffic",
+        "rf": "traffic",
+        "misc": "misc",
+        "beginner": "misc",
+        "hardware": "misc",
+        "hw": "misc",
+        "osint": "forensics",
+    }
+    if lowered in mapping:
+        return mapping[lowered]
+    if normalized in mapping:
+        return mapping[normalized]
+    if "pwn" in lowered:
+        return "pwn"
+    if "reverse" in lowered or lowered == "re":
+        return "reverse"
+    if "forensic" in lowered or "osint" in lowered:
+        return "forensics"
+    if "crypto" in lowered:
+        return "crypto"
+    if "web" in lowered:
+        return "web"
+    return "misc"
+
+
+def _owner_roles_for_category(category: str) -> list[str]:
+    try:
+        enum_category = ChallengeCategory(category)
+    except ValueError:
+        enum_category = ChallengeCategory.MISC
+    return [
+        role.name
+        for role in default_agent_roster().active_agents_for(enum_category)
+        if role.name not in {"ChallengeTriageAgent", "LLMRoutePlannerAgent", "EvidenceJudgeAgent", "BrowserPlayerQAAgent"}
+    ] or ["ForgeFlagManager"]
+
+
+def _required_evidence_for(category: str, artifacts: list[str], title: str) -> list[str]:
+    suffixes = {Path(path).suffix.lower() for path in artifacts}
+    evidence = [title.split()[0] if title.split() else category]
+    if ".pcap" in suffixes:
+        evidence.append("pcap")
+    if any(suffix in suffixes for suffix in {".zip", ".tar", ".gz", ".tgz"}):
+        evidence.append("archive")
+    if category == "web":
+        evidence.append("source")
+    if category in {"reverse", "pwn"}:
+        evidence.append("binary")
+    return list(dict.fromkeys(evidence))
+
+
+def _readiness_reason(
+    artifacts: list[str],
+    flags: list[str],
+    placeholder_flags: list[str],
+    git_lfs_pointer_artifacts: list[str],
+) -> str:
+    if placeholder_flags:
+        return "artifact contains placeholder flags requiring replay oracle"
+    if git_lfs_pointer_artifacts:
+        return "artifact is a Git LFS pointer; fetch real handout bytes first"
+    if not artifacts and not flags:
+        return "missing publish artifacts and oracle flags"
+    if not artifacts:
+        return "missing publish artifacts"
+    return "missing oracle flags"
+
+
+def _recommended_action(category: str, manifest_ready: bool, reason: str) -> str:
+    if manifest_ready:
+        return f"add to real-contest manifest and run as a {category} held-out replay."
+    return f"complete case metadata before benchmark replay: {reason}."
+
+
+def _placeholder_flags_from_artifacts(artifacts: list[str]) -> list[str]:
+    placeholders: list[str] = []
+    for artifact in artifacts:
+        path = Path(artifact)
+        for text in _artifact_text_samples(path):
+            for flag in extract_flags(text):
+                lowered = flag.lower()
+                if any(marker in lowered for marker in PLACEHOLDER_FLAG_MARKERS):
+                    placeholders.append(flag)
+    return list(dict.fromkeys(placeholders))
+
+
+def _git_lfs_pointer_artifacts(artifacts: list[str]) -> list[str]:
+    pointers: list[str] = []
+    for artifact in artifacts:
+        path = Path(artifact)
+        try:
+            if path.stat().st_size > 1024:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if text.startswith("version https://git-lfs.github.com/spec/v1\n") and "\noid sha256:" in text:
+            pointers.append(str(path))
+    return list(dict.fromkeys(pointers))
+
+
+def _artifact_text_samples(path: Path, max_bytes: int = 256_000, limit: int = 30) -> list[str]:
+    try:
+        if zipfile.is_zipfile(path):
+            return _zip_text_samples(path, max_bytes=max_bytes, limit=limit)
+        if tarfile.is_tarfile(path):
+            return _tar_text_samples(path, max_bytes=max_bytes, limit=limit)
+        if path.stat().st_size <= max_bytes:
+            return [path.read_text(encoding="utf-8", errors="replace")]
+    except OSError:
+        return []
+    return []
+
+
+def _zip_text_samples(path: Path, max_bytes: int, limit: int) -> list[str]:
+    samples: list[str] = []
+    try:
+        with zipfile.ZipFile(path) as zf:
+            for info in zf.infolist():
+                if len(samples) >= limit:
+                    break
+                if info.is_dir() or info.file_size > max_bytes or info.flag_bits & 0x1:
+                    continue
+                samples.append(zf.read(info).decode("utf-8", errors="replace"))
+    except (OSError, RuntimeError, zipfile.BadZipFile):
+        return samples
+    return samples
+
+
+def _tar_text_samples(path: Path, max_bytes: int, limit: int) -> list[str]:
+    samples: list[str] = []
+    try:
+        with tarfile.open(path) as tf:
+            for member in tf.getmembers():
+                if len(samples) >= limit:
+                    break
+                if not member.isfile() or member.size > max_bytes:
+                    continue
+                handle = tf.extractfile(member)
+                if handle is None:
+                    continue
+                samples.append(handle.read(max_bytes + 1).decode("utf-8", errors="replace"))
+    except (OSError, tarfile.TarError):
+        return samples
+    return samples
+
+
+def _readme_description(text: str, fallback_title: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    useful = [
+        line
+        for line in lines
+        if not line.startswith(("#", "!", "["))
+        and not line.lower().startswith("flag:")
+        and not extract_flags(line)
+    ]
+    return "\n".join(useful[:8]) or fallback_title
+
+
+def _difficulty_from_tags_or_title(tags: list[str], title: str) -> str:
+    haystack = " ".join([*tags, title]).lower()
+    for label in ("insane", "hard", "medium", "easy"):
+        if label in haystack:
+            return label
+    if "very easy" in haystack:
+        return "very_easy"
+    return "unknown"
+
+
+def _slug(value: str) -> str:
+    lowered = value.lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+    return slug or "case"
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _dedupe_paths(paths: Any) -> list[Path]:
+    seen: set[str] = set()
+    deduped: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path)
+    return deduped
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

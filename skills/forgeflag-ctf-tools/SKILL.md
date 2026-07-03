@@ -9,6 +9,7 @@ Use this skill for ForgeFlag work that touches tool execution, CTF artifacts, MC
 
 ## Workflow
 
+0. Treat ForgeFlag work as local or authorized CTF/lab research. Read the repository `AGENTS.md` when present, phrase solver output as challenge evidence and replay steps, and avoid language that implies use against systems outside the declared challenge scope.
 1. Keep tool execution behind `ToolRunner` or a typed wrapper in `forgeflag.tools.ctf`.
 2. Do not expose arbitrary shell commands through MCP.
 3. Network-capable tools must require explicit scope via `ScopePolicy`.
@@ -18,6 +19,7 @@ Use this skill for ForgeFlag work that touches tool execution, CTF artifacts, MC
 7. Treat LLM output as planning guidance only; typed tools and verifier evidence remain authoritative. Structured LLM JSON plans may suggest solver ordering, but not raw commands.
 8. Prefer Docker for heavyweight or OS-specific tools.
 9. Add tests for refused network actions and at least one deterministic local artifact path.
+10. When dependency, Docker, MCP, LLM, or deployment behavior changes, update `docs/dependencies-and-deployment.md` plus any narrower docs such as `docs/tool-containers.md` or `docs/mcp.md`.
 
 ## Agent Framework Pattern
 
@@ -26,14 +28,21 @@ Use this skill for ForgeFlag work that touches tool execution, CTF artifacts, MC
 - Planning: optional `LLMSolver` can generate scoped strategy guidance through configured provider adapters.
 - Execution: category solvers run typed wrappers and write structured evidence.
 - Harness: keep repeat/iteration limits in place before adding longer autonomous loops.
+- Scope: passive local artifact analysis is the default; active network behavior requires explicit active-probe intent and allowlisted hosts.
 
 ## Tool Categories
 
 - Web/recon: HTTP probes, route discovery, scoped `nmap`, scoped fuzzing.
 - Pwn: `checksec`, `gdb`, `pwntools`, `ropper`, `ROPgadget`.
-- Reverse: `file`, `strings`, `radare2`, headless decompiler adapters.
+- Reverse: `file`, `strings`, `objdump`, `readelf`, `radare2`, `ROPgadget`, `ropper`, IDA/Ghidra headless adapters.
 - Crypto: `z3`, `sage`, `pycryptodome`.
-- Forensics: `file`, `strings`, `binwalk`, `exiftool`, `tshark`, `volatility3`, carving tools.
+- Forensics: `file`, `strings`, `binwalk`, `exiftool`, `foremost`, `yara`, `tshark`, `volatility3`, carving tools.
+
+## Docker Profile Boundary
+
+- Default Docker fallback image: use for ordinary wrappers such as `ROPgadget`, `ropper`, `RsaCtfTool`, `objdump`, `readelf`, `radare2`, `foremost`, and `yara`.
+- Heavyweight profiles: build `forgeflag-ctf:volatility`, `forgeflag-ctf:sagemath`, or `forgeflag-ctf:ghidra-headless` only when a challenge needs that profile.
+- The Web UI Tools tab and `/api/tools` distinguish wrapper availability from heavyweight profile image status; do not treat an unbuilt profile as a failed default toolchain.
 
 ## Traffic Analysis Workflow
 

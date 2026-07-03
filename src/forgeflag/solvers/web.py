@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import re
+import tarfile
 from pathlib import Path
 from urllib.parse import urldefrag, urljoin, urlparse
+import zipfile
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
+from forgeflag.ctf_scope import web_ctf_scope_evidence
 from forgeflag.flags import extract_flags
 from forgeflag.solvers.base import SolverContext
 from forgeflag.tools import ctf
@@ -14,7 +17,8 @@ from forgeflag.web_analysis import HtmlSummary, summarize_html
 
 _SCRIPT_ROUTE_PATTERN = re.compile(r"""["'](\/[A-Za-z0-9][A-Za-z0-9._~!$&()*+,;=:@%\/?#[\]-]*)["']""")
 _STATIC_ROUTE_SUFFIXES = (".css", ".gif", ".ico", ".jpg", ".jpeg", ".js", ".map", ".png", ".svg", ".webp")
-_SOURCE_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".py", ".php", ".rb", ".go", ".java", ".kt", ".cs"}
+_SOURCE_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".py", ".php", ".rb", ".go", ".java", ".kt", ".cs", ".c", ".h", ".sh"}
+_SOURCE_TEXT_SUFFIXES = {*_SOURCE_SUFFIXES, ".txt", ".md", ".env", ".json", ".yaml", ".yml"}
 
 
 class WebSolver:
@@ -35,7 +39,7 @@ class WebSolver:
             challenge_id=challenge.challenge_id,
             solver=self.name,
             finding="Prepared scoped web challenge workflow",
-            evidence={"target": challenge.target, "checklist": checklist},
+            evidence={"target": challenge.target, "checklist": checklist, "ctf_scope": web_ctf_scope_evidence()},
             hypothesis="The challenge likely requires route, auth, or input-behavior analysis.",
             confidence=0.62,
             next_action="Probe the scoped HTTP target and parse visible HTML structure.",
@@ -63,7 +67,7 @@ class WebSolver:
                 challenge_id=challenge.challenge_id,
                 solver=self.name,
                 finding="Skipped HTTP analysis because active probing is disabled",
-                evidence={"target": challenge.target},
+                evidence={"target": challenge.target, "ctf_scope": web_ctf_scope_evidence()},
                 hypothesis="Enable --active-probe with --allow-host for authorized challenge targets.",
                 confidence=0.5,
                 next_action="Rerun with explicit scope if this is an authorized CTF target.",
@@ -103,6 +107,7 @@ class WebSolver:
                 "chain_hints": _chain_hints(sample),
                 "html": html.as_evidence(),
                 "flag_candidates": list(flags),
+                "ctf_scope": web_ctf_scope_evidence(),
             },
             hypothesis=_web_hypothesis(html, flags),
             confidence=0.82 if tool_result.status == "success" else 0.35,
@@ -211,30 +216,27 @@ def _analyze_web_source_attachments(context: SolverContext) -> tuple[Finding | N
     all_hints: list[str] = []
     samples: dict[str, list[str]] = {}
     flag_candidates: list[str] = []
+    rejected_flag_candidates: list[str] = []
+    source_archive_entries: list[str] = []
+    source_inputs = _web_source_inputs(context)
 
-    for attachment_path in context.challenge.attachment_paths:
-        try:
-            resolved = ctf.ensure_existing_file(attachment_path)
-        except FileNotFoundError:
-            continue
-        path = Path(resolved)
-        if path.suffix.lower() not in _SOURCE_SUFFIXES:
-            continue
-        try:
-            source = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
+    for source_name, source in source_inputs:
         routes = _source_routes(source)
         hints = _source_bug_class_hints(source, routes)
-        flags = extract_flags(source)
-        route_map[resolved] = routes
+        source_flags, rejected_flags = _source_flag_candidates(source)
+        route_map[source_name] = routes
         all_hints.extend(hints)
-        flag_candidates.extend(flags)
-        samples[resolved] = _source_sample_lines(source, tuple(dict.fromkeys((*routes, *hints))))
+        flag_candidates.extend(source_flags)
+        rejected_flag_candidates.extend(rejected_flags)
+        samples[source_name] = _source_sample_lines(source, tuple(dict.fromkeys((*routes, *hints))))
+        if "::" in source_name:
+            source_archive_entries.append(source_name.split("::", 1)[1])
 
     routes = tuple(dict.fromkeys(route for routes_for_file in route_map.values() for route in routes_for_file))
     hints = tuple(dict.fromkeys(all_hints))
     flags = tuple(dict.fromkeys(flag_candidates))
+    rejected_flags = tuple(dict.fromkeys(rejected_flag_candidates))
+    proof_chain_hints = tuple(dict.fromkeys(hint for _, source in source_inputs for hint in _source_proof_chain_hints(source)))
     if not route_map and not hints and not flags:
         return None, ()
 
@@ -244,17 +246,92 @@ def _analyze_web_source_attachments(context: SolverContext) -> tuple[Finding | N
         finding="Analyzed web source attachments",
         evidence={
             "attachments": list(route_map.keys()),
+            "source_archive_entries": source_archive_entries,
             "routes": list(routes),
             "routes_by_attachment": route_map,
             "bug_class_hints": list(hints),
+            "proof_chain_hints": list(proof_chain_hints),
             "source_samples": samples,
             "flag_candidates": list(flags),
+            "rejected_flag_candidates": list(rejected_flags),
+            "ctf_scope": web_ctf_scope_evidence(),
         },
         hypothesis=_source_hypothesis(routes, hints, flags),
         confidence=0.78 if routes or hints else 0.55,
         next_action=_source_next_action(routes, hints, flags),
     )
     return finding, flags
+
+
+def _web_source_inputs(context: SolverContext) -> list[tuple[str, str]]:
+    sources: list[tuple[str, str]] = []
+    for attachment_path in context.challenge.attachment_paths:
+        try:
+            resolved = ctf.ensure_existing_file(attachment_path)
+        except FileNotFoundError:
+            continue
+        path = Path(resolved)
+        if path.suffix.lower() in _SOURCE_SUFFIXES:
+            try:
+                sources.append((resolved, path.read_text(encoding="utf-8", errors="ignore")))
+            except OSError:
+                continue
+            continue
+        sources.extend(_archive_source_inputs(path, resolved))
+    return sources
+
+
+def _archive_source_inputs(path: Path, resolved: str, max_bytes: int = 64_000, limit: int = 40) -> list[tuple[str, str]]:
+    sources: list[tuple[str, str]] = []
+    if zipfile.is_zipfile(path):
+        try:
+            with zipfile.ZipFile(path) as zf:
+                for info in zf.infolist():
+                    if len(sources) >= limit:
+                        break
+                    if info.is_dir() or info.file_size > max_bytes or info.flag_bits & 0x1:
+                        continue
+                    if not _is_web_source_text_entry(info.filename):
+                        continue
+                    text = zf.read(info).decode("utf-8", errors="ignore")
+                    if text.strip():
+                        sources.append((f"{resolved}::{info.filename}", text))
+        except (OSError, RuntimeError, zipfile.BadZipFile):
+            return sources
+    elif tarfile.is_tarfile(path):
+        try:
+            with tarfile.open(path) as tf:
+                for member in tf.getmembers():
+                    if len(sources) >= limit:
+                        break
+                    if not member.isfile() or member.size > max_bytes:
+                        continue
+                    if not _is_web_source_text_entry(member.name):
+                        continue
+                    extracted = tf.extractfile(member)
+                    if extracted is None:
+                        continue
+                    text = extracted.read(max_bytes + 1).decode("utf-8", errors="ignore")
+                    if text.strip():
+                        sources.append((f"{resolved}::{member.name}", text))
+        except (OSError, tarfile.TarError):
+            return sources
+    return sources
+
+
+def _is_web_source_text_entry(name: str) -> bool:
+    path = Path(name)
+    suffix = path.suffix.lower()
+    filename = path.name.lower()
+    if suffix in _SOURCE_SUFFIXES:
+        return True
+    if suffix in _SOURCE_TEXT_SUFFIXES and (
+        "flag" in filename
+        or filename.startswith(("readme", ".env"))
+        or filename in {"docker-compose.yml", "package.json", "ctfcli.yaml"}
+    ):
+        return True
+    return False
 
 
 def _source_routes(source: str) -> list[str]:
@@ -289,6 +366,8 @@ def _source_bug_class_hints(source: str, routes: list[str]) -> list[str]:
         or "cookie" in lowered
     ):
         hints.append("JWT/session")
+    if "yaml" in lowered and ("parse" in lowered or "load" in lowered or "deserialize" in lowered or "stringify" in lowered):
+        hints.append("YAML parser")
     if re.search(r"\b(?:requests|urllib|axios|fetch|http\.get|httpx)\s*\.\s*(?:get|post|request|urlopen)\s*\(", source) and re.search(
         r"(?:request\.args|request\.form|req\.query|req\.body|\$_(?:GET|POST)|params)", source
     ):
@@ -300,6 +379,43 @@ def _source_bug_class_hints(source: str, routes: list[str]) -> list[str]:
     if "../" in lowered or "..%2f" in lowered or "safe_join" in lowered:
         hints.append("path traversal")
     return list(dict.fromkeys(hints))
+
+
+def _source_flag_candidates(source: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    accepted: list[str] = []
+    rejected: list[str] = []
+    for candidate in extract_flags(source):
+        if _is_placeholder_flag(candidate):
+            rejected.append(candidate)
+        else:
+            accepted.append(candidate)
+    return tuple(dict.fromkeys(accepted)), tuple(dict.fromkeys(rejected))
+
+
+def _is_placeholder_flag(candidate: str) -> bool:
+    lowered = candidate.lower()
+    placeholder_markers = ("test_flag", "real_flag_on_instance", "placeholder", "fake_flag", "example_flag")
+    return any(marker in lowered for marker in placeholder_markers)
+
+
+def _source_proof_chain_hints(source: str) -> list[str]:
+    lowered = source.lower()
+    hints: list[str] = []
+    if (
+        "signed.__proto__" in source
+        or ("__proto__" in source and "signed" in lowered)
+        or ("signed_prefix" in lowered and "param.slice" in lowered and "signedparams" in lowered)
+    ):
+        hints.append("prototype pollution via signed.__proto__")
+    if "bun.file" in lowered and ("\\0" in source or "null byte" in lowered or "outputprefix" in lowered):
+        hints.append("Bun null byte path truncation")
+    if "/proc/self/fd" in source or ("proc" in lowered and "fd" in lowered) or "banned_strings" in lowered:
+        hints.append("/proc/self/fd overwrite pivot")
+    if "stringify" in lowered and ("yaml" in lowered or "typescript" in lowered or ".ts" in lowered):
+        hints.append("YAML-to-TypeScript payload shaping")
+    if "setuid" in lowered or "getflag" in lowered:
+        hints.append("SUID getflag proof target")
+    return hints
 
 
 def _source_sample_lines(source: str, terms: tuple[str, ...], limit: int = 8) -> list[str]:
@@ -332,7 +448,7 @@ def _source_next_action(routes: tuple[str, ...], hints: tuple[str, ...], flags: 
         return "Map the listed routes to the live target, then test the hinted bug classes inside declared scope."
     if routes:
         return "Use the extracted route list to prioritize same-origin probing once a target is available."
-    return "Review the hinted source sinks and add a target URL before active exploitation."
+    return "Review the hinted source sinks and add a target URL before active proof-of-solve reproduction."
 
 
 def _follow_visible_links(
@@ -367,6 +483,7 @@ def _follow_visible_links(
             "tool_statuses": statuses,
             "samples": samples,
             "flag_candidates": list(flags),
+            "ctf_scope": web_ctf_scope_evidence(),
         },
         hypothesis=_linked_hypothesis(flags),
         confidence=0.84 if flags else 0.58,
@@ -407,6 +524,7 @@ def _follow_script_mentioned_routes(
             "tool_statuses": statuses,
             "samples": samples,
             "flag_candidates": list(flags),
+            "ctf_scope": web_ctf_scope_evidence(),
         },
         hypothesis=_script_route_hypothesis(flags),
         confidence=0.84 if flags else 0.55,

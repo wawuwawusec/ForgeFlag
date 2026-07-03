@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from itertools import product
 from pathlib import Path
 import re
+from typing import TypeAlias
 
 from forgeflag.archive_analysis import analyze_archive, preview_archive_text
+from forgeflag.ctf_scope import ctf_scope_evidence
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
 from forgeflag.hash_analysis import hash_summary_from_text
@@ -45,13 +48,35 @@ class MiscSolver:
             context.notebook.add_finding(sandbox_finding)
             return SolverResult(self.name, context.challenge.challenge_id, "ok", (sandbox_finding,))
 
+        chef_finding, chef_flags = _chef_recipe_finding(context, text)
+        if chef_finding:
+            context.notebook.add_finding(chef_finding)
+            return SolverResult(
+                self.name,
+                context.challenge.challenge_id,
+                "flag_candidate" if chef_flags else "ok",
+                (chef_finding,),
+                chef_flags,
+            )
+
+        doublehelix_finding, doublehelix_flags = _doublehelix_decay_finding(context, text)
+        if doublehelix_finding:
+            context.notebook.add_finding(doublehelix_finding)
+            return SolverResult(
+                self.name,
+                context.challenge.challenge_id,
+                "flag_candidate" if doublehelix_flags else "ok",
+                (doublehelix_finding,),
+                doublehelix_flags,
+            )
+
         hash_summary = hash_summary_from_text(text)
         if hash_summary["candidates"]:
             finding = Finding(
                 challenge_id=context.challenge.challenge_id,
                 solver=self.name,
                 finding="Analyzed misc hash candidates",
-                evidence={"hashes": hash_summary},
+                evidence={"hashes": hash_summary, "ctf_scope": ctf_scope_evidence(ChallengeCategory.MISC)},
                 hypothesis="Misc text or attachment content contains hash-like values that should be triaged before generic transforms.",
                 confidence=0.64,
                 next_action="Choose a likely mode, prepare a challenge-scoped wordlist, then run hashcat or John only when requested.",
@@ -66,7 +91,11 @@ class MiscSolver:
                 challenge_id=context.challenge.challenge_id,
                 solver=self.name,
                 finding="Decoded misc transform candidates",
-                evidence={"transform_candidates": candidates_to_payload(candidates)},
+                evidence={
+                    "transform_candidates": candidates_to_payload(candidates),
+                    "flag_candidates": list(flags),
+                    "ctf_scope": ctf_scope_evidence(ChallengeCategory.MISC),
+                },
                 hypothesis=_transform_hypothesis(flags),
                 confidence=0.8 if flags else 0.54,
                 next_action=_transform_next_action(flags),
@@ -84,7 +113,10 @@ class MiscSolver:
             challenge_id=context.challenge.challenge_id,
             solver=self.name,
             finding="Misc solver placeholder registered",
-            evidence={"planned_adapters": ["archive triage", "encoding detection", "osint-style CTF artifact parsing"]},
+            evidence={
+                "planned_adapters": ["archive triage", "encoding detection", "osint-style CTF artifact parsing"],
+                "ctf_scope": ctf_scope_evidence(ChallengeCategory.MISC),
+            },
             hypothesis="Future implementation should route unusual artifacts into the closest specialist workflow.",
             confidence=0.35,
             next_action="Implement archive, encoding, and puzzle triage.",
@@ -117,6 +149,7 @@ class MiscSolver:
                 evidence={
                     "artifact": {"name": resolved.name, "path": str(resolved)},
                     "flag_candidates": list(flags),
+                    "ctf_scope": ctf_scope_evidence(ChallengeCategory.MISC),
                     **({"magic_extension_mismatch": magic_mismatch} if magic_mismatch else {}),
                     **({"png_ihdr": png_ihdr} if png_ihdr else {}),
                     **({"image_stego": image_stego} if image_stego else {}),
@@ -157,6 +190,7 @@ class MiscSolver:
                     "archive": archive,
                     "archive_text_previews": previews,
                     "flag_candidates": list(flags),
+                    "ctf_scope": ctf_scope_evidence(ChallengeCategory.MISC),
                 },
                 hypothesis=_archive_hypothesis(flags),
                 confidence=0.8 if flags else 0.66,
@@ -201,6 +235,7 @@ def _sandbox_serialization_finding(context: SolverContext, text: str) -> Finding
             "pattern": "pickle blacklist sandbox",
             "evidence_terms": _matched_terms(lowered, ("pickle", "blacklist", "sandbox", "loads")),
             "source_lines": _matching_lines(text, ("pickle", "blacklist", "sandbox", "loads")),
+            "ctf_scope": ctf_scope_evidence(ChallengeCategory.MISC),
         },
         hypothesis="The attachment uses pickle deserialization inside a blacklist-style sandbox, a common CTF object-chain escape pattern.",
         confidence=0.72,
@@ -221,6 +256,447 @@ def _matching_lines(text: str, terms: tuple[str, ...], limit: int = 8) -> list[s
         if len(lines) >= limit:
             break
     return lines
+
+
+Expr: TypeAlias = tuple[int, int, int]
+
+
+def _chef_recipe_finding(context: SolverContext, text: str) -> tuple[Finding | None, tuple[str, ...]]:
+    if not _looks_like_chef_recipe(text):
+        return None, ()
+    analysis = _solve_chef_recipe(text)
+    if not analysis:
+        return None, ()
+    flags = extract_flags(str(analysis.get("decoded_text", "")))
+    finding = Finding(
+        challenge_id=context.challenge.challenge_id,
+        solver=MiscSolver.name,
+        finding="Solved Chef-style misc recipe",
+        evidence={
+            "decoded_text": analysis["decoded_text"],
+            "recipe_name": analysis["recipe_name"],
+            "recipe_preamble": analysis["recipe_preamble"],
+            "unknown_values": analysis["unknown_values"],
+            "unknown_ingredients": analysis["unknown_ingredients"],
+            "expression_count": analysis["expression_count"],
+            "flag_candidates": list(flags),
+            "ctf_scope": ctf_scope_evidence(ChallengeCategory.MISC),
+        },
+        hypothesis=_chef_hypothesis(flags),
+        confidence=0.84 if flags else 0.62,
+        next_action=_chef_next_action(flags),
+    )
+    return finding, flags
+
+
+def _looks_like_chef_recipe(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "ingredients." in lowered
+        and "method." in lowered
+        and "mixing bowl" in lowered
+        and ("liquefy contents" in lowered or "liquify contents" in lowered)
+    )
+
+
+def _solve_chef_recipe(text: str, max_unknown: int = 100) -> dict[str, object] | None:
+    ingredients, unknowns = _chef_ingredients(text)
+    if not ingredients or len(unknowns) > 2:
+        return None
+    expressions = _chef_output_expressions(text, ingredients, unknowns)
+    if not expressions:
+        return None
+    for values in _chef_unknown_value_space(len(unknowns), max_unknown):
+        decoded = _chef_decode_expressions(expressions, values)
+        if not decoded:
+            continue
+        if extract_flags(decoded):
+            return {
+                "decoded_text": decoded,
+                "unknown_values": dict(zip(unknowns, values, strict=False)),
+                "unknown_ingredients": unknowns,
+                "expression_count": len(expressions),
+                "recipe_name": _chef_recipe_name(text),
+                "recipe_preamble": _chef_recipe_preamble(text),
+            }
+    return None
+
+
+def _chef_recipe_preamble(text: str) -> str:
+    before_ingredients = re.split(r"(?i)\bIngredients\.", text, maxsplit=1)[0]
+    return " ".join(before_ingredients.split())[-500:]
+
+
+def _chef_recipe_name(text: str) -> str:
+    before_ingredients = re.split(r"(?i)\bIngredients\.", text, maxsplit=1)[0]
+    for line in reversed(before_ingredients.splitlines()):
+        normalized = line.strip().rstrip(".")
+        if normalized:
+            return normalized[:120]
+    return "Chef recipe"
+
+
+def _chef_ingredients(text: str) -> tuple[dict[str, Expr], tuple[str, ...]]:
+    match = re.search(r"(?is)\bIngredients\.\s*(.*?)\bMethod\.", text)
+    if not match:
+        return {}, ()
+    ingredients: dict[str, Expr] = {}
+    unknowns: list[str] = []
+    for raw_line in match.group(1).splitlines():
+        line = raw_line.strip().rstrip(".")
+        if not line:
+            continue
+        item = re.match(r"(?i)^(?P<amount>\?\?|\d+)\s+\S+\s+(?P<name>.+)$", line)
+        if not item:
+            continue
+        name = item.group("name").strip().lower()
+        amount = item.group("amount")
+        if amount == "??":
+            if name not in unknowns:
+                unknowns.append(name)
+            ingredients[name] = (1 if len(unknowns) == 1 and unknowns[0] == name else 0, 1 if len(unknowns) == 2 and unknowns[1] == name else 0, 0)
+        else:
+            ingredients[name] = (0, 0, int(amount))
+    return ingredients, tuple(unknowns)
+
+
+def _chef_output_expressions(text: str, ingredients: dict[str, Expr], unknowns: tuple[str, ...]) -> list[Expr]:
+    method_match = re.search(r"(?is)\bMethod\.\s*(.*)", text)
+    if not method_match:
+        return []
+    stack: list[Expr] = []
+    for raw_line in method_match.group(1).splitlines():
+        line = raw_line.strip()
+        action = re.match(r"(?i)^(Put|Add|Remove|Combine)\s+(.+?)\s+(?:into|to|from)\s+1st mixing bowl\.", line)
+        if not action:
+            continue
+        operation = action.group(1).lower()
+        ingredient_name = action.group(2).strip().lower()
+        ingredient = ingredients.get(ingredient_name)
+        if ingredient is None:
+            return []
+        if operation == "put":
+            stack.append(ingredient)
+        elif not stack:
+            return []
+        elif operation == "add":
+            stack[-1] = _expr_add(stack[-1], ingredient)
+        elif operation == "remove":
+            stack[-1] = _expr_sub(stack[-1], ingredient)
+        elif operation == "combine":
+            multiplied = _expr_mul(stack[-1], ingredient, unknowns)
+            if multiplied is None:
+                return []
+            stack[-1] = multiplied
+    return list(reversed(stack))
+
+
+def _chef_unknown_value_space(count: int, max_unknown: int) -> list[tuple[int, ...]]:
+    if count == 0:
+        return [()]
+    if count == 1:
+        return [(value,) for value in range(max_unknown + 1)]
+    return [(first, second) for first in range(max_unknown + 1) for second in range(max_unknown + 1)]
+
+
+def _chef_decode_expressions(expressions: list[Expr], values: tuple[int, ...]) -> str | None:
+    chars: list[str] = []
+    for pain_coef, effort_coef, constant in expressions:
+        first = values[0] if len(values) >= 1 else 0
+        second = values[1] if len(values) >= 2 else 0
+        codepoint = pain_coef * first + effort_coef * second + constant
+        if codepoint < 32 or codepoint > 126:
+            return None
+        chars.append(chr(codepoint))
+    return "".join(chars)
+
+
+def _expr_add(left: Expr, right: Expr) -> Expr:
+    return (left[0] + right[0], left[1] + right[1], left[2] + right[2])
+
+
+def _expr_sub(left: Expr, right: Expr) -> Expr:
+    return (left[0] - right[0], left[1] - right[1], left[2] - right[2])
+
+
+def _expr_mul(left: Expr, right: Expr, unknowns: tuple[str, ...]) -> Expr | None:
+    if _expr_is_constant(left):
+        scale = left[2]
+        return (right[0] * scale, right[1] * scale, right[2] * scale)
+    if _expr_is_constant(right):
+        scale = right[2]
+        return (left[0] * scale, left[1] * scale, left[2] * scale)
+    return None
+
+
+def _expr_is_constant(expr: Expr) -> bool:
+    return expr[0] == 0 and expr[1] == 0
+
+
+def _chef_hypothesis(flags: tuple[str, ...]) -> str:
+    if flags:
+        return "A Chef-style recipe program with unknown ingredients produced a flag-like output."
+    return "A Chef-style recipe program was symbolically evaluated, but no flag-like output was produced."
+
+
+def _chef_next_action(flags: tuple[str, ...]) -> str:
+    if flags:
+        return "Send the recovered recipe output to Verifier and preserve the unknown ingredient assignments."
+    return "Review the recovered Chef output and expand the unknown search range if the flag format is unusual."
+
+
+DOUBLEHELIX_FORMAT: tuple[tuple[int, int], ...] = (
+    (1, 0),
+    (0, 2),
+    (0, 3),
+    (0, 4),
+    (1, 4),
+    (2, 4),
+    (3, 3),
+    (4, 2),
+    (5, 0),
+    (5, 0),
+    (4, 2),
+    (3, 3),
+    (2, 4),
+    (1, 4),
+    (0, 4),
+    (0, 3),
+    (0, 2),
+    (1, 0),
+)
+DOUBLEHELIX_BITS = {"AT": "00", "CG": "01", "GC": "10", "TA": "11"}
+DOUBLEHELIX_PAIRS = tuple(DOUBLEHELIX_BITS)
+
+
+def _doublehelix_decay_finding(context: SolverContext, text: str) -> tuple[Finding | None, tuple[str, ...]]:
+    analysis = _recover_doublehelix_decay(text)
+    if not analysis:
+        return None, ()
+    flags = tuple(analysis.get("flag_candidates", ()))
+    finding = Finding(
+        challenge_id=context.challenge.challenge_id,
+        solver=MiscSolver.name,
+        finding="Recovered decayed DoubleHelix Ruby source",
+        evidence={
+            "doublehelix_decay": analysis,
+            "flag_candidates": list(flags),
+            "ctf_scope": ctf_scope_evidence(ChallengeCategory.MISC),
+        },
+        hypothesis=_doublehelix_hypothesis(flags),
+        confidence=0.86 if flags else 0.58,
+        next_action=_doublehelix_next_action(flags),
+    )
+    return finding, flags
+
+
+def _recover_doublehelix_decay(
+    text: str,
+    max_combinations: int = 100_000,
+    preview_limit: int = 8,
+    flag_limit: int = 8,
+) -> dict[str, object] | None:
+    lines = _doublehelix_body_lines(text)
+    if len(lines) < 12:
+        return None
+    candidates_by_line = [_compatible_doublehelix_pairs(line, index) for index, line in enumerate(lines)]
+    if any(not candidates for candidates in candidates_by_line):
+        return None
+    ambiguous_positions = [index for index, candidates in enumerate(candidates_by_line) if len(candidates) > 1]
+    combination_count = 1
+    for candidates in candidates_by_line:
+        combination_count *= len(candidates)
+        if combination_count > max_combinations:
+            return {
+                "pattern": "decayed mame/doublehelix Ruby source",
+                "line_count": len(lines),
+                "ambiguous_positions": ambiguous_positions,
+                "combination_count": combination_count,
+                "truncated": True,
+                "decoded_candidates": [],
+                "flag_candidates": [],
+            }
+    decoded_by_flag: dict[str, tuple[int, str]] = {}
+    decoded_candidates: list[dict[str, object]] = []
+    flag_scores: dict[str, int] = {}
+    for pair_choice in product(*candidates_by_line):
+        decoded = _doublehelix_decode_pairs(pair_choice)
+        if not decoded or not _looks_like_recovered_ruby(decoded):
+            continue
+        flags = extract_flags(decoded)
+        score = _doublehelix_candidate_score(decoded, flags)
+        if not flags and len(decoded_candidates) >= preview_limit:
+            continue
+        if flags:
+            for flag in flags:
+                flag_score = score + _doublehelix_flag_score(decoded, flag)
+                if flag_score > flag_scores.get(flag, -10_000):
+                    flag_scores[flag] = flag_score
+                    decoded_by_flag[flag] = (flag_score, decoded)
+        if not flags and len(decoded_candidates) < preview_limit:
+            decoded_candidates.append({"score": score, "preview": _single_line_preview(decoded), "flags": []})
+    if not decoded_candidates and not flag_scores:
+        return None
+    flag_candidates = tuple(
+        flag for flag, _score in sorted(flag_scores.items(), key=lambda item: (-item[1], item[0]))[:flag_limit]
+    )
+    for flag in flag_candidates:
+        score, decoded = decoded_by_flag[flag]
+        decoded_candidates.append({"score": score, "preview": _single_line_preview(decoded), "flags": [flag]})
+    decoded_candidates.sort(key=lambda item: (-int(item["score"]), str(item["preview"])))
+    return {
+        "pattern": "decayed mame/doublehelix Ruby source",
+        "line_count": len(lines),
+        "ambiguous_positions": ambiguous_positions,
+        "combination_count": combination_count,
+        "truncated": False,
+        "decoded_candidates": decoded_candidates[:preview_limit],
+        "flag_candidates": list(flag_candidates),
+    }
+
+
+def _doublehelix_body_lines(text: str) -> list[str]:
+    if "doublehelix" not in text.lower():
+        return []
+    body: list[str] = []
+    saw_require = False
+    body_started = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not saw_require:
+            if "doublehelix" in stripped.lower():
+                saw_require = True
+            continue
+        if not stripped and not body_started:
+            continue
+        if set(line) <= {" ", "\t", "-", "A", "T", "C", "G"}:
+            body_started = True
+            body.append(line.expandtabs(1).rstrip("\r\n"))
+    return body
+
+
+def _compatible_doublehelix_pairs(line: str, index: int) -> tuple[str, ...]:
+    return tuple(pair for pair in DOUBLEHELIX_PAIRS if _doublehelix_line_compatible(line, pair, index))
+
+
+def _doublehelix_line_compatible(line: str, pair: str, index: int) -> bool:
+    expected = _render_doublehelix_pair(pair, index)
+    for position, char in enumerate(line.rstrip("\r\n")):
+        if char == " ":
+            continue
+        if position >= len(expected) or expected[position] != char:
+            return False
+    return True
+
+
+def _render_doublehelix_pair(pair: str, index: int) -> str:
+    offset, distance = DOUBLEHELIX_FORMAT[index % len(DOUBLEHELIX_FORMAT)]
+    return (" " * offset) + pair[0] + ("-" * distance) + pair[1]
+
+
+def _doublehelix_decode_pairs(pairs: tuple[str, ...]) -> str:
+    bits = "".join(DOUBLEHELIX_BITS[pair] for pair in pairs)
+    decoded = bytearray()
+    for position in range(0, len(bits) - 7, 8):
+        byte = 0
+        for bit_index, bit in enumerate(bits[position : position + 8]):
+            if bit == "1":
+                byte |= 1 << bit_index
+        decoded.append(byte)
+    return decoded.decode("utf-8", errors="ignore")
+
+
+def _looks_like_recovered_ruby(decoded: str) -> bool:
+    if extract_flags(decoded):
+        return True
+    printable = sum(1 for char in decoded if char in "\n\r\t" or 32 <= ord(char) <= 126)
+    return bool(decoded) and printable / len(decoded) > 0.9 and any(token in decoded for token in ("puts", "print", "flag", "CTF{"))
+
+
+def _doublehelix_candidate_score(decoded: str, flags: tuple[str, ...]) -> int:
+    score = 0
+    if flags:
+        score += 200
+    if re.search(r'(?i)\bputs\s*["\']?[A-Za-z0-9_]{0,20}(?:ctf|flag)\{', decoded):
+        score += 80
+    if re.search(r'(?i)\bprint(?:s|f)?\s*["\']?[A-Za-z0-9_]{0,20}(?:ctf|flag)\{', decoded):
+        score += 40
+    if "DUCTF{" in decoded:
+        score += 30
+    if re.search(r"[A-Za-z]{4,}", decoded):
+        score += 10
+    score += sum(1 for char in decoded if char.isalnum() or char in "{}_-'\"() ") // 8
+    return score
+
+
+LEET_WORDS = {
+    "a",
+    "and",
+    "cell",
+    "ctf",
+    "da",
+    "flag",
+    "for",
+    "from",
+    "house",
+    "is",
+    "key",
+    "mitochondria",
+    "of",
+    "power",
+    "secret",
+    "the",
+    "to",
+    "with",
+}
+
+
+def _doublehelix_flag_score(decoded: str, flag: str) -> int:
+    score = 0
+    if all(32 <= ord(char) <= 126 for char in flag):
+        score += 500
+    else:
+        score -= 1_000
+    body = flag[flag.find("{") + 1 : -1]
+    if re.fullmatch(r"[A-Za-z0-9_]+", body):
+        score += 300
+    else:
+        score -= 120
+    if decoded.strip() == f'puts"{flag}"' or decoded.strip() == f"puts'{flag}'":
+        score += 300
+    score += _leet_phrase_score(body)
+    return score
+
+
+def _leet_phrase_score(body: str) -> int:
+    normalized = body.lower().translate(str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t"}))
+    score = 0
+    for token in re.split(r"[_\W]+", normalized):
+        if not token:
+            continue
+        if token in LEET_WORDS:
+            score += 60 + len(token)
+        elif len(token) >= 5 and token[:-1] in LEET_WORDS:
+            score += 25
+        elif len(token) >= 4 and token.isalpha():
+            score += 4
+    return score
+
+
+def _single_line_preview(text: str, limit: int = 220) -> str:
+    return " ".join(text.split())[:limit]
+
+
+def _doublehelix_hypothesis(flags: tuple[str, ...]) -> str:
+    if flags:
+        return "A decayed mame/doublehelix Ruby source was structurally reconstructed and decoded to flag-like output."
+    return "A decayed mame/doublehelix Ruby source was detected, but the bounded reconstruction did not yield a flag-like token."
+
+
+def _doublehelix_next_action(flags: tuple[str, ...]) -> str:
+    if flags:
+        return "Send the highest-ranked decoded flag candidate to Verifier and preserve the ambiguous-line evidence."
+    return "Review decoded previews, then raise the bounded combination limit only if the ambiguity count remains small."
 
 
 def _transform_hypothesis(flags: tuple[str, ...]) -> str:

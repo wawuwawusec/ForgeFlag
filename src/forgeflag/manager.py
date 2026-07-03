@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from forgeflag.agent_roster import AgentRoster, load_agent_roster, agent_roster_path_for_db
 from forgeflag.domain import ChallengeCategory, Observation, RunConfig
 from forgeflag.harness import Harness
@@ -129,7 +131,8 @@ class Manager:
 
         findings = self.notebook.findings_for(challenge_id)
         verification = self.verifier.verify(findings, tuple(flag_candidates))
-        status = "flag_found" if verification.accepted else "completed"
+        proof = _proof_status(challenge.category, findings, tuple(verification.accepted))
+        status = str(proof["status"])
         roster_solver_names = [solver.name for solver in selected]
         roster_solver_names.append("Verifier")
         has_replay_material = bool(verification.accepted) or _has_pwn_exploit_plan(findings)
@@ -145,8 +148,11 @@ class Manager:
             ),
             "accepted_flags": list(verification.accepted),
             "rejected_flags": list(verification.rejected),
+            "proof_status": proof["status"],
+            "proof": proof,
             "observations": len(self.notebook.observations_for(challenge_id)),
             "harness": harness.summary(),
+            "llm_status": _llm_status(self.config, solver_results, findings),
         }
         if has_replay_material:
             summary["replay_report"] = self.report_builder.build(
@@ -231,11 +237,19 @@ class Manager:
         challenge_id: str,
     ) -> tuple[list[Solver], Observation | None]:
         requested = []
+        analysis_modes = []
         next_actions = []
         tool_hints = []
+        artifact_requirements = []
+        blocked_by_missing_artifacts = []
+        manual_replay_needed = []
+        risk_notes = []
         for observation in observations:
             if observation.kind != "llm_solver_plan":
                 continue
+            analysis_mode = observation.evidence.get("analysis_mode")
+            if isinstance(analysis_mode, str):
+                analysis_modes.append(analysis_mode)
             suggested = observation.evidence.get("suggested_solvers")
             if isinstance(suggested, list):
                 requested.extend(name for name in suggested if isinstance(name, str))
@@ -245,14 +259,39 @@ class Manager:
             hints = observation.evidence.get("tool_hints")
             if isinstance(hints, list):
                 tool_hints.extend(hint for hint in hints if isinstance(hint, str))
-        if not requested:
+            requirements = observation.evidence.get("artifact_requirements")
+            if isinstance(requirements, list):
+                artifact_requirements.extend(item for item in requirements if isinstance(item, str))
+            blocked = observation.evidence.get("blocked_by_missing_artifacts")
+            if isinstance(blocked, list):
+                blocked_by_missing_artifacts.extend(item for item in blocked if isinstance(item, str))
+            manual = observation.evidence.get("manual_replay_needed")
+            if isinstance(manual, list):
+                manual_replay_needed.extend(item for item in manual if isinstance(item, str))
+            risks = observation.evidence.get("risk_notes")
+            if isinstance(risks, list):
+                risk_notes.extend(item for item in risks if isinstance(item, str))
+
+        requested_solvers = _dedupe(requested)
+        guidance_available = any(
+            (
+                requested_solvers,
+                analysis_modes,
+                next_actions,
+                tool_hints,
+                artifact_requirements,
+                blocked_by_missing_artifacts,
+                manual_replay_needed,
+                risk_notes,
+            )
+        )
+        if not guidance_available:
             return selected, None
 
         by_name = {solver.name: solver for solver in self.solvers}
         result = list(selected)
         insert_at = insertion_index
         existing_names = {solver.name for solver in result}
-        requested_solvers = _dedupe(requested)
         queued_solvers: list[str] = []
         already_present_solvers: list[str] = []
         unknown_solvers: list[str] = []
@@ -271,7 +310,11 @@ class Manager:
         summary = (
             f"LLM queued solver(s): {', '.join(queued_solvers)}"
             if queued_solvers
-            else "LLM solver plan did not change the current solver queue"
+            else (
+                "LLM solver plan did not change the current solver queue"
+                if requested_solvers
+                else "LLM provided manual guidance without changing the solver queue"
+            )
         )
         return result, Observation(
             challenge_id=challenge_id,
@@ -285,6 +328,11 @@ class Manager:
                 "unknown_solvers": unknown_solvers,
                 "next_actions": _dedupe(next_actions),
                 "tool_hints": _dedupe(tool_hints),
+                "analysis_mode": _dedupe(analysis_modes)[0] if _dedupe(analysis_modes) else "",
+                "artifact_requirements": _dedupe(artifact_requirements),
+                "blocked_by_missing_artifacts": _dedupe(blocked_by_missing_artifacts),
+                "manual_replay_needed": _dedupe(manual_replay_needed),
+                "risk_notes": _dedupe(risk_notes),
             },
         )
 
@@ -312,6 +360,40 @@ def _ran_non_llm_solver(solver_rows: object) -> bool:
     return False
 
 
+def _llm_status(config: RunConfig, solver_rows: object, findings: object) -> dict[str, object]:
+    enabled = bool(config.llm_config.enabled)
+    status = "disabled"
+    row: dict[str, object] | None = None
+    if isinstance(solver_rows, list):
+        for candidate in solver_rows:
+            if isinstance(candidate, dict) and candidate.get("solver") == "LLMSolver":
+                row = candidate
+                status = str(candidate.get("status") or "unknown")
+                break
+    if enabled and row is None:
+        status = "not_run"
+
+    error = ""
+    if row is not None and isinstance(findings, list):
+        for finding in findings:
+            if getattr(finding, "solver", "") != "LLMSolver":
+                continue
+            evidence = getattr(finding, "evidence", {})
+            if isinstance(evidence, dict):
+                error = str(evidence.get("error") or "")
+            break
+
+    result: dict[str, object] = {
+        "enabled": enabled,
+        "status": status,
+        "provider": config.llm_config.provider,
+        "model": config.llm_config.model,
+    }
+    if error:
+        result["error"] = error
+    return result
+
+
 def _has_pwn_exploit_plan(findings: object) -> bool:
     if not isinstance(findings, list):
         return False
@@ -322,3 +404,83 @@ def _has_pwn_exploit_plan(findings: object) -> bool:
         if isinstance(evidence, dict) and isinstance(evidence.get("exploit_plan"), dict):
             return True
     return False
+
+
+def _proof_status(
+    category: ChallengeCategory,
+    findings: list[object],
+    accepted_flags: tuple[str, ...],
+) -> dict[str, Any]:
+    if accepted_flags:
+        return {
+            "status": "flag_found",
+            "label": "Flag verified",
+            "verified": True,
+            "summary": "Verifier accepted an evidence-backed flag candidate.",
+            "accepted_flags": list(accepted_flags),
+            "next_action": "Preserve replay steps and write the casebook/playbook note.",
+        }
+    if category != ChallengeCategory.PWN:
+        return {
+            "status": "completed",
+            "label": "Analysis completed",
+            "verified": False,
+            "summary": "Solvers completed without an accepted flag.",
+            "next_action": "Review findings, collect missing evidence, and rerun the most relevant solver.",
+        }
+
+    replay = _first_pwn_replay_proof(findings)
+    if replay:
+        return {
+            "status": "exploit_verified",
+            "label": "Exploit verified",
+            "verified": True,
+            "summary": "A bounded exploit replay demonstrated shell, command execution, or equivalent challenge control.",
+            "evidence": replay,
+            "next_action": "Preserve the transcript, environment details, and exploit command in the write-up.",
+        }
+    if _has_pwn_exploit_plan(findings):
+        return {
+            "status": "exploit_plan",
+            "label": "Exploit plan only",
+            "verified": False,
+            "summary": "Exploit plan exists but no replay transcript has verified shell, command execution, or flag retrieval.",
+            "next_action": "Run the exploit against the local or authorized CTF service and capture shell, command output, or flag evidence.",
+            "required_evidence": [
+                "exploit.py or exact pwntools command",
+                "local or authorized target scope",
+                "stdout transcript showing shell, command execution, or flag retrieval",
+                "libc/environment details when relevant",
+            ],
+        }
+    return {
+        "status": "analysis_only",
+        "label": "Analysis only",
+        "verified": False,
+        "summary": "Pwn triage ran, but no exploit plan or replay proof has been recorded yet.",
+        "next_action": "Build a bounded proof-of-solve harness, reproduce the primitive, and capture replay evidence.",
+    }
+
+
+def _first_pwn_replay_proof(findings: list[object]) -> dict[str, Any] | None:
+    for finding in findings:
+        if getattr(finding, "solver", "") != "PwnSolver":
+            continue
+        evidence = getattr(finding, "evidence", {})
+        if not isinstance(evidence, dict):
+            continue
+        for key in ("exploit_replay", "replay_proof", "proof"):
+            proof = evidence.get(key)
+            if _pwn_replay_verified(proof):
+                return proof
+    return None
+
+
+def _pwn_replay_verified(proof: object) -> bool:
+    if not isinstance(proof, dict):
+        return False
+    status = str(proof.get("status") or proof.get("result") or "").lower()
+    if status in {"success", "verified", "shell", "command_executed", "flag_found"}:
+        return True
+    transcript = str(proof.get("transcript") or proof.get("stdout") or proof.get("output") or "").lower()
+    return any(marker in transcript for marker in ("uid=", "gid=", "$ ", "# ", "forgeflag_pwned", "flag{"))

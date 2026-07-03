@@ -10,6 +10,8 @@ The execution layer runs tools in an isolated, auditable environment. The local 
 
 Tools return structured results with evidence and artifacts. Solvers should never depend on unstructured terminal output when a parser can be used.
 
+`ToolRunner` keeps execution behind an allowlisted wrapper catalog. It prefers host binaries, can fall back to the configured `forgeflag-ctf:latest` Docker image for default wrappers, and reports host/Docker/missing status through the CLI and `/api/tools`. Heavyweight profile images such as Volatility, SageMath, and Ghidra headless are tracked separately from the default wrapper inventory and should be invoked only through future read-only adapters.
+
 ### 3. Agent Layer
 
 The agent layer is split into a manager and specialist solvers. Each solver owns its own local reasoning state and writes only structured notes to the shared notebook.
@@ -93,7 +95,7 @@ class Solver:
     def solve(self, context: SolverContext) -> SolverResult: ...
 ```
 
-Forensics and traffic are split by artifact type. `ForensicsSolver` owns broad local artifact triage; `TrafficSolver` owns packet capture workflows and may also run on forensics challenges when PCAP attachments are present.
+Forensics and traffic are split by artifact type. `ForensicsSolver` owns broad local artifact triage, including metadata, archive/image hints, carving, and YARA scans; `TrafficSolver` owns packet capture workflows and may also run on forensics challenges when PCAP attachments are present. Reverse and pwn solvers preserve cheap static evidence first, then use bounded binary wrappers or read-only external adapters when the artifact justifies deeper analysis.
 
 ## NSFOCUS AI Team Alignment
 

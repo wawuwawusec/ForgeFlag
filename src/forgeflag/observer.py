@@ -25,12 +25,17 @@ class Observer:
                         kind="llm_solver_plan",
                         summary=str(plan.get("summary") or finding.finding),
                         evidence={
+                            "analysis_mode": _string(plan.get("analysis_mode")),
                             "suggested_solvers": _string_list(plan.get("suggested_solvers")),
                             "next_actions": _string_list(plan.get("next_actions")),
                             "tool_hints": _string_list(plan.get("tool_hints")),
                             "hypotheses": _string_list(plan.get("hypotheses")),
                             "expected_evidence": _string_list(plan.get("expected_evidence")),
+                            "artifact_requirements": _string_list(plan.get("artifact_requirements")),
+                            "blocked_by_missing_artifacts": _string_list(plan.get("blocked_by_missing_artifacts")),
+                            "manual_replay_needed": _string_list(plan.get("manual_replay_needed")),
                             "fallback_plan": _string_list(plan.get("fallback_plan")),
+                            "risk_notes": _string_list(plan.get("risk_notes")),
                         },
                     )
                 )
@@ -79,3 +84,7 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)][:10]
+
+
+def _string(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""

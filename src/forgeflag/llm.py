@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Any, Protocol
 from urllib import request
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from forgeflag.domain import LLMConfig
 
@@ -159,6 +159,13 @@ def _open_llm_request(req: request.Request, config: LLMConfig, cooldown_key: str
                 last_error = _llm_http_error(status, body, config, cooldown_key)
                 if delay > 0:
                     time.sleep(delay)
+            except (TimeoutError, URLError, OSError) as exc:
+                last_error = RuntimeError(f"LLM transport error for {cooldown_key}: {exc}")
+                if attempt >= attempts - 1:
+                    raise last_error from exc
+                delay = _retry_backoff_delay(attempt, config)
+                if delay > 0:
+                    time.sleep(delay)
         if last_error is not None:
             raise last_error
         raise RuntimeError("LLM request failed before it could be sent")
@@ -218,6 +225,10 @@ def _retry_delay(exc: HTTPError, attempt: int, config: LLMConfig) -> int:
     retry_after = _retry_after_seconds(exc.headers.get("Retry-After") if exc.headers else None)
     if retry_after is not None:
         return min(config.retry_max_seconds, max(0, retry_after))
+    return _retry_backoff_delay(attempt, config)
+
+
+def _retry_backoff_delay(attempt: int, config: LLMConfig) -> int:
     base = max(0, config.retry_initial_seconds)
     if base <= 0:
         return 0

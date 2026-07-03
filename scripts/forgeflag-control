@@ -28,6 +28,7 @@ Commands:
   restart [--mcp]     Stop, then start
   status              Show notebook, CLI, tool, and MCP status
   smoke               Run the local offline smoke test
+  gate [--llm]        Start Web UI and run the full capability release gate
   docker-build        Build the ForgeFlag CTF tool image and enable Docker tool fallback
   docker-smoke        Run wrapper smoke checks with Docker fallback enabled
 
@@ -313,6 +314,30 @@ docker_smoke() {
   "$ROOT_DIR/scripts/forgeflag-tool-smoke" --include-active-network
 }
 
+require_llm_runtime() {
+  local provider
+  provider="$(printf '%s' "${FORGEFLAG_LLM_PROVIDER:-disabled}" | tr '[:upper:]' '[:lower:]')"
+  local model="${FORGEFLAG_LLM_MODEL:-}"
+  local api_key="${FORGEFLAG_LLM_API_KEY:-}"
+  case "$provider" in
+    zhipu)
+      model="${model:-glm-5.1}"
+      api_key="${api_key:-${ZAI_API_KEY:-${ZHIPU_API_KEY:-${ZHIPUAI_API_KEY:-${BIGMODEL_API_KEY:-}}}}}"
+      ;;
+    openai)
+      api_key="${api_key:-${OPENAI_API_KEY:-}}"
+      ;;
+    *)
+      echo "LLM gate requested but runtime is not configured; set FORGEFLAG_LLM_PROVIDER plus provider API key before using --llm." >&2
+      return 1
+      ;;
+  esac
+  if [[ -z "$model" || -z "$api_key" ]]; then
+    echo "LLM gate requested but runtime is not configured; set FORGEFLAG_LLM_MODEL and provider API key before using --llm." >&2
+    return 1
+  fi
+}
+
 start() {
   local with_mcp="false"
   local with_web="true"
@@ -337,6 +362,50 @@ start() {
   fi
 }
 
+gate() {
+  local start_first="true"
+  local llm="false"
+  local url="http://$WEB_HOST:$WEB_PORT"
+  local manifest="$STATE_DIR/heldout-platform-manifest.json"
+  local timeout="${FORGEFLAG_GATE_TIMEOUT:-300}"
+  local output="$STATE_DIR/capability-benchmark-latest.json"
+  local history="$STATE_DIR/capability-benchmark-history.jsonl"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-start) start_first="false" ;;
+      --llm) llm="true" ;;
+      --url) url="${2:?missing --url value}"; shift ;;
+      --manifest) manifest="${2:?missing --manifest value}"; shift ;;
+      --timeout) timeout="${2:?missing --timeout value}"; shift ;;
+      --output) output="${2:?missing --output value}"; shift ;;
+      --history) history="${2:?missing --history value}"; shift ;;
+      *) echo "unknown gate option: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+  done
+  ensure_state_dir
+  load_env
+  if [[ "$llm" == "true" ]]; then
+    require_llm_runtime || exit 2
+  fi
+  if [[ "$start_first" == "true" ]]; then
+    start
+  fi
+  echo "ForgeFlag release gate url=$url output=$output"
+  local command=(
+    "$ROOT_DIR/scripts/forgeflag-capability-benchmark"
+    --url "$url"
+    --manifest "$manifest"
+    --timeout "$timeout"
+    --output "$output"
+    --history "$history"
+  )
+  if [[ "$llm" == "true" ]]; then
+    command+=(--llm)
+  fi
+  "${command[@]}"
+}
+
 command="${1:-}"
 shift || true
 
@@ -346,6 +415,7 @@ case "$command" in
   restart) ensure_state_dir; stop_web; stop_mcp; start "$@" ;;
   status) load_env; status ;;
   smoke) ensure_venv; make -C "$ROOT_DIR" smoke ;;
+  gate) gate "$@" ;;
   docker-build) load_env; docker_build ;;
   docker-smoke) docker_smoke ;;
   -h|--help|help|"") usage ;;

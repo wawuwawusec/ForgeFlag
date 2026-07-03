@@ -130,6 +130,25 @@ def build_fixtures() -> dict[str, Path]:
         encoding="utf-8",
     )
 
+    rsa_modular_low_exponent = WORKDIR / "rsa-modular-low-exponent.py"
+    modular_message = int.from_bytes(b"flag{hard_rsa_modular_low}", "big")
+    modular_e = 7
+    modular_n = 2**521 - 1
+    modular_k = 13
+    modular_c = modular_message**modular_e - modular_n * modular_k
+    rsa_modular_low_exponent.write_text(
+        "from gmpy2 import iroot\n"
+        "from Crypto.Util.number import long_to_bytes\n"
+        f"n = {modular_n}\n"
+        f"c = {modular_c}\n"
+        "for i in range(10000):\n"
+        "    root, exact = iroot(c+n*i, 7)\n"
+        "    if exact:\n"
+        "        print(i)\n"
+        "        print(long_to_bytes(root))\n",
+        encoding="utf-8",
+    )
+
     rsa_prime_modulus = WORKDIR / "rsa-prime-modulus.txt"
     prime_n = 2**521 - 1
     prime_e = 65537
@@ -281,6 +300,7 @@ def build_fixtures() -> dict[str, Path]:
         "crypto_gcm": crypto_gcm,
         "poly1305": poly1305,
         "rsa_low_exponent": rsa_low_exponent,
+        "rsa_modular_low_exponent": rsa_modular_low_exponent,
         "rsa_prime_modulus": rsa_prime_modulus,
         "rsa_fermat": rsa_fermat,
         "rsa_common_modulus": rsa_common_modulus,
@@ -380,6 +400,19 @@ def hard_cases(fixtures: dict[str, Path]) -> list[dict[str, object]]:
             "required_evidence": ["low_exponent_root", "flag{hard_rsa_low_exponent}", "integer_nth_root"],
             "source_url": "https://cryptohack.org/challenges/rsa/",
             "improvement_hint": "CryptoSolver should recover exact low-exponent plaintext roots and the Write-up should emit a direct replay script.",
+        },
+        {
+            "challenge_id": "hard-crypto-rsa-modular-low-exponent",
+            "category": "crypto",
+            "difficulty": "hard",
+            "title": "RSA modular low exponent source loop",
+            "description": "picoCTF/CryptoHack-style source-backed RSA: the solver source loops over iroot(c+n*i,e), so exact-root search modulo n recovers plaintext.",
+            "attachments": [fixtures["rsa_modular_low_exponent"]],
+            "active_probe": False,
+            "expected_flag": "flag{hard_rsa_modular_low}",
+            "required_evidence": ["modular_low_exponent_root", "root_multiplier", "flag{hard_rsa_modular_low}", "c + k*n"],
+            "source_url": "https://cryptohack.org/challenges/rsa/",
+            "improvement_hint": "CryptoSolver should infer e from iroot source loops, search the bounded c+k*n root window, and explain k in the Write-up.",
         },
         {
             "challenge_id": "hard-crypto-rsa-prime-modulus",

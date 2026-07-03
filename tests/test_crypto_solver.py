@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,7 +28,92 @@ class CryptoSolverTest(unittest.TestCase):
         self.assertEqual(summary["status"], "flag_found")
         self.assertEqual(summary["accepted_flags"], ["flag{cyberchef}"])
         self.assertEqual(finding.finding, "Decoded crypto transform candidates")
+        self.assertEqual(finding.evidence["ctf_scope"]["category"], "crypto")
+        self.assertEqual(finding.evidence["ctf_scope"]["research_context"], "local_or_authorized_ctf_lab")
         self.assertIn("hex_decode", finding.evidence["transform_candidates"][0]["recipe"])
+
+    def test_crypto_solver_prioritizes_base32_transform_over_classical_shift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "crypto-base32.txt"
+            attachment.write_text("MZWGCZ33MNXXE4DVONPWG4TZOB2G67I\n", encoding="utf-8")
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-base32",
+                    category=ChallengeCategory.CRYPTO,
+                    title="Corpus Crypto Base32",
+                    description="Base32/encoding warmup pattern.",
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-base32")
+            finding = next(f for f in notebook.findings_for("crypto-base32") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{corpus_crypto}"])
+        self.assertEqual(finding.finding, "Decoded crypto transform candidates")
+        self.assertIn("base32_decode", finding.evidence["transform_candidates"][0]["recipe"])
+
+    def test_crypto_solver_recovers_trithemius_wrapped_htb_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "output.txt"
+            attachment.write_text(
+                "Make sure you wrap the decrypted text with the HTB flag format :-]\n"
+                "DJF_CTA_SWYH_NPDKK_MBZ_QPHTIGPMZY_KRZSQE?!_ZL_CN_PGLIMCU_YU_KJODME_RYGZXL\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-trithemius",
+                    category=ChallengeCategory.CRYPTO,
+                    title="HTB Cyber Apocalypse 2024 - Dynastic",
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-trithemius")
+            finding = next(f for f in notebook.findings_for("crypto-trithemius") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(
+            summary["accepted_flags"],
+            ["HTB{DID_YOU_KNOW_ABOUT_THE_TRITHEMIUS_CIPHER?!_IT_IS_SIMILAR_TO_CAESAR_CIPHER}"],
+        )
+        self.assertEqual(finding.finding, "Recovered classical crypto flag candidates")
+        self.assertIn("trithemius_shift", finding.evidence)
+
+    def test_crypto_solver_recovers_shufflebox_permutation_plaintext(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "output_censored.txt"
+            output.write_text(
+                "aaaabbbbccccdddd -> ccaccdabdbdbbada\n"
+                "abcdabcdabcdabcd -> bcaadbdcdbcdacab\n"
+                "???????????????? -> owuwspdgrtejiiud\n",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-shufflebox",
+                    category=ChallengeCategory.CRYPTO,
+                    title="DUCTF 2024 - shufflebox",
+                    description="Find the text censored with question marks in output_censored.txt and surround it with DUCTF{}.",
+                    attachment_paths=(str(output),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-shufflebox")
+            finding = next(f for f in notebook.findings_for("crypto-shufflebox") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["DUCTF{udiditgjwowsuper}"])
+        self.assertEqual(finding.finding, "Recovered classical crypto flag candidates")
+        self.assertIn("shufflebox", finding.evidence)
 
     def test_crypto_solver_records_rsa_parameter_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -259,6 +345,187 @@ print(enc)
         self.assertEqual(finding.finding, "Recovered Python random XOR flag candidates")
         self.assertEqual(finding.evidence["python_random_xor"]["seed"], 3277)
 
+    def test_crypto_solver_recovers_python_random_prime_offset_from_xored_seed(self) -> None:
+        script = r"""
+from Crypto.Util.number import *
+from gmpy2 import *
+import random
+
+seed = b'xxxx'
+flag = b'*****'
+key = b'fake_seed'
+# c = a^b a = b^c
+l = [
+for i in range(len(key)):
+    l.append(key[i]^seed[i])
+gift = bytes(l)
+print(gift)
+# b'\x12\x13\x1e\x00\x00\x1f\n\x13\x01'
+
+random.seed(bytes_to_long(seed))
+t = next_prime(random.randint(2**20,2**21))
+r = next_prime(random.randint(1000,10000))
+
+print(bytes_to_long(flag)+t-r)
+# 567785900217270586430439246129051365510368280197
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "easy_random.py"
+            attachment.write_text(script, encoding="utf-8")
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-random-prime-offset",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-random-prime-offset")
+            finding = next(f for f in notebook.findings_for("crypto-random-prime-offset") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["ctf{true_0r_false??}"])
+        self.assertEqual(finding.finding, "Recovered Python random prime-offset flag candidates")
+        self.assertEqual(finding.evidence["python_random_prime_offset"]["seed_text"], "true_love")
+        self.assertEqual(finding.evidence["python_random_prime_offset"]["t"], 1713221)
+        self.assertEqual(finding.evidence["python_random_prime_offset"]["r"], 9533)
+
+    def test_crypto_solver_recovers_lfsr_bm_flag_before_transform_templates(self) -> None:
+        script = r"""
+import hashlib
+from secret import KEY,FLAG,MASK
+assert(FLAG=="de1ctf{"+hashlib.sha256(hex(KEY)[2:].rstrip('L')).hexdigest()+"}")
+assert(FLAG[7:11]=='1224')
+LENGTH = 256
+assert(KEY.bit_length()==LENGTH)
+assert(MASK.bit_length()==LENGTH)
+class lfsr():
+    def next(self):
+        nextdata = (self.init << 1) & self.lengthmask
+        i = self.init & self.mask & self.lengthmask
+        output = 0
+        while i != 0:
+            output ^= (i & 1)
+            i = i >> 1
+        nextdata ^= output
+        self.init = nextdata
+        return output
+# key = '001010010111101000001101101111010000001111011001101111011000100001100011111000010001100101110110011000001100111010111110000000111011000110111110001110111000010100110010011111100011010111101101101001110000010111011110010110010011101101010010100101011111011001111010000000001011000011000100000101111010001100000011010011010111001010010101101000110011001110111010000011010101111011110100011110011010000001100100101000010110100100100011001000101010001100000010000100111001110110101000000101011100000001100010'
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "BM.py"
+            attachment.write_text(script, encoding="utf-8")
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-lfsr-bm",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-lfsr-bm")
+            finding = next(f for f in notebook.findings_for("crypto-lfsr-bm") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(
+            summary["accepted_flags"],
+            ["de1ctf{1224473d5e349dbf2946353444d727d8fa91da3275ed3ac0dedeb7e6a9ad8619}"],
+        )
+        self.assertEqual(finding.finding, "Recovered LFSR Berlekamp-Massey flag candidates")
+        self.assertEqual(finding.evidence["lfsr_bm"]["method"], "lfsr_berlekamp_massey")
+
+    def test_crypto_solver_recovers_prng_stream_lcg_lift_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "lcg4.py"
+            attachment.write_text(
+                """
+from Crypto.Util.number import *
+flag = b'flag{1111122222333344440000}'
+seed = bytes_to_long(flag)
+length = seed.bit_length()
+a = getPrime(length)
+b = getPrime(length)
+n = getPrime(length)
+assert seed < n
+for i in range(10):
+    seed = (a*seed+b)%n
+for i in range(3):
+    seed = (a * seed + b) % n
+    print(seed)
+'''
+1931431799049777676669577354064129950051581433022223703848456038114
+1747549989944521471205309829691725031663707005936040583622213014238
+1805530798038026397584823848781741965222297750650259934550864515641
+n =  7538579824168138312234334836011836666836054247296632942094455781627
+'''
+""",
+                encoding="utf-8",
+            )
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-prng-lcg-lift",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-prng-lcg-lift")
+            finding = next(f for f in notebook.findings_for("crypto-prng-lcg-lift") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{1111122222333344440000}"])
+        self.assertEqual(finding.finding, "Recovered PRNG/stream cipher flag candidates")
+        self.assertEqual(finding.evidence["prng_stream"]["method"], "lcg_consecutive_outputs")
+
+    def test_crypto_solver_recovers_linear_xorshift_script_flag(self) -> None:
+        plaintext = b"flag{linear_xorshift_inverse}"
+        random.seed(0)
+        ciphertext_int = int(plaintext.hex(), 16)
+        for _ in range(100):
+            ciphertext_int ^= ciphertext_int >> random.randint(1, 32)
+        ciphertext = bytes.fromhex(hex(ciphertext_int)[2:])
+        script = f"""
+import random
+flag = input().encode()
+assert len(flag)=={len(plaintext)}
+
+def enc(pt):
+    random.seed(0)
+    ct = int(pt.hex(),16)
+    for _ in range(100):
+        ct ^= ct>>random.randint(1,32)
+    return bytes.fromhex(hex(ct)[2:])
+
+assert enc(flag)=={ciphertext!r}
+print(f"{{flag = }}")
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "chal.py"
+            attachment.write_text(script, encoding="utf-8")
+            notebook = SQLiteNotebook(root / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-linear-xorshift",
+                    category=ChallengeCategory.CRYPTO,
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-linear-xorshift")
+            finding = next(f for f in notebook.findings_for("crypto-linear-xorshift") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{linear_xorshift_inverse}"])
+        self.assertEqual(finding.finding, "Recovered linear xorshift flag candidates")
+        self.assertEqual(finding.evidence["linear_xorshift"]["rounds"], 100)
+
     def test_crypto_solver_recovers_common_xor_and_vigenere_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -297,6 +564,31 @@ print(enc)
         self.assertIn("single_byte_xor", finding.evidence)
         self.assertIn("repeating_key_xor", finding.evidence)
         self.assertIn("vigenere", finding.evidence)
+
+    def test_crypto_solver_recovers_self_sync_low_nibble_xor_real_challenge(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        challenge_root = root / ".forgeflag" / "heldout-cache" / "ductf2024" / "crypto" / "three-line-crypto" / "publish"
+        if not challenge_root.exists():
+            self.skipTest("DUCTF three-line-crypto held-out artifact cache is not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            notebook = SQLiteNotebook(Path(tmp) / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="crypto-three-line-real",
+                    category=ChallengeCategory.CRYPTO,
+                    title="three line crypto",
+                    description="Platform: DownUnderCTF 2024\nNOTE: passage.txt is English text.",
+                    attachment_paths=(str(challenge_root / "encrypt.py"), str(challenge_root / "passage.enc.txt")),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("crypto-three-line-real")
+            finding = next(f for f in notebook.findings_for("crypto-three-line-real") if f.solver == "CryptoSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["DUCTF{when_in_doubt_xort_it_out}"])
+        self.assertEqual(finding.finding, "Recovered self-synchronizing XOR flag candidates")
+        self.assertEqual(finding.evidence["self_sync_xor"]["method"], "previous_plaintext_low_nibble_key_slot")
 
     def test_crypto_solver_records_hash_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

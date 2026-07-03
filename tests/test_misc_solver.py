@@ -18,6 +18,42 @@ from tests.png_fixtures import (
 )
 
 
+DOUBLEHELIX_FORMAT = (
+    (1, 0),
+    (0, 2),
+    (0, 3),
+    (0, 4),
+    (1, 4),
+    (2, 4),
+    (3, 3),
+    (4, 2),
+    (5, 0),
+    (5, 0),
+    (4, 2),
+    (3, 3),
+    (2, 4),
+    (1, 4),
+    (0, 4),
+    (0, 3),
+    (0, 2),
+    (1, 0),
+)
+
+
+def _doublehelix_script(payload: str, decayed_line_indexes: tuple[int, ...] = (8, 13)) -> str:
+    bit_to_pair = {"00": "AT", "01": "CG", "10": "GC", "11": "TA"}
+    bits = "".join(str((byte >> bit) & 1) for byte in payload.encode("utf-8") for bit in range(8))
+    lines: list[str] = ['require "doublehelix"', ""]
+    for index, pair_bits in enumerate(bits[position : position + 2] for position in range(0, len(bits), 2)):
+        pair = bit_to_pair[pair_bits.ljust(2, "0")]
+        offset, distance = DOUBLEHELIX_FORMAT[index % len(DOUBLEHELIX_FORMAT)]
+        line = (" " * offset) + pair[0] + ("-" * distance) + pair[1]
+        if index in decayed_line_indexes:
+            line = " " * len(line)
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
 class MiscSolverTest(unittest.TestCase):
     def test_misc_solver_runs_png_ihdr_analysis_for_image_puzzle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -38,6 +74,8 @@ class MiscSolverTest(unittest.TestCase):
 
             self.assertEqual(summary["status"], "completed")
             self.assertEqual(finding.finding, "Analyzed misc image artifact")
+            self.assertEqual(finding.evidence["ctf_scope"]["category"], "misc")
+            self.assertEqual(finding.evidence["ctf_scope"]["research_context"], "local_or_authorized_ctf_lab")
             self.assertEqual(finding.evidence["png_ihdr"]["declared_height"], 9)
             self.assertEqual(finding.evidence["png_ihdr"]["derived_height"], 3)
             self.assertTrue(Path(finding.evidence["png_ihdr"]["repaired_path"]).is_file())
@@ -339,6 +377,177 @@ class MiscSolverTest(unittest.TestCase):
         self.assertEqual(summary["accepted_flags"], ["flag{corpus_misc}"])
         recipes = {tuple(candidate["recipe"]) for candidate in finding.evidence["transform_candidates"]}
         self.assertIn(("binary_ascii_decode",), recipes)
+
+    def test_misc_solver_accepts_ccir476_wrapped_flag_from_text_attachment(self) -> None:
+        encoded = (
+            "10110100110110110100111010011011010111010011010010110110101011010111001011010010111010011100110110010110110110"
+            "10001111000111100110110101010110010111011010100101110111001000111101010101101101010110101110010110101101001011"
+            "01101010110101101011001011010011101110001101100101110101101010110011011100001101101101101010101101101000111010"
+            "11011001011101011010110010110011011110100010101110111000110110110100101011100101110111000101011100101110001101"
+            "1"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "encoding"
+            attachment.write_text(encoded, encoding="utf-8")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-ccir476",
+                    category=ChallengeCategory.MISC,
+                    title="DUCTF intercepted transmission",
+                    description="Decode the binary-looking transmission and wrap the decoded message in DUCTF{}.",
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-ccir476")
+            finding = next(f for f in notebook.findings_for("misc-ccir476") if f.solver == "MiscSolver")
+
+        expected = "DUCTF{##TH3 QU0KK4'S AR3 H3LD 1N F4C1LITY #11911!}"
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertIn(expected, summary["accepted_flags"])
+        self.assertIn(expected, finding.evidence["flag_candidates"])
+
+    def test_misc_solver_recovers_decayed_doublehelix_ruby_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "dna.rb"
+            attachment.write_text(_doublehelix_script('puts"flag{doublehelix_decay}"'), encoding="utf-8")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-decayed-doublehelix",
+                    category=ChallengeCategory.MISC,
+                    title="DNADecay",
+                    description="A damaged doublehelix Ruby source should still decode to the challenge flag.",
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-decayed-doublehelix")
+            finding = next(f for f in notebook.findings_for("misc-decayed-doublehelix") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["flag{doublehelix_decay}"])
+        self.assertEqual(finding.finding, "Recovered decayed DoubleHelix Ruby source")
+        self.assertEqual(finding.evidence["doublehelix_decay"]["ambiguous_positions"], [8, 13])
+        self.assertIn("flag{doublehelix_decay}", finding.evidence["flag_candidates"])
+
+    def test_misc_solver_recovers_chef_recipe_with_two_unknown_ingredients(self) -> None:
+        recipe = """Chicken Parmi.
+
+Ingredients.
+?? dashes pain
+?? cups effort
+1 cup water
+55 g alpha
+32 g beta
+31 g gamma
+34 g delta
+29 g epsilon
+53 g zeta
+20 g eta
+14 g theta
+3 g iota
+15 g kappa
+2 g lambda
+
+Method.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Add alpha to 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Add beta to 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Add gamma to 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Add delta to 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Add epsilon to 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Add zeta to 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Remove eta from 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Add theta to 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Remove iota from 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Add kappa to 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Put water into 1st mixing bowl.
+Add water to 1st mixing bowl.
+Add water to 1st mixing bowl.
+Combine pain into 1st mixing bowl.
+Remove lambda from 1st mixing bowl.
+Add effort to 1st mixing bowl.
+Liquefy contents of the mixing bowl.
+Pour contents of the mixing bowl into the 1st baking dish.
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attachment = root / "recipe.txt"
+            attachment.write_text(recipe, encoding="utf-8")
+            notebook = SQLiteNotebook(root / ".forgeflag" / "notebook.sqlite")
+            notebook.add_challenge(
+                Challenge(
+                    challenge_id="misc-chef-recipe",
+                    category=ChallengeCategory.MISC,
+                    title="Chicken Parmi",
+                    description="This recipe produces the flag in flag format.",
+                    attachment_paths=(str(attachment),),
+                )
+            )
+
+            summary = Manager(notebook, RunConfig()).run_challenge("misc-chef-recipe")
+            finding = next(f for f in notebook.findings_for("misc-chef-recipe") if f.solver == "MiscSolver")
+
+        self.assertEqual(summary["status"], "flag_found")
+        self.assertEqual(summary["accepted_flags"], ["DUCTF{chef}"])
+        self.assertEqual(finding.finding, "Solved Chef-style misc recipe")
+        self.assertEqual(finding.evidence["recipe_name"], "Chicken Parmi")
+        self.assertIn("Chicken Parmi", finding.evidence["recipe_preamble"])
+        self.assertEqual(finding.evidence["unknown_values"], {"pain": 20, "effort": 10})
 
     def test_misc_solver_records_archive_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

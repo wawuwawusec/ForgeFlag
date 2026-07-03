@@ -28,6 +28,7 @@ def main() -> int:
     try:
         rows = []
         for case in corpus_cases(fixtures):
+            delete_challenge(args.url, str(case["challenge_id"]))
             create_challenge(args.url, case)
             summary = run_challenge(args.url, case)
             report = get_json(args.url, f"/api/challenges/{case['challenge_id']}/report")
@@ -215,6 +216,15 @@ def create_challenge(base_url: str, case: dict[str, object]) -> None:
         ],
     }
     post_json(base_url, "/api/challenges", payload)
+
+
+def delete_challenge(base_url: str, challenge_id: str) -> None:
+    request = urllib.request.Request(f"{base_url.rstrip('/')}/api/challenges/{challenge_id}", method="DELETE")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            response.read()
+    except Exception:
+        return
 
 
 def run_challenge(base_url: str, case: dict[str, object]) -> dict[str, object]:
