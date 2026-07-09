@@ -27,6 +27,7 @@ Commands:
   stop                Stop background Web UI and MCP server if they are running
   restart [--mcp]     Stop, then start
   status              Show notebook, CLI, tool, and MCP status
+  doctor              Print JSON deployment, toolchain, benchmark, and LLM diagnostics
   smoke               Run the local offline smoke test
   gate [--llm]        Start Web UI and run the full capability release gate
   docker-build        Build the ForgeFlag CTF tool image and enable Docker tool fallback
@@ -67,7 +68,7 @@ ensure_venv() {
   fi
   local stamp="$ROOT_DIR/.venv/.forgeflag-installed"
   if [[ ! -f "$stamp" || "$ROOT_DIR/pyproject.toml" -nt "$stamp" || "$ROOT_DIR/src/forgeflag" -nt "$stamp" ]]; then
-    "$VENV_PYTHON" -m pip install -e "$ROOT_DIR" >/dev/null
+    PIP_DISABLE_PIP_VERSION_CHECK=1 "$VENV_PYTHON" -m pip install -e "$ROOT_DIR" >/dev/null
     touch "$stamp"
   fi
 }
@@ -314,6 +315,13 @@ docker_smoke() {
   "$ROOT_DIR/scripts/forgeflag-tool-smoke" --include-active-network
 }
 
+doctor() {
+  ensure_state_dir
+  load_env
+  ensure_venv
+  run_forgeflag --db "$DB_PATH" doctor
+}
+
 require_llm_runtime() {
   local provider
   provider="$(printf '%s' "${FORGEFLAG_LLM_PROVIDER:-disabled}" | tr '[:upper:]' '[:lower:]')"
@@ -414,6 +422,7 @@ case "$command" in
   stop) ensure_state_dir; stop_web; stop_mcp ;;
   restart) ensure_state_dir; stop_web; stop_mcp; start "$@" ;;
   status) load_env; status ;;
+  doctor) doctor ;;
   smoke) ensure_venv; make -C "$ROOT_DIR" smoke ;;
   gate) gate "$@" ;;
   docker-build) load_env; docker_build ;;

@@ -122,6 +122,7 @@ The control script is the recommended way to operate the local workbench:
 ```bash
 scripts/forgeflag-control start
 scripts/forgeflag-control status
+scripts/forgeflag-control doctor
 scripts/forgeflag-control smoke
 scripts/forgeflag-control gate
 scripts/forgeflag-control stop
@@ -135,6 +136,13 @@ scripts/forgeflag-control stop
 4. Installs `pip install -e .` when the source or package metadata changed.
 5. Initializes the SQLite notebook.
 6. Starts the Web UI at `http://127.0.0.1:8080/`.
+
+`doctor` prints JSON readiness diagnostics without requiring the Web UI. It reuses the same health engine as `/api/system-health` and includes notebook state, required Python import availability, wrapper availability, heavyweight Docker profile status, saved capability benchmark status, LLM runtime configuration state, next actions, and a redacted diagnostic bundle:
+
+```bash
+scripts/forgeflag-control doctor
+forgeflag --db .forgeflag/notebook.sqlite doctor
+```
 
 Use a different local port when 8080 is busy:
 
@@ -296,10 +304,12 @@ scripts/forgeflag-control gate
 Toolchain checks:
 
 ```bash
+scripts/forgeflag-control doctor
 scripts/forgeflag-tool-smoke
 scripts/forgeflag-control docker-smoke
 .venv/bin/forgeflag tools
 curl -s http://127.0.0.1:8080/api/tools
+curl -s http://127.0.0.1:8080/api/system-health
 ```
 
 Capability checks:

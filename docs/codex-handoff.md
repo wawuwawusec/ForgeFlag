@@ -202,9 +202,10 @@ Implemented so far:
   - Summarizes public CTF writeup-derived first moves and current ForgeFlag coverage by category
   - Includes community source notes and method cards for Web, Crypto, Forensics/Stego, Traffic, Reverse, Pwn, and Misc
 - One-command lifecycle script:
-  - `scripts/forgeflag-control start/status/smoke/gate/stop/docker-build/docker-smoke`
+  - `scripts/forgeflag-control start/status/doctor/smoke/gate/stop/docker-build/docker-smoke`
   - Web UI start uses `.venv/bin/python -m forgeflag.cli` and stores the managed Python process PID in `.forgeflag/web.pid`
   - status cleans invalid/stale PID files and reports managed Web/MCP state
+  - doctor prints the same shared Python dependency, toolchain, benchmark, LLM readiness checks and redacted diagnostic bundle as `/api/system-health`, without requiring the Web UI to be running
   - gate starts Web UI and refreshes the full capability release gate with default suites, browser-smoke, and held-out manifest replay
   - `gate --llm` requires provider/model/key configuration before running, so LLM-assisted scorecards do not silently fall back to deterministic-only evidence
   - `/api/system-health` and the Workbench Health tab distinguish `core_readiness` from `commercial_readiness`; optional heavyweight Docker profiles or missing command-line LLM config can leave commercial readiness `limited` while core CTF solving remains `ready`
@@ -269,6 +270,7 @@ scripts/forgeflag-tool-smoke --include-active-network
 make smoke
 scripts/forgeflag-control start
 scripts/forgeflag-control status
+scripts/forgeflag-control doctor
 scripts/forgeflag-control smoke
 scripts/forgeflag-control gate
 scripts/forgeflag-control docker-build

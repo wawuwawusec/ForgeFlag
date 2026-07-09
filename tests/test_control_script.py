@@ -177,6 +177,33 @@ class ControlScriptTest(unittest.TestCase):
             args = (root / "gate.args").read_text(encoding="utf-8").splitlines()
             self.assertEqual(args[-1], "--llm")
 
+    def test_doctor_runs_cli_health_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_control_script(Path(tmp))
+            venv_bin = root / ".venv" / "bin"
+            venv_bin.mkdir(parents=True)
+            (root / ".venv" / ".forgeflag-installed").write_text("ok\n", encoding="utf-8")
+            fake_python = venv_bin / "python"
+            fake_python.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$@\" > \"$PWD/doctor.args\"\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+
+            completed = subprocess.run(
+                [str(root / "scripts" / "forgeflag-control"), "doctor"],
+                cwd=root,
+                env={**os.environ, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            args = (root / "doctor.args").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(args, ["-m", "forgeflag.cli", "--db", str(root / ".forgeflag" / "notebook.sqlite"), "doctor"])
+
 
 def _copy_control_script(tmp_root: Path) -> Path:
     scripts = tmp_root / "scripts"

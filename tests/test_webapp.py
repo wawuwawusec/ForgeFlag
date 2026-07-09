@@ -711,10 +711,10 @@ class WebAppApiTest(unittest.TestCase):
             profiles = [{"name": "forgeflag-sagemath", "available": True}]
 
             with (
-                patch("forgeflag.webapp.ToolRunner.inventory", return_value=wrappers),
-                patch("forgeflag.webapp._docker_profile_inventory", return_value=profiles),
+                patch("forgeflag.health.ToolRunner.inventory", return_value=wrappers),
+                patch("forgeflag.health.docker_profile_inventory", return_value=profiles),
                 patch(
-                    "forgeflag.webapp.LLMConfig.from_env",
+                    "forgeflag.health.LLMConfig.from_env",
                     return_value=LLMConfig(provider="openai", model="gpt-4.1", api_key="sk-test"),
                 ),
             ):
@@ -724,7 +724,10 @@ class WebAppApiTest(unittest.TestCase):
         self.assertEqual(payload["commercial_readiness"]["status"], "ready")
         self.assertEqual(payload["counts"]["errors"], 0)
         self.assertEqual(payload["counts"]["warnings"], 0)
-        self.assertEqual({check["id"] for check in payload["checks"]}, {"notebook", "tools", "docker_profiles", "benchmark", "llm"})
+        self.assertEqual(
+            {check["id"] for check in payload["checks"]},
+            {"notebook", "python_dependencies", "tools", "docker_profiles", "benchmark", "llm"},
+        )
         self.assertIn("commercial-ready", payload["summary"])
         self.assertIn("diagnostic_bundle", payload)
         self.assertEqual(payload["diagnostic_bundle"]["bundle_version"], 1)
@@ -746,9 +749,9 @@ class WebAppApiTest(unittest.TestCase):
             profiles = [{"name": "forgeflag-ghidra-headless", "available": False}]
 
             with (
-                patch("forgeflag.webapp.ToolRunner.inventory", return_value=wrappers),
-                patch("forgeflag.webapp._docker_profile_inventory", return_value=profiles),
-                patch("forgeflag.webapp.LLMConfig.from_env", return_value=LLMConfig(provider="disabled")),
+                patch("forgeflag.health.ToolRunner.inventory", return_value=wrappers),
+                patch("forgeflag.health.docker_profile_inventory", return_value=profiles),
+                patch("forgeflag.health.LLMConfig.from_env", return_value=LLMConfig(provider="disabled")),
             ):
                 payload = handler_cls.handle_system_health()
 
@@ -792,9 +795,9 @@ class WebAppApiTest(unittest.TestCase):
             profiles = [{"name": "forgeflag-sagemath", "available": False}]
 
             with (
-                patch("forgeflag.webapp.ToolRunner.inventory", return_value=wrappers),
-                patch("forgeflag.webapp._docker_profile_inventory", return_value=profiles),
-                patch("forgeflag.webapp.LLMConfig.from_env", return_value=LLMConfig(provider="disabled")),
+                patch("forgeflag.health.ToolRunner.inventory", return_value=wrappers),
+                patch("forgeflag.health.docker_profile_inventory", return_value=profiles),
+                patch("forgeflag.health.LLMConfig.from_env", return_value=LLMConfig(provider="disabled")),
             ):
                 payload = handler_cls.handle_system_health()
 

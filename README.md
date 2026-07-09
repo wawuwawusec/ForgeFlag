@@ -55,12 +55,13 @@ Use the local control script for one-command setup and lifecycle checks:
 ```bash
 scripts/forgeflag-control start
 scripts/forgeflag-control status
+scripts/forgeflag-control doctor
 scripts/forgeflag-control smoke
 scripts/forgeflag-control gate
 scripts/forgeflag-control stop
 ```
 
-`start` launches the Web UI at [http://127.0.0.1:8080/](http://127.0.0.1:8080/) by default and records a managed PID under `.forgeflag/web.pid`. `gate` runs the full practical readiness check: API suites, hard evidence scoring, browser-player smoke, and held-out manifest replay, then refreshes `.forgeflag/capability-benchmark-latest.json` for the Web UI Benchmark tab. `gate --llm` fails fast when the command-line LLM provider/key/model are missing, so an LLM-assisted scorecard cannot silently fall back to deterministic-only evidence. The Web UI includes a category workspace so Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra challenges can be filtered separately before running solvers. Start the optional MCP server only when you need it:
+`start` launches the Web UI at [http://127.0.0.1:8080/](http://127.0.0.1:8080/) by default and records a managed PID under `.forgeflag/web.pid`. `doctor` prints the same Python dependency, deployment, toolchain, benchmark, LLM, and diagnostic-bundle readiness data used by the Web UI Health tab. `gate` runs the full practical readiness check: API suites, hard evidence scoring, browser-player smoke, and held-out manifest replay, then refreshes `.forgeflag/capability-benchmark-latest.json` for the Web UI Benchmark tab. `gate --llm` fails fast when the command-line LLM provider/key/model are missing, so an LLM-assisted scorecard cannot silently fall back to deterministic-only evidence. The Web UI includes a category workspace so Web, Pwn, Reverse, Crypto, Forensics, Traffic, Misc, and Infra challenges can be filtered separately before running solvers. Start the optional MCP server only when you need it:
 
 For a complete workstation setup, dependency list, Docker/OrbStack toolchain, MCP/LLM configuration, release checks, and GitHub publish workflow, see [docs/dependencies-and-deployment.md](docs/dependencies-and-deployment.md).
 

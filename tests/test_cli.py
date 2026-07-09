@@ -236,6 +236,48 @@ class CliTest(unittest.TestCase):
         self.assertTrue(all(row["category"] == "crypto" for row in crypto_payload))
         self.assertIn("crypto-python-random-prime-offset", {row["id"] for row in crypto_payload})
 
+    def test_doctor_command_reports_health_without_leaking_api_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / ".forgeflag" / "notebook.sqlite"
+            db.parent.mkdir(parents=True)
+            latest = db.parent / "capability-benchmark-latest.json"
+            latest.write_text(
+                json.dumps(
+                    {
+                        "totals": {"cases": 1, "passed": 1, "failed": 0},
+                        "readiness": {
+                            "status": "ready",
+                            "summary": "Release gate is green.",
+                            "coverage": {"hard_evidence": True, "ui_flow": True, "heldout_manifest": True},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            wrappers = [{"name": "file", "available": True, "source": "host"}]
+            profiles = [{"name": "forgeflag-sagemath", "available": True}]
+
+            output = io.StringIO()
+            with (
+                redirect_stdout(output),
+                patch("forgeflag.health.ToolRunner.inventory", return_value=wrappers),
+                patch("forgeflag.health.docker_profile_inventory", return_value=profiles),
+                patch(
+                    "forgeflag.health.LLMConfig.from_env",
+                    return_value=LLMConfig(provider="openai", model="gpt-4.1", api_key="sk-secret"),
+                ),
+            ):
+                exit_code = main(["--db", str(db), "doctor"])
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["core_readiness"]["status"], "ready")
+        self.assertEqual(payload["diagnostic_bundle"]["llm"]["provider"], "openai")
+        self.assertNotIn("sk-secret", output.getvalue())
+        self.assertIn("notebook", {check["id"] for check in payload["checks"]})
+        self.assertIn("tools", {check["id"] for check in payload["checks"]})
+
     def test_agents_command_lists_subagent_roster(self) -> None:
         output = io.StringIO()
         with redirect_stdout(output):

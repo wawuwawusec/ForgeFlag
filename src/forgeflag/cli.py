@@ -8,6 +8,7 @@ from forgeflag.agent_roster import agent_roster_path_for_db, load_agent_roster, 
 from forgeflag.analysis_hints import recommended_analysis_hints
 from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
 from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
+from forgeflag.health import system_health
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.project_catalog import recommended_projects
@@ -56,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     artifacts.add_argument("challenge_id")
 
     subparsers.add_parser("tools", help="List configured CTF tool wrappers and local availability")
+    subparsers.add_parser("doctor", help="Run deployment and commercial-readiness diagnostics")
     agents = subparsers.add_parser("agents", help="List ForgeFlag subagent identities and responsibilities")
     agents.add_argument("--write-default", action="store_true", help="Write the default roster to .forgeflag/agent-roster.json")
     catalog = subparsers.add_parser("catalog", help="List recommended CTF projects and integration candidates")
@@ -185,6 +187,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "tools":
         print(json.dumps(ToolRunner(ScopePolicy()).inventory(), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "doctor":
+        print(json.dumps(system_health(Path(args.db)), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "agents":
