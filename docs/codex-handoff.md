@@ -271,6 +271,9 @@ make smoke
 scripts/forgeflag-control start
 scripts/forgeflag-control status
 scripts/forgeflag-control doctor
+scripts/forgeflag-control doctor --format json
+scripts/forgeflag-control doctor --strict
+scripts/forgeflag-control doctor --strict commercial
 scripts/forgeflag-control smoke
 scripts/forgeflag-control gate
 scripts/forgeflag-control docker-build

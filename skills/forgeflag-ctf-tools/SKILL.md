@@ -77,7 +77,10 @@ Run:
 
 ```bash
 make test
+scripts/forgeflag-control doctor --strict
 ```
+
+Use `scripts/forgeflag-control doctor --format json` for machine-readable diagnostics. Reserve `--strict commercial` for release environments that intentionally require optional Docker profiles and an enabled command-line LLM runtime; normal local challenge work should gate on core readiness.
 
 For MCP changes, also verify the server imports:
 

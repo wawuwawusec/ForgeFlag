@@ -71,9 +71,10 @@ Verify host wrapper readiness with:
 
 ```bash
 scripts/forgeflag-tool-smoke
+scripts/forgeflag-control doctor --strict
 ```
 
-The default smoke only runs local/offline wrapper checks. It reports missing tools separately from failing tools, and it treats the curated project catalog as recommended integration candidates rather than tools that must all be installed on the host.
+The default smoke only runs local/offline wrapper checks. It reports missing tools separately from failing tools, and it treats the curated project catalog as recommended integration candidates rather than tools that must all be installed on the host. The strict core doctor gate combines wrapper availability with Python imports, notebook state, and the latest capability benchmark; optional Docker-backed wrappers and heavyweight profiles remain commercial-readiness concerns.
 
 Optional bounded checks:
 

@@ -137,12 +137,22 @@ scripts/forgeflag-control stop
 5. Initializes the SQLite notebook.
 6. Starts the Web UI at `http://127.0.0.1:8080/`.
 
-`doctor` prints JSON readiness diagnostics without requiring the Web UI. It reuses the same health engine as `/api/system-health` and includes notebook state, required Python import availability, wrapper availability, heavyweight Docker profile status, saved capability benchmark status, LLM runtime configuration state, next actions, and a redacted diagnostic bundle. Tool checks distinguish core host wrappers from optional Docker-backed wrappers: missing `file`, `strings`, or `tshark` blocks core readiness, while missing optional helpers such as `ROPgadget`, `RsaCtfTool`, `hashcat`, `john`, `foremost`, or `yara` limits commercial readiness until Docker fallback is built.
+`doctor` reports readiness without requiring the Web UI. It reuses the same health engine as `/api/system-health` and includes notebook state, required Python import availability, wrapper availability, heavyweight Docker profile status, saved capability benchmark status, LLM runtime configuration state, next actions, and a redacted diagnostic bundle. Tool checks distinguish core host wrappers from optional Docker-backed wrappers: missing `file`, `strings`, or `tshark` blocks core readiness, while missing optional helpers such as `ROPgadget`, `RsaCtfTool`, `hashcat`, `john`, `foremost`, or `yara` limits commercial readiness until Docker fallback is built.
 
 ```bash
+# Human-readable local triage; this is the control-script default.
 scripts/forgeflag-control doctor
-forgeflag --db .forgeflag/notebook.sqlite doctor
+
+# Stable JSON for support bundles and automation.
+scripts/forgeflag-control doctor --format json
+forgeflag --db .forgeflag/notebook.sqlite doctor --format json
+
+# Exit 1 unless the selected readiness tier is fully ready.
+scripts/forgeflag-control doctor --strict
+scripts/forgeflag-control doctor --strict commercial
 ```
+
+`--strict` without a value checks `core_readiness`, which is the right preflight for normal local CTF solving. `--strict commercial` also requires optional Docker profiles and the command-line LLM runtime to be green. Both formats preserve the same readiness decisions; only their presentation differs.
 
 Use a different local port when 8080 is busy:
 

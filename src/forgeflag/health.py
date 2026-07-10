@@ -49,6 +49,43 @@ PYTHON_DEPENDENCIES = (
 CORE_TOOL_WRAPPERS = frozenset({"file", "strings", "tshark"})
 
 
+def format_system_health(payload: dict[str, Any]) -> str:
+    """Render a stable, terminal-friendly health summary without ANSI styling."""
+    core = payload.get("core_readiness") if isinstance(payload.get("core_readiness"), dict) else {}
+    commercial = (
+        payload.get("commercial_readiness")
+        if isinstance(payload.get("commercial_readiness"), dict)
+        else {}
+    )
+    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+    lines = [
+        "ForgeFlag doctor",
+        f"Core solving readiness: {str(core.get('status') or 'unknown').upper()}",
+        f"Commercial readiness: {str(commercial.get('status') or payload.get('status') or 'unknown').upper()}",
+        (
+            "Checks: "
+            f"{counts.get('ok', 0)} ok, "
+            f"{counts.get('warnings', 0)} warning, "
+            f"{counts.get('errors', 0)} error"
+        ),
+        "",
+    ]
+    status_labels = {"ok": "OK", "warning": "WARN", "error": "BLOCK"}
+    for check in payload.get("checks", []):
+        if not isinstance(check, dict):
+            continue
+        status = str(check.get("status") or "unknown")
+        label = str(check.get("label") or check.get("id") or "Unknown check")
+        summary = str(check.get("summary") or "No summary")
+        lines.append(f"[{status_labels.get(status, status.upper())}] {label}: {summary}")
+
+    actions = [str(action) for action in payload.get("next_actions", []) if str(action).strip()]
+    if actions:
+        lines.extend(["", "Next actions:"])
+        lines.extend(f"{index}. {action}" for index, action in enumerate(actions, start=1))
+    return "\n".join(lines)
+
+
 def docker_profile_inventory() -> list[dict[str, Any]]:
     docker = shutil.which("docker")
     rows: list[dict[str, Any]] = []

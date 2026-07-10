@@ -27,7 +27,7 @@ Commands:
   stop                Stop background Web UI and MCP server if they are running
   restart [--mcp]     Stop, then start
   status              Show notebook, CLI, tool, and MCP status
-  doctor              Print JSON deployment, toolchain, benchmark, and LLM diagnostics
+  doctor [options]    Print readiness diagnostics; defaults to human-readable text
   smoke               Run the local offline smoke test
   gate [--llm]        Start Web UI and run the full capability release gate
   docker-build        Build the ForgeFlag CTF tool image and enable Docker tool fallback
@@ -319,7 +319,18 @@ doctor() {
   ensure_state_dir
   load_env
   ensure_venv
-  run_forgeflag --db "$DB_PATH" doctor
+  local has_format="false"
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--format" || "$arg" == --format=* ]]; then
+      has_format="true"
+      break
+    fi
+  done
+  if [[ "$has_format" == "false" ]]; then
+    set -- --format text "$@"
+  fi
+  run_forgeflag --db "$DB_PATH" doctor "$@"
 }
 
 require_llm_runtime() {
@@ -422,7 +433,7 @@ case "$command" in
   stop) ensure_state_dir; stop_web; stop_mcp ;;
   restart) ensure_state_dir; stop_web; stop_mcp; start "$@" ;;
   status) load_env; status ;;
-  doctor) doctor ;;
+  doctor) doctor "$@" ;;
   smoke) ensure_venv; make -C "$ROOT_DIR" smoke ;;
   gate) gate "$@" ;;
   docker-build) load_env; docker_build ;;

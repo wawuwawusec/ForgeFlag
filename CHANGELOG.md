@@ -39,6 +39,7 @@
 - Added `docs/dependencies-and-deployment.md` with the complete dependency matrix, local deployment steps, Docker/OrbStack toolchain setup, MCP/LLM configuration, release checks, troubleshooting, and GitHub publish workflow.
 - Added a shared health diagnostics module plus `forgeflag doctor` and `scripts/forgeflag-control doctor`, so CLI, Web UI Health, and deployment checks report the same Python dependency readiness, toolchain readiness, and redacted diagnostic bundle.
 - Refined doctor tool readiness so missing optional Docker-backed wrappers limit commercial readiness without incorrectly blocking core CTF-solving readiness when core host wrappers are present.
+- Added human-readable `doctor` output plus `--strict core` and `--strict commercial` exit-code gates, so local operators can scan readiness quickly while CI and release jobs enforce the intended readiness tier.
 - Added a local Web UI with challenge creation, attachment upload, category filtering, per-run LLM settings, browser-local config saving, LLM connection testing, run, auto-loaded findings, observations, report, and tools views.
 - Added optional read-only IDA MCP configuration and adapter hooks for `ReverseSolver` and `PwnSolver`.
 - Added a curated CTF project catalog available from `forgeflag catalog`, `/api/project-catalog`, and the Web UI Catalog tab.

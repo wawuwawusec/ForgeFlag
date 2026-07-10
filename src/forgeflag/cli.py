@@ -8,7 +8,7 @@ from forgeflag.agent_roster import agent_roster_path_for_db, load_agent_roster, 
 from forgeflag.analysis_hints import recommended_analysis_hints
 from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
 from forgeflag.domain import Challenge, ChallengeCategory, LLMConfig, RunConfig
-from forgeflag.health import system_health
+from forgeflag.health import format_system_health, system_health
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.project_catalog import recommended_projects
@@ -57,7 +57,15 @@ def build_parser() -> argparse.ArgumentParser:
     artifacts.add_argument("challenge_id")
 
     subparsers.add_parser("tools", help="List configured CTF tool wrappers and local availability")
-    subparsers.add_parser("doctor", help="Run deployment and commercial-readiness diagnostics")
+    doctor = subparsers.add_parser("doctor", help="Run deployment and readiness diagnostics")
+    doctor.add_argument("--format", choices=["json", "text"], default="json", help="Diagnostic output format")
+    doctor.add_argument(
+        "--strict",
+        nargs="?",
+        const="core",
+        choices=["core", "commercial"],
+        help="Exit non-zero unless the selected readiness gate is ready; defaults to core",
+    )
     agents = subparsers.add_parser("agents", help="List ForgeFlag subagent identities and responsibilities")
     agents.add_argument("--write-default", action="store_true", help="Write the default roster to .forgeflag/agent-roster.json")
     catalog = subparsers.add_parser("catalog", help="List recommended CTF projects and integration candidates")
@@ -190,7 +198,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "doctor":
-        print(json.dumps(system_health(Path(args.db)), ensure_ascii=False, indent=2))
+        payload = system_health(Path(args.db))
+        if args.format == "text":
+            print(format_system_health(payload))
+        else:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        if args.strict:
+            readiness_key = "core_readiness" if args.strict == "core" else "commercial_readiness"
+            readiness = payload.get(readiness_key, {})
+            return 0 if isinstance(readiness, dict) and readiness.get("status") == "ready" else 1
         return 0
 
     if args.command == "agents":

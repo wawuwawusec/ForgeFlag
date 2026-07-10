@@ -278,6 +278,36 @@ class CliTest(unittest.TestCase):
         self.assertIn("notebook", {check["id"] for check in payload["checks"]})
         self.assertIn("tools", {check["id"] for check in payload["checks"]})
 
+    def test_doctor_text_format_and_strict_readiness_gates(self) -> None:
+        payload = {
+            "status": "limited",
+            "core_readiness": {"status": "ready"},
+            "commercial_readiness": {"status": "limited"},
+            "counts": {"ok": 2, "warnings": 1, "errors": 0},
+            "checks": [
+                {"id": "notebook", "label": "Notebook", "status": "ok", "summary": "Notebook ready"},
+                {"id": "llm", "label": "LLM runtime", "status": "warning", "summary": "Optional LLM missing"},
+            ],
+            "next_actions": ["Configure an optional LLM"],
+        }
+
+        core_output = io.StringIO()
+        with redirect_stdout(core_output), patch("forgeflag.cli.system_health", return_value=payload):
+            core_exit = main(["doctor", "--format", "text", "--strict"])
+
+        self.assertEqual(core_exit, 0)
+        self.assertIn("Core solving readiness: READY", core_output.getvalue())
+        self.assertIn("Commercial readiness: LIMITED", core_output.getvalue())
+        self.assertIn("[WARN] LLM runtime: Optional LLM missing", core_output.getvalue())
+        self.assertIn("1. Configure an optional LLM", core_output.getvalue())
+
+        commercial_output = io.StringIO()
+        with redirect_stdout(commercial_output), patch("forgeflag.cli.system_health", return_value=payload):
+            commercial_exit = main(["doctor", "--strict", "commercial"])
+
+        self.assertEqual(commercial_exit, 1)
+        self.assertEqual(json.loads(commercial_output.getvalue())["status"], "limited")
+
     def test_agents_command_lists_subagent_roster(self) -> None:
         output = io.StringIO()
         with redirect_stdout(output):
