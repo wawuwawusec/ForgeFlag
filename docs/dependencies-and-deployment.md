@@ -137,7 +137,7 @@ scripts/forgeflag-control stop
 5. Initializes the SQLite notebook.
 6. Starts the Web UI at `http://127.0.0.1:8080/`.
 
-`doctor` prints JSON readiness diagnostics without requiring the Web UI. It reuses the same health engine as `/api/system-health` and includes notebook state, required Python import availability, wrapper availability, heavyweight Docker profile status, saved capability benchmark status, LLM runtime configuration state, next actions, and a redacted diagnostic bundle:
+`doctor` prints JSON readiness diagnostics without requiring the Web UI. It reuses the same health engine as `/api/system-health` and includes notebook state, required Python import availability, wrapper availability, heavyweight Docker profile status, saved capability benchmark status, LLM runtime configuration state, next actions, and a redacted diagnostic bundle. Tool checks distinguish core host wrappers from optional Docker-backed wrappers: missing `file`, `strings`, or `tshark` blocks core readiness, while missing optional helpers such as `ROPgadget`, `RsaCtfTool`, `hashcat`, `john`, `foremost`, or `yara` limits commercial readiness until Docker fallback is built.
 
 ```bash
 scripts/forgeflag-control doctor

@@ -46,6 +46,8 @@ PYTHON_DEPENDENCIES = (
     ("z3", "z3-solver"),
 )
 
+CORE_TOOL_WRAPPERS = frozenset({"file", "strings", "tshark"})
+
 
 def docker_profile_inventory() -> list[dict[str, Any]]:
     docker = shutil.which("docker")
@@ -214,7 +216,11 @@ def _core_readiness(checks: list[dict[str, Any]]) -> dict[str, Any]:
     core_ids = {"notebook", "python_dependencies", "tools", "benchmark"}
     core_checks = [check for check in checks if check.get("id") in core_ids]
     blocking = [str(check["id"]) for check in core_checks if check.get("status") == "error"]
-    warnings = [str(check["id"]) for check in core_checks if check.get("status") == "warning"]
+    warnings = [
+        str(check["id"])
+        for check in core_checks
+        if check.get("status") == "warning" and _core_warning_applies(check)
+    ]
     status = "blocked" if blocking else "limited" if warnings else "ready"
     return {
         "status": status,
@@ -224,6 +230,13 @@ def _core_readiness(checks: list[dict[str, Any]]) -> dict[str, Any]:
         "warning_checks": warnings,
         "check_ids": [str(check.get("id") or "unknown") for check in core_checks],
     }
+
+
+def _core_warning_applies(check: dict[str, Any]) -> bool:
+    if check.get("id") != "tools":
+        return True
+    details = check.get("details") if isinstance(check.get("details"), dict) else {}
+    return bool(details.get("core_missing"))
 
 
 def _notebook_health(db_path: Path) -> dict[str, Any]:
@@ -263,16 +276,32 @@ def _python_dependency_health() -> dict[str, Any]:
 def _tool_health() -> dict[str, Any]:
     wrappers = ToolRunner(ScopePolicy()).inventory()
     missing = [row for row in wrappers if row.get("source") == "missing" or row.get("available") is False]
-    status = "error" if missing else "ok"
+    missing_names = [str(row.get("name") or "unknown") for row in missing]
+    core_missing = [name for name in missing_names if name in CORE_TOOL_WRAPPERS]
+    optional_missing = [name for name in missing_names if name not in CORE_TOOL_WRAPPERS]
+    status = "error" if core_missing else "warning" if optional_missing else "ok"
+    next_actions = []
+    if core_missing:
+        next_actions.append("scripts/forgeflag-tool-smoke")
+        next_actions.append("Install missing core host tools or run scripts/forgeflag-control docker-build")
+    elif optional_missing:
+        next_actions.append("scripts/forgeflag-control docker-build")
     return {
         "id": "tools",
         "label": "Tool wrappers",
         "status": status,
-        "summary": f"{len(wrappers) - len(missing)} available wrappers; missing wrappers: {len(missing)}",
-        "next_actions": ["scripts/forgeflag-tool-smoke"] if missing else [],
+        "summary": (
+            f"{len(wrappers) - len(missing)} available wrappers; "
+            f"missing wrappers: {len(missing)}; "
+            f"core missing: {len(core_missing)}; optional missing: {len(optional_missing)}"
+        ),
+        "next_actions": next_actions,
         "details": {
             "total": len(wrappers),
-            "missing": [str(row.get("name") or "unknown") for row in missing[:12]],
+            "core_required": sorted(CORE_TOOL_WRAPPERS),
+            "core_missing": core_missing,
+            "optional_missing": optional_missing[:12],
+            "missing": missing_names[:12],
         },
     }
 
