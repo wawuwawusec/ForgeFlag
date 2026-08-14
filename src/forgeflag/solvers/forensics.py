@@ -282,11 +282,16 @@ def _recover_archive_image_entries(
                 image_stego = analyze_image_stego_hints(repaired_path)
                 image_text = _image_text(image_stego)
                 decoded_candidates = tuple(transform_candidates(image_text)) if image_text else ()
+                ocr_result = ctf.image_ocr(str(repaired_path), page_segmentation_mode=6, scope=context.scope)
+                context.notebook.add_tool_result(context.challenge.challenge_id, ocr_result)
+                ocr_text = str(ocr_result.raw.get("stdout", "")) if ocr_result.status == "success" else ""
+                ocr_flags = _extract_ocr_flags(ocr_text)
                 flags = tuple(
                     dict.fromkeys(
                         (
                             *extract_flags(image_text),
                             *extract_flags("\n".join(candidate.value for candidate in decoded_candidates)),
+                            *ocr_flags,
                         )
                     )
                 )
@@ -301,6 +306,11 @@ def _recover_archive_image_entries(
                         "decoded_image_text_candidates": candidates_to_payload(decoded_candidates)
                         if decoded_candidates
                         else [],
+                        "ocr": {
+                            "status": ocr_result.status,
+                            "text_preview": ocr_text[:1000],
+                            "flag_candidates": list(ocr_flags),
+                        },
                         "flag_candidates": list(flags),
                     }
                 )
@@ -316,6 +326,11 @@ def _repair_mangled_png_signature(data: bytes) -> bytes | None:
     if len(data) > 16 and data[4:16] == png_tail:
         return b"\x89PNG" + data[4:]
     return None
+
+
+def _extract_ocr_flags(text: str) -> tuple[str, ...]:
+    compact = re.sub(r"\s+", "", text)
+    return tuple(dict.fromkeys((*extract_flags(text), *extract_flags(compact))))
 
 
 def _safe_component(value: str) -> str:

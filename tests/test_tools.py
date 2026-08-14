@@ -17,6 +17,7 @@ from forgeflag.tools.ctf import (
     ffuf_route_discovery,
     foremost_carve,
     hashcat_dictionary_attack,
+    image_ocr,
     john_dictionary_attack,
     objdump_disassemble,
     objdump_section_dump,
@@ -57,6 +58,7 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertIn("readelf", names)
         self.assertIn("radare2", names)
         self.assertIn("foremost", names)
+        self.assertIn("tesseract", names)
         self.assertIn("yara", names)
 
     def test_inventory_does_not_treat_missing_pyenv_shim_as_available(self) -> None:
@@ -515,6 +517,22 @@ class ToolRunnerTest(unittest.TestCase):
         runner.run.assert_called_once_with(
             "foremost",
             ["-q", "-i", "/tmp/blob", "-o", str(Path("/tmp/out").resolve())],
+            timeout_seconds=30,
+        )
+
+    def test_image_ocr_uses_bounded_page_segmentation_mode(self) -> None:
+        expected = ToolResult(tool="tesseract", target=None, status="success")
+        with patch("forgeflag.tools.ctf.ToolRunner") as runner_cls:
+            runner = Mock()
+            runner.run.return_value = expected
+            runner_cls.return_value = runner
+
+            result = image_ocr("/tmp/flag.png", page_segmentation_mode=99)
+
+        self.assertIs(result, expected)
+        runner.run.assert_called_once_with(
+            "tesseract",
+            ["/tmp/flag.png", "stdout", "--psm", "6"],
             timeout_seconds=30,
         )
 

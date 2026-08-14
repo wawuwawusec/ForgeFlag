@@ -110,6 +110,34 @@ def exiftool_read(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     return runner.run("exiftool", [path])
 
 
+def image_ocr(path: str, page_segmentation_mode: int = 6, scope: ScopePolicy | None = None) -> ToolResult:
+    allowed_modes = {3, 4, 6, 7, 11, 12, 13}
+    mode = page_segmentation_mode if page_segmentation_mode in allowed_modes else 6
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run(
+        "tesseract",
+        [path, "stdout", "--psm", str(mode)],
+        timeout_seconds=30,
+    )
+
+
+def local_binary_replay(
+    path: str,
+    stdin: bytes | str,
+    *,
+    fixture_files: dict[str, bytes | str] | None = None,
+    timeout_seconds: int = 10,
+    scope: ScopePolicy | None = None,
+) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run_local_binary(
+        path,
+        stdin=stdin,
+        fixture_files=fixture_files,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def foremost_carve(path: str, output_dir: str, scope: ScopePolicy | None = None) -> ToolResult:
     destination = Path(output_dir).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)

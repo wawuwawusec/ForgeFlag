@@ -830,6 +830,15 @@ class ForensicsSolverTest(unittest.TestCase):
                     "forgeflag.solvers.forensics.ctf.exiftool_read",
                     return_value=ToolResult(tool="exiftool", target=None, status="success", raw={"stdout": ""}),
                 ),
+                patch(
+                    "forgeflag.solvers.forensics.ctf.image_ocr",
+                    return_value=ToolResult(
+                        tool="tesseract",
+                        target=None,
+                        status="success",
+                        raw={"stdout": "flag{archive_\nrepaired_png}"},
+                    ),
+                ),
             ):
                 summary = Manager(notebook, RunConfig(), solvers=[ForensicsSolver()]).run_challenge("archive-mangled-png")
                 finding = next(
@@ -842,6 +851,7 @@ class ForensicsSolverTest(unittest.TestCase):
         self.assertEqual(summary["accepted_flags"], ["flag{archive_repaired_png}"])
         recovery = finding.evidence["archive_image_recoveries"][0]
         self.assertEqual(recovery["entry_name"], "flag.png")
+        self.assertEqual(recovery["ocr"]["flag_candidates"], ["flag{archive_repaired_png}"])
         self.assertTrue(repaired_exists)
 
 if __name__ == "__main__":

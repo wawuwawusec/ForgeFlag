@@ -4,6 +4,7 @@ import shlex
 import shutil
 import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -89,6 +90,14 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
         "forensics",
         "Run bounded steghide passphrase recovery with a challenge-scoped wordlist.",
         default_timeout_seconds=30,
+    ),
+    "tesseract": ToolSpec(
+        "tesseract",
+        ("tesseract",),
+        "forensics",
+        "Extract visible text from local challenge images with bounded OCR settings.",
+        default_timeout_seconds=30,
+        max_output_bytes=32_768,
     ),
     "tshark": ToolSpec("tshark", ("tshark",), "forensics", "Summarize packet capture contents."),
     "ffuf": ToolSpec(
@@ -188,6 +197,128 @@ class ToolRunner:
             return self._run_docker(spec, argv, target, timeout_seconds)
 
         return self._run_host(spec, argv, target, timeout_seconds)
+
+    def run_local_binary(
+        self,
+        executable_path: str | Path,
+        *,
+        stdin: bytes | str = b"",
+        fixture_files: dict[str, bytes | str] | None = None,
+        timeout_seconds: int = 10,
+    ) -> ToolResult:
+        """Replay one local challenge binary in a resource-bounded, networkless container."""
+        source = Path(executable_path).expanduser().resolve()
+        if not source.is_file():
+            return ToolResult(
+                tool="local_binary_replay",
+                target=str(source),
+                status="missing",
+                evidence=[f"local challenge binary not found: {source}"],
+            )
+        payload = stdin.encode("utf-8") if isinstance(stdin, str) else bytes(stdin)
+        if len(payload) > 65_536:
+            return ToolResult(
+                tool="local_binary_replay",
+                target=str(source),
+                status="refused",
+                evidence=["stdin exceeds the 65536-byte replay limit"],
+            )
+        fixtures = fixture_files or {}
+        try:
+            normalized_fixtures = _normalized_fixture_files(fixtures)
+        except ValueError as exc:
+            return ToolResult(
+                tool="local_binary_replay",
+                target=str(source),
+                status="refused",
+                evidence=[str(exc)],
+            )
+        timeout_seconds = max(1, min(int(timeout_seconds), 30))
+        if not self.docker_image or not _docker_image_available(self.docker_image):
+            return ToolResult(
+                tool="local_binary_replay",
+                target=str(source),
+                status="missing",
+                evidence=["configured ForgeFlag Docker tool image is unavailable"],
+            )
+
+        with tempfile.TemporaryDirectory(prefix="forgeflag-replay-") as tmp:
+            replay_dir = Path(tmp)
+            binary = replay_dir / "challenge"
+            shutil.copy2(source, binary)
+            binary.chmod(0o500)
+            for name, content in normalized_fixtures.items():
+                fixture = replay_dir / name
+                fixture.write_bytes(content)
+                fixture.chmod(0o400)
+
+            argv = [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--memory",
+                "256m",
+                "--cpus",
+                "1",
+                "--pids-limit",
+                "64",
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,size=16m",
+                "-i",
+                "-v",
+                f"{replay_dir}:/challenge:ro",
+                "-w",
+                "/challenge",
+                self.docker_image,
+                "./challenge",
+            ]
+            try:
+                completed = subprocess.run(
+                    argv,
+                    input=payload,
+                    capture_output=True,
+                    timeout=timeout_seconds,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                return ToolResult(
+                    tool="local_binary_replay",
+                    target=str(source),
+                    status="timeout",
+                    evidence=[f"timed out after {exc.timeout} seconds", "network=none"],
+                )
+            except OSError as exc:
+                return ToolResult(
+                    tool="local_binary_replay",
+                    target=str(source),
+                    status="error",
+                    evidence=[str(exc)],
+                )
+
+        stdout, stdout_truncated = _decode_limited(completed.stdout, 32_768)
+        stderr, stderr_truncated = _decode_limited(completed.stderr, 32_768)
+        return ToolResult(
+            tool="local_binary_replay",
+            target=str(source),
+            status="success" if completed.returncode == 0 else "error",
+            evidence=[
+                f"returncode={completed.returncode}",
+                f"docker_image={self.docker_image}",
+                "network=none",
+                "filesystem=read_only",
+                f"stdin_bytes={len(payload)}",
+                f"fixture_files={','.join(sorted(normalized_fixtures)) or 'none'}",
+            ],
+            raw={
+                "stdout": stdout,
+                "stderr": stderr,
+                "stdout_truncated": stdout_truncated,
+                "stderr_truncated": stderr_truncated,
+            },
+        )
 
     def _run_host(
         self,
@@ -295,6 +426,21 @@ def _decode_limited(data: bytes, max_bytes: int) -> tuple[str, bool]:
     truncated = len(data) > max_bytes
     clipped = data[:max_bytes]
     return clipped.decode("utf-8", errors="replace"), truncated
+
+
+def _normalized_fixture_files(fixtures: dict[str, bytes | str]) -> dict[str, bytes]:
+    normalized: dict[str, bytes] = {}
+    total_bytes = 0
+    for raw_name, raw_content in fixtures.items():
+        name = str(raw_name)
+        if not name or name in {".", ".."} or Path(name).name != name or "/" in name or "\\" in name:
+            raise ValueError(f"fixture filename must be a simple basename: {name!r}")
+        content = raw_content.encode("utf-8") if isinstance(raw_content, str) else bytes(raw_content)
+        total_bytes += len(content)
+        if len(content) > 65_536 or total_bytes > 131_072:
+            raise ValueError("fixture files exceed the bounded replay size limit")
+        normalized[name] = content
+    return normalized
 
 
 def _load_project_tool_env(start: Path) -> dict[str, str]:
