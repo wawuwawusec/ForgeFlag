@@ -450,9 +450,15 @@ Ct:
         self.assertEqual(module.normalize_visual_transcription("these files are kinda weird but im weirder"), "grey{these_files_are_kinda_weird_but_im_weirder}")
         self.assertEqual(module.extract_flags("visual flag grey{these_files_are_kinda_weird_but_im_weirder}"), ["grey{these_files_are_kinda_weird_but_im_weirder}"])
 
+    def _require_heldout(self, *relative: str) -> None:
+        missing = [path for path in relative if not Path(path).exists()]
+        if missing:
+            self.skipTest(f"heldout challenge attachment not cached: {missing[0]}")
+
     def test_unbreakable_solver_builds_blacklist_safe_eval_payload(self) -> None:
         module = _load_script_module("solve_unbreakable")
 
+        self._require_heldout(".forgeflag/heldout-cache/htb2024/misc/[Easy] Unbreakable/htb/main.py")
         payload = module.build_payload()
         source = Path(".forgeflag/heldout-cache/htb2024/misc/[Easy] Unbreakable/htb/main.py").read_text()
         blacklist = module.parse_blacklist(source)
@@ -464,6 +470,9 @@ Ct:
     def test_ee2026_solver_recovers_student_id_from_vivado_dcp_edif(self) -> None:
         module = _load_script_module("solve_ee2026")
 
+        self._require_heldout(
+            ".forgeflag/heldout-cache/nus-welcome-ctf-2024/misc/EE2026/distribution/graded_post_lab_assignment_1.zip"
+        )
         result = module.solve_project(
             Path(".forgeflag/heldout-cache/nus-welcome-ctf-2024/misc/EE2026/distribution/graded_post_lab_assignment_1.zip")
         )
@@ -479,6 +488,10 @@ Ct:
     def test_lamenote_solver_identifies_substring_oracle_pattern(self) -> None:
         module = _load_script_module("solve_lamenote")
 
+        self._require_heldout(
+            ".forgeflag/heldout-cache/irisctf2024/lamenote/dist/chal.py",
+            ".forgeflag/heldout-cache/irisctf2024/lamenote/dist/index.html",
+        )
         chal = Path(".forgeflag/heldout-cache/irisctf2024/lamenote/dist/chal.py").read_text()
         index = Path(".forgeflag/heldout-cache/irisctf2024/lamenote/dist/index.html").read_text()
         signals = module.analyze_source(chal, index)
