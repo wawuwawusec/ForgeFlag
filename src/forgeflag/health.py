@@ -320,7 +320,7 @@ def _tool_health() -> dict[str, Any]:
     status = "error" if core_missing else "warning" if optional_missing else "ok"
     next_actions = []
     if core_missing:
-        next_actions.append("scripts/forgeflag-tool-smoke")
+        next_actions.append(script_invocation("forgeflag-tool-smoke"))
         next_actions.append(f"Install missing core host tools or run {script_invocation('forgeflag-control', 'docker-build')}")
     elif optional_missing:
         next_actions.append(script_invocation("forgeflag-control", "docker-build"))

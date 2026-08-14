@@ -581,4 +581,5 @@ def _docker_arg(arg: str, mount: Path) -> str:
         relative = path.relative_to(resolved_mount)
     except ValueError:
         return arg
-    return str(Path("/workspace") / relative)
+    # in-container paths must stay POSIX regardless of the host platform
+    return "/workspace/" + "/".join(relative.parts)
