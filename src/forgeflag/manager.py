@@ -6,7 +6,7 @@ from forgeflag.agent_roster import AgentRoster, load_agent_roster, agent_roster_
 from forgeflag.domain import ChallengeCategory, Observation, RunConfig
 from forgeflag.harness import Harness
 from forgeflag.ida import IDAAdapter, build_ida_adapter
-from forgeflag.llm import UnavailableLLMProvider, build_llm_provider
+from forgeflag.llm import TokenLedger, TrackingLLMProvider, UnavailableLLMProvider, build_llm_provider
 from forgeflag.llm_critic import build_post_run_critic_observation
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.observer import Observer
@@ -43,6 +43,8 @@ class Manager:
         self.config = config or RunConfig()
         self.ida_adapter = ida_adapter or build_ida_adapter(self.config.ida_mcp_config)
         self.solvers = solvers or self._default_solvers()
+        self.token_ledger = TokenLedger()
+        self._instrument_llm_providers()
         self.agent_roster = agent_roster or load_agent_roster(agent_roster_path_for_db(notebook.path))
         self.verifier = Verifier()
         self.observer = Observer()
@@ -74,8 +76,15 @@ class Manager:
         )
         return solvers
 
+    def _instrument_llm_providers(self) -> None:
+        """Wrap every LLMSolver provider so token usage lands in the ledger."""
+        for solver in self.solvers:
+            if isinstance(solver, LLMSolver) and not isinstance(solver.provider, TrackingLLMProvider):
+                solver.provider = TrackingLLMProvider(solver.provider, self.token_ledger, source="solver")
+
     def run_challenge(self, challenge_id: str) -> dict[str, object]:
         challenge = self.notebook.get_challenge(challenge_id)
+        self.token_ledger.begin(challenge_id)
         harness = Harness(self.config)
         scope = ScopePolicy(
             allowed_hosts=self.config.allowed_hosts,
@@ -167,6 +176,22 @@ class Manager:
             if critic is not None:
                 self.notebook.add_observation(critic)
                 summary["post_run_critic"] = critic.evidence
+        token_usage = self.token_ledger.summary_for(challenge_id)
+        if token_usage["calls"]:
+            summary["token_usage"] = token_usage
+            self.notebook.add_observation(
+                Observation(
+                    challenge_id=challenge_id,
+                    source="Manager",
+                    kind="token_usage",
+                    summary=(
+                        f"LLM token usage: {token_usage['total_tokens']} tokens "
+                        f"across {token_usage['calls']} call(s) "
+                        f"({token_usage['prompt_tokens']} prompt + {token_usage['completion_tokens']} completion)"
+                    ),
+                    evidence=token_usage,
+                )
+            )
         self.notebook.record_run(challenge_id, status, summary)
         return summary
 
@@ -193,12 +218,15 @@ class Manager:
     def _critic_provider(self):
         for solver in self.solvers:
             if isinstance(solver, LLMSolver):
-                return solver.provider
+                provider = solver.provider
+                if isinstance(provider, TrackingLLMProvider):
+                    provider = provider.inner
+                return TrackingLLMProvider(provider, self.token_ledger, source="critic")
         try:
             provider = build_llm_provider(self.config.llm_config)
         except ValueError:
             return None
-        return provider if provider.enabled else None
+        return TrackingLLMProvider(provider, self.token_ledger, source="critic") if provider.enabled else None
 
     def _select_solvers(self, category: ChallengeCategory) -> list[Solver]:
         selected: list[Solver] = []

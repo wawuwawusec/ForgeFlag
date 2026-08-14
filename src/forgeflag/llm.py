@@ -17,6 +17,81 @@ from forgeflag.domain import LLMConfig
 class LLMResponse:
     content: str
     raw: dict[str, Any] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=dict)
+
+
+class TokenLedger:
+    """Aggregates LLM token usage per challenge.
+
+    Thread-safe: the Manager runs solvers sequentially, but the MCP server and
+    web UI may share one ledger across threads.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._current: str | None = None
+        self._records: dict[str, list[dict[str, Any]]] = {}
+
+    def begin(self, challenge_id: str) -> None:
+        with self._lock:
+            self._current = challenge_id
+
+    def record(
+        self,
+        challenge_id: str,
+        source: str,
+        provider: str,
+        model: str | None,
+        usage: dict[str, int],
+    ) -> None:
+        if not usage:
+            return
+        entry = {
+            "source": source,
+            "provider": provider,
+            "model": model or "",
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage.get("completion_tokens") or 0),
+            "total_tokens": int(usage.get("total_tokens") or 0),
+        }
+        if not entry["total_tokens"]:
+            entry["total_tokens"] = entry["prompt_tokens"] + entry["completion_tokens"]
+        with self._lock:
+            self._records.setdefault(challenge_id, []).append(entry)
+
+    def record_current(self, source: str, provider: str, model: str | None, usage: dict[str, int]) -> None:
+        with self._lock:
+            challenge_id = self._current
+        if challenge_id is not None:
+            self.record(challenge_id, source, provider, model, usage)
+
+    def summary_for(self, challenge_id: str) -> dict[str, Any]:
+        with self._lock:
+            records = [dict(entry) for entry in self._records.get(challenge_id, [])]
+        if not records:
+            return {
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "by_source": {},
+            }
+        by_source: dict[str, dict[str, int]] = {}
+        for entry in records:
+            bucket = by_source.setdefault(entry["source"], {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+            bucket["calls"] += 1
+            bucket["prompt_tokens"] += entry["prompt_tokens"]
+            bucket["completion_tokens"] += entry["completion_tokens"]
+            bucket["total_tokens"] += entry["total_tokens"]
+        return {
+            "calls": len(records),
+            "prompt_tokens": sum(entry["prompt_tokens"] for entry in records),
+            "completion_tokens": sum(entry["completion_tokens"] for entry in records),
+            "total_tokens": sum(entry["total_tokens"] for entry in records),
+            "provider": records[-1]["provider"],
+            "model": records[-1]["model"],
+            "by_source": by_source,
+        }
 
 
 class LLMProvider(Protocol):
@@ -26,6 +101,32 @@ class LLMProvider(Protocol):
 
     def generate(self, instructions: str, prompt: str) -> LLMResponse:
         ...
+
+
+class TrackingLLMProvider:
+    """Delegating provider that records token usage into a TokenLedger."""
+
+    def __init__(self, inner: LLMProvider, ledger: TokenLedger, source: str = "solver") -> None:
+        self.inner = inner
+        self.ledger = ledger
+        self.source = source
+
+    @property
+    def name(self) -> str:
+        return self.inner.name
+
+    @property
+    def model(self) -> str | None:
+        return self.inner.model
+
+    @property
+    def enabled(self) -> bool:
+        return self.inner.enabled
+
+    def generate(self, instructions: str, prompt: str) -> LLMResponse:
+        response = self.inner.generate(instructions, prompt)
+        self.ledger.record_current(self.source, self.inner.name, self.inner.model, response.usage)
+        return response
 
 
 class DisabledLLMProvider:
@@ -82,7 +183,7 @@ class OpenAIResponsesProvider:
         )
         with _open_llm_request(req, self.config, _cooldown_key(self.name, self.config.model, req.full_url)) as response:
             raw = json.loads(response.read().decode("utf-8"))
-        return LLMResponse(content=_extract_output_text(raw), raw=raw)
+        return LLMResponse(content=_extract_output_text(raw), raw=raw, usage=extract_usage(raw))
 
 
 class ZhipuChatCompletionsProvider:
@@ -123,7 +224,7 @@ class ZhipuChatCompletionsProvider:
         )
         with _open_llm_request(req, self.config, _cooldown_key(self.name, self.config.model, req.full_url)) as response:
             raw = json.loads(response.read().decode("utf-8"))
-        return LLMResponse(content=_extract_chat_completion_text(raw), raw=raw)
+        return LLMResponse(content=_extract_chat_completion_text(raw), raw=raw, usage=extract_usage(raw))
 
 
 def build_llm_provider(config: LLMConfig) -> LLMProvider:
@@ -275,6 +376,29 @@ def _compact_error_body(body: str) -> str:
         if message:
             return str(message)[:300]
     return body[:300]
+
+
+def extract_usage(raw: dict[str, Any]) -> dict[str, int]:
+    """Normalize token usage from OpenAI Responses or chat-completions payloads."""
+    usage = raw.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+    prompt = _usage_int(usage, ("prompt_tokens", "input_tokens"))
+    completion = _usage_int(usage, ("completion_tokens", "output_tokens"))
+    total = _usage_int(usage, ("total_tokens",))
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total or prompt + completion,
+    }
+
+
+def _usage_int(usage: dict[str, Any], keys: tuple[str, ...]) -> int:
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, int) and value >= 0:
+            return value
+    return 0
 
 
 def _extract_output_text(raw: dict[str, Any]) -> str:

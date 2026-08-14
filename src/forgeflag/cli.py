@@ -193,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
                         "attempts": p.attempts,
                         "status": p.status,
                         "accepted_flags": p.accepted_flags,
+                        "token_usage": p.token_usage,
                     }
                     for challenge_id, p in sorted(client.progress.items())
                 },

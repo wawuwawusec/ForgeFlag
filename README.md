@@ -63,7 +63,13 @@ forgeflag --db .forgeflag/notebook.sqlite run-all --watch --poll-interval 30 --a
 ```
 
 A challenge counts as solved when its latest run reaches `flag_found` or
-`exploit_verified` in the Verifier-backed proof status. Solver crashes are
+`exploit_verified` in the Verifier-backed proof status.
+
+When an LLM provider is configured, every AI call is metered per challenge:
+`run` summaries carry a `token_usage` block (calls, prompt/completion/total
+tokens, solver vs. critic breakdown), `run-all` reports cross-challenge token
+totals, and each usage snapshot persists in the notebook as a `token_usage`
+observation. Solver crashes are
 caught and recorded as `error` progress so one broken challenge never kills the
 loop; `Ctrl-C` prints the progress collected so far. Scope controls
 (`--allow-host`, `--active-probe`) are identical to the single-challenge `run`

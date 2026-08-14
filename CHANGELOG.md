@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 - 2026-08-14
+
+- Added per-challenge LLM token usage accounting: providers normalize `usage` from OpenAI Responses and 智谱 chat-completions payloads, `TrackingLLMProvider` records every solver and post-run critic call into a thread-safe `TokenLedger`.
+- `forgeflag run` summaries now include a `token_usage` block (calls, prompt/completion/total tokens, per-source breakdown) and persist a `token_usage` observation in the notebook.
+- `forgeflag run-all` aggregates token usage across every challenge attempt in its final report and per-challenge progress; `Ctrl-C` progress output includes the same accounting.
+
 ## 0.2.1 - 2026-08-14
 
 - Fixed in-container path rewriting on Windows: mount-relative arguments now always resolve to POSIX `/workspace/...` paths inside the tool container.

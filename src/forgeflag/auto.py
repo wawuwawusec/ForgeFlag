@@ -34,6 +34,7 @@ class ChallengeProgress:
     attempts: int = 0
     status: str = "pending"
     accepted_flags: list[str] = field(default_factory=list)
+    token_usage: dict[str, object] = field(default_factory=dict)
 
 
 class AutoSolveClient:
@@ -89,12 +90,15 @@ class AutoSolveClient:
             progress.status = str(summary.get("status") or "unknown")
             flags = summary.get("accepted_flags")
             progress.accepted_flags = list(flags) if isinstance(flags, list) else []
+            usage = summary.get("token_usage")
+            progress.token_usage = dict(usage) if isinstance(usage, dict) else {}
             results.append(
                 {
                     "challenge_id": challenge_id,
                     "status": progress.status,
                     "attempts": progress.attempts,
                     "accepted_flags": progress.accepted_flags,
+                    "token_usage": progress.token_usage,
                 }
             )
         return {
@@ -137,8 +141,18 @@ class AutoSolveClient:
                     "attempts": p.attempts,
                     "status": p.status,
                     "accepted_flags": p.accepted_flags,
+                    "token_usage": p.token_usage,
                 }
                 for challenge_id, p in sorted(self.progress.items())
+            },
+            "token_usage": {
+                "challenges_tracked": len(
+                    [p for p in self.progress.values() if p.token_usage.get("calls")]
+                ),
+                "calls": sum(int(p.token_usage.get("calls") or 0) for p in self.progress.values()),
+                "prompt_tokens": sum(int(p.token_usage.get("prompt_tokens") or 0) for p in self.progress.values()),
+                "completion_tokens": sum(int(p.token_usage.get("completion_tokens") or 0) for p in self.progress.values()),
+                "total_tokens": sum(int(p.token_usage.get("total_tokens") or 0) for p in self.progress.values()),
             },
             "unsolved": [
                 challenge_id
