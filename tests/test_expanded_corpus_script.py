@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import sys
 import json
 import subprocess
 import unittest
@@ -11,7 +12,7 @@ class ExpandedCorpusScriptTest(unittest.TestCase):
     def test_list_mode_reports_at_least_ten_cases_per_main_category(self) -> None:
         script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-expanded-corpus"
 
-        completed = subprocess.run([str(script), "--list"], capture_output=True, check=False, text=True)
+        completed = subprocess.run([sys.executable, str(script), "--list"], capture_output=True, check=False, text=True)
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = json.loads(completed.stdout)

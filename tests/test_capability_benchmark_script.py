@@ -15,7 +15,7 @@ class CapabilityBenchmarkScriptTest(unittest.TestCase):
     def test_list_mode_describes_suites_metrics_and_manifest_schema(self) -> None:
         script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-capability-benchmark"
 
-        completed = subprocess.run([str(script), "--list"], capture_output=True, check=False, text=True)
+        completed = subprocess.run([sys.executable, str(script), "--list"], capture_output=True, check=False, text=True)
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = json.loads(completed.stdout)

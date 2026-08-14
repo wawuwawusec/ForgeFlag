@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -397,7 +398,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
             )
             script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-real-corpus-audit"
 
-            completed = subprocess.run([str(script), "--root", str(root)], capture_output=True, check=False, text=True)
+            completed = subprocess.run([sys.executable, str(script), "--root", str(root)], capture_output=True, check=False, text=True)
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
             payload = json.loads(completed.stdout)
