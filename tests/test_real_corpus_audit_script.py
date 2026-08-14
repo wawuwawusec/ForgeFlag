@@ -37,7 +37,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
             script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-real-corpus-audit"
 
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest)],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest)],
                 capture_output=True,
                 check=False,
                 text=True,
@@ -68,7 +68,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
             manifest = Path(tmp) / "real-manifest.json"
 
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest)],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest)],
                 capture_output=True,
                 check=False,
                 text=True,
@@ -111,7 +111,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
             script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-real-corpus-audit"
 
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest)],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest)],
                 capture_output=True,
                 check=False,
                 text=True,
@@ -151,7 +151,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
 
             manifest = Path(tmp) / "real-manifest.json"
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest)],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest)],
                 capture_output=True,
                 check=False,
                 text=True,
@@ -190,7 +190,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
             script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-real-corpus-audit"
 
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest)],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest)],
                 capture_output=True,
                 check=False,
                 text=True,
@@ -233,7 +233,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
             manifest = Path(tmp) / "real-manifest.json"
 
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest)],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest)],
                 capture_output=True,
                 check=False,
                 text=True,
@@ -274,7 +274,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
             manifest = Path(tmp) / "real-manifest.json"
 
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest)],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest)],
                 capture_output=True,
                 check=False,
                 text=True,
@@ -311,7 +311,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
             manifest = Path(tmp) / "real-manifest.json"
 
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest)],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest)],
                 capture_output=True,
                 check=False,
                 text=True,
@@ -351,7 +351,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
 
             manifest = Path(tmp) / "real-manifest.json"
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest)],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest)],
                 capture_output=True,
                 check=False,
                 text=True,
@@ -447,7 +447,7 @@ class RealCorpusAuditScriptTest(unittest.TestCase):
             script = Path(__file__).resolve().parents[1] / "scripts" / "forgeflag-real-corpus-audit"
 
             completed = subprocess.run(
-                [str(script), "--root", str(root), "--emit-manifest", str(manifest), "--manifest-limit", "2"],
+                [sys.executable, str(script), "--root", str(root), "--emit-manifest", str(manifest), "--manifest-limit", "2"],
                 capture_output=True,
                 check=False,
                 text=True,
