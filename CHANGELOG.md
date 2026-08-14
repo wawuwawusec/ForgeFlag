@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 - 2026-08-14
+
+- Fixed in-container path rewriting on Windows: mount-relative arguments now always resolve to POSIX `/workspace/...` paths inside the tool container.
+- Made health and Web UI suggested commands Windows-runnable (interpreter spelled out via `script_invocation`).
+- Made the test suite Windows compatible: repo scripts invoked with `sys.executable`, heldout-cache tests skip when attachments are absent, sqlite handles closed before temp-dir cleanup.
+- CI now passes the full suite on Ubuntu, macOS, and Windows (Python 3.11/3.13).
+
 ## 0.2.0 - 2026-08-14
 
 - Added the autonomous `run-all` auto-solve client: scans the notebook for unsolved challenges, retries failures within per-challenge attempt budgets, survives solver crashes, and optionally keeps watching for newly added challenges (`--watch`).
