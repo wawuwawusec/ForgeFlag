@@ -52,8 +52,11 @@ class ToolCompressionTest(unittest.TestCase):
                     raw={"stdout": "hello\nflag{stored_summary}\n" + ("A" * 5000)},
                 ),
             )
-            with sqlite3.connect(db) as conn:
+            conn = sqlite3.connect(db)
+            try:
                 row = conn.execute("select raw_json from tool_runs where challenge_id = ?", ("tool-compress",)).fetchone()
+            finally:
+                conn.close()
 
         raw = json.loads(row[0])
         self.assertIn("compressed_summary", raw)

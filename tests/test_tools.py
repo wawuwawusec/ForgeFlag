@@ -151,7 +151,8 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertEqual(rsactftool["source"], "docker")
 
     def test_run_uses_docker_fallback_for_mount_paths(self) -> None:
-        mount = Path("/tmp/forgeflag")
+        mount = Path(tempfile.gettempdir()) / "forgeflag"
+        mount.mkdir(exist_ok=True)
         artifact = mount / "artifact.bin"
 
         def fake_which(command: str) -> str | None:
@@ -184,7 +185,8 @@ class ToolRunnerTest(unittest.TestCase):
         self.assertIn("--file", argv)
 
     def test_docker_arg_rewrites_key_value_mount_paths(self) -> None:
-        rewritten = _docker_arg("--wordlist=/tmp/forgeflag/words.txt", Path("/tmp/forgeflag"))
+        mount = Path(tempfile.gettempdir()) / "forgeflag"
+        rewritten = _docker_arg(f"--wordlist={mount / 'words.txt'}", mount)
 
         self.assertEqual(rewritten, "--wordlist=/workspace/words.txt")
 

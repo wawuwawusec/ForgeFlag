@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from forgeflag.domain import Finding, LLMConfig
 from forgeflag.webapp import create_handler
+from forgeflag.platform_utils import script_invocation
 
 
 class WebAppApiTest(unittest.TestCase):
@@ -580,8 +581,8 @@ class WebAppApiTest(unittest.TestCase):
             payload["counts"]["wrappers"],
             payload["counts"]["host_wrappers"] + payload["counts"]["docker_wrappers"] + payload["counts"]["missing_wrappers"],
         )
-        self.assertEqual(payload["runtime_smoke"]["docker_build_command"], "scripts/forgeflag-control docker-build")
-        self.assertEqual(payload["runtime_smoke"]["docker_smoke_command"], "scripts/forgeflag-control docker-smoke")
+        self.assertEqual(payload["runtime_smoke"]["docker_build_command"], script_invocation("forgeflag-control", "docker-build"))
+        self.assertEqual(payload["runtime_smoke"]["docker_smoke_command"], script_invocation("forgeflag-control", "docker-smoke"))
         self.assertIn("file", {row["name"] for row in payload["wrappers"]})
         hint_ids = {row["id"] for row in payload["analysis_hints"]}
         self.assertIn("traffic-data-uri-image", hint_ids)
@@ -669,7 +670,7 @@ class WebAppApiTest(unittest.TestCase):
         self.assertEqual(payload["scorecard"]["backlog"][0]["challenge_id"], "heldout-web")
         self.assertEqual(len(payload["history"]), 2)
         self.assertEqual(payload["history"][-1]["scorecard"]["totals"]["failed"], 1)
-        self.assertIn("scripts/forgeflag-capability-benchmark --output", payload["refresh_command"])
+        self.assertIn(script_invocation("forgeflag-capability-benchmark", "--output"), payload["refresh_command"])
         self.assertIn("--history", payload["refresh_command"])
 
     def test_capability_benchmark_endpoint_handles_missing_scorecard(self) -> None:
@@ -682,7 +683,7 @@ class WebAppApiTest(unittest.TestCase):
 
         self.assertEqual(payload["status"], "missing")
         self.assertIn("capability-benchmark-latest.json", payload["path"])
-        self.assertIn("scripts/forgeflag-capability-benchmark --output", payload["refresh_command"])
+        self.assertIn(script_invocation("forgeflag-capability-benchmark", "--output"), payload["refresh_command"])
         self.assertEqual(payload["history"], [])
 
     def test_system_health_endpoint_reports_ready_when_commercial_gate_is_green(self) -> None:
@@ -766,8 +767,8 @@ class WebAppApiTest(unittest.TestCase):
         self.assertIn("missing wrappers: 1", tool_check["summary"])
         self.assertEqual(benchmark_check["status"], "warning")
         self.assertEqual(llm_check["status"], "warning")
-        self.assertIn("scripts/forgeflag-tool-smoke", payload["next_actions"])
-        self.assertIn("scripts/forgeflag-capability-benchmark", " ".join(payload["next_actions"]))
+        self.assertIn(script_invocation("forgeflag-tool-smoke"), payload["next_actions"])
+        self.assertIn("forgeflag-capability-benchmark", " ".join(payload["next_actions"]))
 
     def test_system_health_distinguishes_core_ready_from_optional_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
