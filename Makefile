@@ -1,7 +1,16 @@
-.PHONY: test smoke start stop restart status
+.PHONY: test smoke start stop restart status build-exe docker-build clean
 
 test:
 	PYTHONPATH=src python3 -m unittest discover -s tests
+
+build-exe:
+	pyinstaller --clean --noconfirm forgeflag.spec
+
+docker-build:
+	scripts/forgeflag-control docker-build
+
+clean:
+	rm -rf build dist .forgeflag/smoke.sqlite .forgeflag/smoke-input
 
 smoke:
 	rm -f .forgeflag/smoke.sqlite

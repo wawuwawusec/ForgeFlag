@@ -70,6 +70,16 @@ loop; `Ctrl-C` prints the progress collected so far. Scope controls
 command, so active probing still requires explicit operator intent.
 
 
+## Installation
+
+ForgeFlag is a cross-platform client (macOS / Linux / Windows). Pick a channel —
+see [docs/delivery.md](docs/delivery.md) for details:
+
+- **Standalone executable** (no Python needed): download from [Releases](https://github.com/wawuwawusec/ForgeFlag/releases) — one binary per platform, built by CI on every tag.
+- **pip**: `pip install git+https://github.com/wawuwawusec/ForgeFlag.git` (Python 3.11+).
+- **Docker**: `make docker-build` builds the Kali-based toolchain image ToolRunner falls back to when host tools are missing.
+- **Source**: clone, `pip install -e .`, then `make test && make smoke`.
+
 Run a local smoke test that does not need any network service:
 
 ```bash

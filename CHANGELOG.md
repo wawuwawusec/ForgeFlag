@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0 - 2026-08-14
+
+- Added the autonomous `run-all` auto-solve client: scans the notebook for unsolved challenges, retries failures within per-challenge attempt budgets, survives solver crashes, and optionally keeps watching for newly added challenges (`--watch`).
+- Added `notebook.latest_run_status()` for solved/pending challenge detection.
+- Made the client cross-platform: Windows Docker bind-mount paths are translated to Docker Desktop `//c/...` form, and suggested control-script commands now spell out the Python interpreter on Windows.
+- Added `forgeflag.__main__` so the CLI runs as `python -m forgeflag`.
+- Added PyInstaller packaging (`forgeflag.spec`, `make build-exe`) producing a standalone single-file `forgeflag` executable per platform.
+- Added GitHub Actions CI testing the full suite on Ubuntu, macOS, and Windows (Python 3.11/3.13).
+- Added a Release workflow building standalone binaries for Linux, macOS, and Windows plus Python sdist/wheel on `v*` tags.
+- Bumped project version to 0.2.0 with an MIT license and platform classifiers.
+
 ## Unreleased
 
 - Renamed the Python project metadata and GitHub repository display name to `ForgeFlag`.

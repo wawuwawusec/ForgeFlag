@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import ntpath
+import os
 import shlex
 import shutil
-import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -268,8 +269,8 @@ class ToolRunner:
                 "--tmpfs",
                 "/tmp:rw,noexec,nosuid,size=16m",
                 "-i",
-                "-v",
-                f"{replay_dir}:/challenge:ro",
+            "-v",
+            f"{_docker_host_mount(replay_dir)}:/challenge:ro",
                 "-w",
                 "/challenge",
                 self.docker_image,
@@ -377,7 +378,7 @@ class ToolRunner:
             "-e",
             f"PATH={DOCKER_TOOL_PATH}",
             "-v",
-            f"{self.docker_mount}:/workspace",
+            f"{_docker_host_mount(self.docker_mount)}:/workspace",
             "-w",
             "/workspace",
             self.docker_image,
@@ -545,6 +546,21 @@ def _docker_available_commands(image: str, executables: set[str]) -> set[str]:
 
 def _docker_command_available(image: str, executable: str) -> bool:
     return executable in _docker_available_commands(image, {executable})
+
+
+def _docker_host_mount(mount: Path) -> str:
+    """Return a Docker-CLI-safe host half of a bind mount on any platform.
+
+    Docker Desktop on Windows expects drive-letter paths as ``//c/...``;
+    POSIX and WSL paths pass through unchanged.
+    """
+    text = str(mount.expanduser().resolve())
+    if os.name != "nt":
+        return text
+    drive, rest = ntpath.splitdrive(text)
+    if not drive:
+        return text.replace("\\", "/")
+    return "//" + drive.rstrip(":").lower() + rest.replace("\\", "/")
 
 
 def _docker_arg(arg: str, mount: Path) -> str:

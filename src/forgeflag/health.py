@@ -15,6 +15,7 @@ from forgeflag import __version__
 from forgeflag.domain import LLMConfig
 from forgeflag.safety import ScopePolicy
 from forgeflag.tools.runner import ToolRunner
+from forgeflag.platform_utils import script_invocation
 
 
 DOCKER_PROFILES = (
@@ -320,9 +321,9 @@ def _tool_health() -> dict[str, Any]:
     next_actions = []
     if core_missing:
         next_actions.append("scripts/forgeflag-tool-smoke")
-        next_actions.append("Install missing core host tools or run scripts/forgeflag-control docker-build")
+        next_actions.append(f"Install missing core host tools or run {script_invocation('forgeflag-control', 'docker-build')}")
     elif optional_missing:
-        next_actions.append("scripts/forgeflag-control docker-build")
+        next_actions.append(script_invocation("forgeflag-control", "docker-build"))
     return {
         "id": "tools",
         "label": "Tool wrappers",
@@ -360,7 +361,7 @@ def _docker_profile_health() -> dict[str, Any]:
 
 def _benchmark_health(db_path: Path) -> dict[str, Any]:
     latest = capability_benchmark_path(db_path)
-    refresh_command = f"scripts/forgeflag-capability-benchmark --output {latest} --history {capability_benchmark_history_path(db_path)}"
+    refresh_command = f"{script_invocation('forgeflag-capability-benchmark', '--output', str(latest), '--history', str(capability_benchmark_history_path(db_path)))}"
     if not latest.exists():
         return {
             "id": "benchmark",

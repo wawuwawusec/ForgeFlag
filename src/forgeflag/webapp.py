@@ -28,6 +28,7 @@ from forgeflag.project_catalog import recommended_projects
 from forgeflag.report import ReportBuilder
 from forgeflag.safety import ScopePolicy
 from forgeflag.tools.runner import ToolRunner
+from forgeflag.platform_utils import script_invocation
 
 
 def run_webapp(db_path: str | Path, host: str = "127.0.0.1", port: int = 8080) -> None:
@@ -187,8 +188,8 @@ def create_handler(db_path: str | Path):
                 },
                 "runtime_smoke": {
                     "command": "scripts/forgeflag-tool-smoke",
-                    "docker_build_command": "scripts/forgeflag-control docker-build",
-                    "docker_smoke_command": "scripts/forgeflag-control docker-smoke",
+                    "docker_build_command": script_invocation("forgeflag-control", "docker-build"),
+                    "docker_smoke_command": script_invocation("forgeflag-control", "docker-smoke"),
                     "active_network_command": "scripts/forgeflag-tool-smoke --include-active-network",
                     "cracking_command": "scripts/forgeflag-tool-smoke --include-cracking",
                 },
@@ -405,7 +406,7 @@ def create_handler(db_path: str | Path):
             latest = _capability_benchmark_path(cls.db_path)
             history_path = _capability_benchmark_history_path(cls.db_path)
             history = _read_capability_benchmark_history(history_path)
-            refresh_command = f"scripts/forgeflag-capability-benchmark --output {latest} --history {history_path}"
+            refresh_command = f"{script_invocation('forgeflag-capability-benchmark', '--output', str(latest), '--history', str(history_path))}"
             if not latest.exists():
                 return {
                     "status": "missing",

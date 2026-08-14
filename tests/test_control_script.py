@@ -11,6 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@unittest.skipUnless(os.name == "posix", "control script requires POSIX shell semantics")
+
+
 class ControlScriptTest(unittest.TestCase):
     def test_status_removes_invalid_web_pid_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
