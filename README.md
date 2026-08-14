@@ -44,6 +44,32 @@ forgeflag --db .forgeflag/notebook.sqlite observations web-01
 forgeflag --db .forgeflag/notebook.sqlite report web-01
 ```
 
+### Auto-solve client
+
+`run-all` turns ForgeFlag into a continuous auto-solving client: it scans the
+notebook for unsolved challenges, runs the Manager on each, retries failures,
+and stops only when every challenge is solved, per-challenge retry budgets are
+exhausted, or the round limit is reached.
+
+```bash
+# Solve every pending challenge once with default budgets
+forgeflag --db .forgeflag/notebook.sqlite run-all
+
+# Retry failed challenges up to 3 attempts each, across at most 20 rounds
+forgeflag --db .forgeflag/notebook.sqlite run-all --attempts 3 --rounds 20
+
+# Keep running and pick up newly added challenges (daemon-style watch loop)
+forgeflag --db .forgeflag/notebook.sqlite run-all --watch --poll-interval 30 --allow-host 127.0.0.1 --active-probe
+```
+
+A challenge counts as solved when its latest run reaches `flag_found` or
+`exploit_verified` in the Verifier-backed proof status. Solver crashes are
+caught and recorded as `error` progress so one broken challenge never kills the
+loop; `Ctrl-C` prints the progress collected so far. Scope controls
+(`--allow-host`, `--active-probe`) are identical to the single-challenge `run`
+command, so active probing still requires explicit operator intent.
+
+
 Run a local smoke test that does not need any network service:
 
 ```bash

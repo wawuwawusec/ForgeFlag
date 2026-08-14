@@ -261,6 +261,14 @@ class SQLiteNotebook:
             return None
         return json.loads(row["summary_json"])
 
+    def latest_run_status(self, challenge_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "select status from runs where challenge_id = ? order by id desc limit 1",
+                (challenge_id,),
+            ).fetchone()
+        return None if row is None else str(row["status"])
+
     def delete_challenge(self, challenge_id: str) -> dict[str, int]:
         counts: dict[str, int] = {}
         with self._connect() as conn:

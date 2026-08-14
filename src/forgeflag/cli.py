@@ -44,6 +44,25 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--llm-model", help="Model name for the configured LLM provider")
     run.add_argument("--llm-base-url", help="Override the provider API base URL")
 
+    run_all = subparsers.add_parser(
+        "run-all",
+        help="Automatically solve every unsolved challenge until retries or rounds are exhausted",
+    )
+    run_all.add_argument("--allow-host", action="append", default=[])
+    run_all.add_argument("--active-probe", action="store_true", help="Enable scoped active probing")
+    run_all.add_argument("--max-iterations", type=int, default=20)
+    run_all.add_argument("--attempts", type=int, default=2, help="Solver attempts per challenge")
+    run_all.add_argument("--rounds", type=int, default=10, help="Maximum auto-solve rounds")
+    run_all.add_argument(
+        "--watch",
+        action="store_true",
+        help="Keep running and pick up newly added challenges instead of exiting when the queue drains",
+    )
+    run_all.add_argument("--poll-interval", type=float, default=5.0, help="Seconds between watch-mode polls")
+    run_all.add_argument("--llm-provider", choices=["disabled", "openai", "zhipu"], help="Optional LLM provider for strategy planning")
+    run_all.add_argument("--llm-model", help="Model name for the configured LLM provider")
+    run_all.add_argument("--llm-base-url", help="Override the provider API base URL")
+
     findings = subparsers.add_parser("findings", help="Show findings for one challenge")
     findings.add_argument("challenge_id")
 
@@ -141,6 +160,43 @@ def main(argv: list[str] | None = None) -> int:
             llm_config=llm_config,
         )
         summary = Manager(notebook, config=config).run_challenge(args.challenge_id)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "run-all":
+        from forgeflag.auto import AutoClientConfig, AutoSolveClient
+
+        llm_config = _llm_config_from_args(args)
+        config = RunConfig(
+            max_iterations=args.max_iterations,
+            active_probe=args.active_probe,
+            allowed_hosts=tuple(args.allow_host),
+            llm_config=llm_config,
+        )
+        client = AutoSolveClient(
+            notebook,
+            run_config=config,
+            config=AutoClientConfig(
+                max_rounds=args.rounds,
+                attempts_per_challenge=args.attempts,
+                poll_interval_seconds=args.poll_interval,
+                watch=args.watch,
+            ),
+        )
+        try:
+            summary = client.run()
+        except KeyboardInterrupt:
+            summary = {
+                "status": "interrupted",
+                "progress": {
+                    challenge_id: {
+                        "attempts": p.attempts,
+                        "status": p.status,
+                        "accepted_flags": p.accepted_flags,
+                    }
+                    for challenge_id, p in sorted(client.progress.items())
+                },
+            }
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
 
