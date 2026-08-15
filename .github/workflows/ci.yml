@@ -51,6 +51,10 @@ jobs:
           python-version: "3.11"
       - name: Install package
         run: pip install -e .
+      - name: Install browser runner (Playwright)
+        run: |
+          npm --prefix .forgeflag/web-player-benchmark install @playwright/test
+          .forgeflag/web-player-benchmark/node_modules/.bin/playwright install --with-deps chromium
       - name: Start ForgeFlag Web UI
         run: |
           forgeflag --db .forgeflag/benchmark.sqlite web --port 8080 &
