@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 from typing import TypeAlias
 
-from forgeflag.archive_analysis import analyze_archive, preview_archive_text
+from forgeflag.archive_analysis import analyze_archive, archive_source_markers, preview_archive_text
 from forgeflag.ctf_scope import ctf_scope_evidence
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags
@@ -181,6 +181,7 @@ class MiscSolver:
             previews = preview_archive_text(resolved)
             flags = extract_flags("\n".join(str(item.get("text_preview", "")) for item in previews))
             flag_candidates.extend(flags)
+            source_markers = archive_source_markers(previews)
             finding = Finding(
                 challenge_id=context.challenge.challenge_id,
                 solver=self.name,
@@ -189,12 +190,13 @@ class MiscSolver:
                     "artifact": {"name": resolved.name, "path": str(resolved)},
                     "archive": archive,
                     "archive_text_previews": previews,
+                    "source_markers": source_markers,
                     "flag_candidates": list(flags),
                     "ctf_scope": ctf_scope_evidence(ChallengeCategory.MISC),
                 },
-                hypothesis=_archive_hypothesis(flags),
-                confidence=0.8 if flags else 0.66,
-                next_action=_archive_next_action(archive, flags),
+                hypothesis=_archive_hypothesis(flags, source_markers),
+                confidence=0.8 if flags else (0.72 if source_markers else 0.66),
+                next_action=_archive_next_action(archive, flags, source_markers),
             )
             context.notebook.add_finding(finding)
             findings.append(finding)
@@ -711,15 +713,31 @@ def _transform_next_action(flags: tuple[str, ...]) -> str:
     return "Inspect transform candidates, then route to crypto, archive, or stego follow-up."
 
 
-def _archive_hypothesis(flags: tuple[str, ...]) -> str:
+def _archive_hypothesis(flags: tuple[str, ...], source_markers: dict[str, list[str]] | None = None) -> str:
     if flags:
         return "Archive preview content contains a flag-like token."
+    markers = source_markers or {}
+    if "restricted_unpickler" in markers or "pickle_module" in markers:
+        return "Archive sources implement restricted deserialization; exploit diverging pickle consumer behaviors on the authorized local service to reach the flag."
+    if "dynamic_exec" in markers:
+        return "Archive sources evaluate dynamic payloads; build a bounded payload that satisfies the sandbox checks."
+    if "server_flag_file" in markers:
+        return "Archive sources reference a server-side flag file, so a local service replay is needed for the proof of solve."
     return "Misc archive puzzle has structured entries that should be inspected before broader puzzle triage."
 
 
-def _archive_next_action(archive: dict[str, object], flags: tuple[str, ...] = ()) -> str:
+def _archive_next_action(
+    archive: dict[str, object],
+    flags: tuple[str, ...] = (),
+    source_markers: dict[str, list[str]] | None = None,
+) -> str:
     if flags:
         return "Send archive-derived candidates to Verifier and preserve the archive preview evidence."
+    markers = source_markers or {}
+    if "restricted_unpickler" in markers:
+        return "Compare pickle consumer implementations (python unpickler, C unpickler, pickletools) and craft opcodes that only one accepts."
+    if "server_flag_file" in markers:
+        return "Stand up the local challenge service and replay the proof-of-solve payload to capture the flag."
     if archive.get("encrypted"):
         return "Collect password hints before attempting archive extraction."
     return "Inspect interesting archive entries and extract only into a managed artifact workspace."

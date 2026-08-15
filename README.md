@@ -96,8 +96,10 @@ forgeflag --db .forgeflag/benchmark.sqlite web --port 8080 &   # benchmark drive
 python scripts/forgeflag-capability-benchmark                  # exits non-zero on any failed case
 ```
 
-Current verified scorecard: **52/52 cases (100%) · hard evidence 118/118 ·
-browser UI flow 7/7 · held-out replay 8/8 · readiness `ready`**. CI reruns the
+Current verified scorecard: **46/46 cases (100%) · hard evidence 104/104 ·
+browser UI flow 7/7 · held-out replay 10/10 across 7 competitions (incl. unseen SekaiCTF 2025) · readiness `ready`**.
+Flag extraction generalizes to unseen competition prefixes (`extract_flags_generic`),
+and solver triage recognizes restricted-pickle sources and Lua/LuaJIT VM artifacts. CI reruns the
 built-in suites on every push; the held-out manifest (real public CTF
 challenges kept out of the repo) is a local release gate:
 

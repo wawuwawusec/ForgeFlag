@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import gzip
 from pathlib import Path
 import tarfile
@@ -205,3 +206,29 @@ def _text_preview(raw: bytes, limit: int = 500) -> str:
     if printable / max(len(text), 1) < 0.85:
         return ""
     return " ".join(text.split())[:limit]
+
+
+_SOURCE_MARKER_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("pickle_module", r"\bimport\s+pickle\b|\bfrom\s+pickle\s+import\b"),
+    ("restricted_unpickler", r"find_class|_Unpickler|SafeUnpickler"),
+    ("pickletools_disassembly", r"pickletools"),
+    ("dynamic_exec", r"\beval\s*\(|\bexec\s*\(|marshal\.loads"),
+    ("input_driven_service", r"\binput\s*\(|sys\.stdin|recv\s*\("),
+    ("xinetd_service", r"xinetd|socat|nc\s+-l"),
+    ("docker_service", r"docker-compose|docker_compose|Dockerfile"),
+    ("server_flag_file", r"flag\.txt|/flag|FLAG\s*=|os\.getenv\(.?FLAG"),
+)
+
+
+def archive_source_markers(previews: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Extract challenge-relevant source markers from archive text previews."""
+    markers: dict[str, list[str]] = {}
+    for item in previews:
+        text = str(item.get("text_preview") or "")
+        name = str(item.get("name") or "entry")
+        for label, pattern in _SOURCE_MARKER_PATTERNS:
+            if re.search(pattern, text) or re.search(pattern, name):
+                samples = markers.setdefault(label, [])
+                if len(samples) < 3:
+                    samples.append(name)
+    return markers

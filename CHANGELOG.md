@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 - 2026-08-15
+
+- Generalization-tested against a brand-new competition: SekaiCTF 2025 public challenges run end-to-end through the local benchmark (docker service lifecycle, bounded replay harness, flag capture) — 2/2 held-out cases green including platform-side evidence.
+- Flag extraction now generalizes to unseen competition prefixes: `extract_flags_generic` adds a broad word-prefix pattern (with code-brace exclusions and `FORGEFLAG_FLAG_PREFIXES` override) for replay transcripts and tool output, while solver-internal candidate scoring keeps the conservative extractor.
+- MiscSolver archive triage now extracts challenge-source markers (restricted unpicklers, pickle/pickletools, xinetd/socat, docker-compose, server flag files) into structured evidence with targeted hypotheses and next actions.
+- ReverseSolver recognizes LuaJIT bytecode dumps and Lua source VMs, emitting artifact-type evidence and a z3 constraint-solving strategy.
+- Added `scripts/solve_sekai2025_replay.py` — bounded local replay harness for authorized SekaiCTF 2025 held-out cases (challenge content stays in the gitignored local cache under CC BY-NC-SA).
+- Full benchmark scorecard: 46/46 cases, 104/104 hard evidence, 7/7 browser UI, readiness `ready`.
+
 ## 0.4.0 - 2026-08-15
 
 - Fixed the capability-benchmark smoke suite: the corpus fixture web server now runs as an in-process `ThreadingHTTPServer` thread instead of a spawned `python -m http.server` child, removing interpreter-dependent startup failures.

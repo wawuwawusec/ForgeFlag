@@ -20,7 +20,7 @@ if str(SRC) not in sys.path:
 
 from forgeflag.agent_roster import default_agent_roster  # noqa: E402
 from forgeflag.domain import ChallengeCategory  # noqa: E402
-from forgeflag.flags import extract_flags  # noqa: E402
+from forgeflag.flags import extract_flags_generic  # noqa: E402
 
 SUITES: dict[str, dict[str, Any]] = {
     "smoke": {
@@ -647,7 +647,7 @@ def _run_manifest_command(command: Any, cwd: Any = None, timeout: int = 60) -> d
     return {
         "status": "success" if completed.returncode == 0 else "failed",
         "returncode": completed.returncode,
-        "accepted_flags": list(extract_flags(combined)),
+        "accepted_flags": list(extract_flags_generic(combined)),
         "stdout": completed.stdout[-4000:],
         "stderr": completed.stderr[-4000:],
         "command": command_list,

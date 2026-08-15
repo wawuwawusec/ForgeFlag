@@ -65,6 +65,30 @@ class ReverseSolver:
                 findings.append(finding)
                 continue
 
+            luajit = _triage_luajit_artifact(resolved)
+            if luajit:
+                finding = Finding(
+                    challenge_id=context.challenge.challenge_id,
+                    solver=self.name,
+                    finding="Triaged LuaJIT bytecode artifact",
+                    evidence={
+                        "artifact": resolved,
+                        **luajit,
+                        "ctf_scope": reverse_ctf_scope_evidence(),
+                    },
+                    hypothesis=(
+                        "LuaJIT bytecode encodes the challenge checker; reconstruct its VM "
+                        "operations and solve the recovered constraint system with z3."
+                    ),
+                    confidence=0.62,
+                    next_action=(
+                        "Dump the LuaJIT bytecode (e.g. luajit -bl) or translate the constants "
+                        "into a z3 model, then replay the recovered input locally."
+                    ),
+                )
+                context.notebook.add_finding(finding)
+                findings.append(finding)
+
             labeled_results = [
                 ("file_identify", ctf.file_identify(resolved, context.scope)),
                 ("strings_extract", ctf.strings_extract(resolved, min_length=4, scope=context.scope)),
@@ -1304,3 +1328,38 @@ def _next_action(flags: tuple[str, ...]) -> str:
     if flags:
         return "Send candidates to Verifier and preserve IDA MCP tool outputs as replay evidence."
     return "Inspect listed functions, decompile validation pivots, and recover input constraints."
+
+
+def _triage_luajit_artifact(resolved: str) -> dict[str, object] | None:
+    try:
+        with open(resolved, "rb") as handle:
+            head = handle.read(65536)
+    except OSError:
+        return None
+    if head.startswith(b"\x1bLJ"):
+        version = head[3] if len(head) > 3 else 0
+        return {
+            "artifact_type": "luajit_bytecode",
+            "luajit_version": f"0x{version:02x}",
+            "strategy": ["luajit -bl disassembly", "extract numeric constants", "z3 constraint solve"],
+        }
+    try:
+        text = head.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not Path(resolved).suffix.lower() == ".lua" and "local " not in text[:2000]:
+        return None
+    lua_markers = sum(
+        marker in text
+        for marker in ('require("ffi")', "require('ffi')", "require(\"bit\")", "require('bit')", "function", "local ")
+    )
+    if lua_markers < 2:
+        return None
+    strategy = ["read the lua VM logic", "extract rotate/xor/shift constants", "z3 constraint solve"]
+    if "ffi" in text:
+        strategy.insert(1, "model ffi 64-bit integer ops")
+    return {
+        "artifact_type": "lua_source_vm",
+        "lua_markers": lua_markers,
+        "strategy": strategy,
+    }

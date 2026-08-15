@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from forgeflag.flags import extract_flags
+from unittest import mock
+
+from forgeflag.flags import extract_flags, extract_flags_generic
 
 
 class FlagExtractionTest(unittest.TestCase):
@@ -39,3 +41,28 @@ class FlagExtractionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenericFlagExtractionTest(unittest.TestCase):
+    def test_generic_extractor_captures_unknown_competition_prefix(self) -> None:
+        text = "All checks passed\nSEKAI{p1ckleeeeeeeee_3a01fea10fb01a88c1cd554e7372f21ced43b497}\n"
+        self.assertIn("SEKAI{p1ckleeeeeeeee_3a01fea10fb01a88c1cd554e7372f21ced43b497}", extract_flags_generic(text))
+
+    def test_conservative_extractor_skips_unknown_prefix(self) -> None:
+        text = "quux{never_seen_before}"
+        self.assertEqual(extract_flags(text), ())
+        self.assertEqual(extract_flags_generic(text), ("quux{never_seen_before}",))
+
+    def test_generic_extractor_skips_code_like_braces(self) -> None:
+        text = "body { color: #fff; } function(){ return 1; }"
+        self.assertEqual(extract_flags_generic(text), ())
+
+    def test_generic_extractor_skips_mangled_flag_prefix(self) -> None:
+        text = "X@Yflag{webshell_response}"
+        self.assertEqual(extract_flags_generic(text), ("flag{webshell_response}",))
+
+    def test_generic_extractor_honors_env_prefixes(self) -> None:
+        import os
+
+        with mock.patch.dict(os.environ, {"FORGEFLAG_FLAG_PREFIXES": "style"}):
+            self.assertIn("style{custom_prefix}", extract_flags_generic("style{custom_prefix}"))
