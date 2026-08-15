@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 - 2026-08-15
+
+- Fixed the capability-benchmark smoke suite: the corpus fixture web server now runs as an in-process `ThreadingHTTPServer` thread instead of a spawned `python -m http.server` child, removing interpreter-dependent startup failures.
+- Verified full benchmark readiness: 52/52 cases (100%), hard-evidence score 118/118, browser UI flow 7/7, held-out manifest 8/8 — readiness `ready` with zero warnings.
+- Added a `capability` CI gate job that boots the Web UI, runs all benchmark suites, and fails on any solve-rate or evidence-rate regression; scorecards are uploaded as build artifacts.
+- Documented the benchmark workflow and current scores in the README and delivery guide.
+
 ## 0.3.0 - 2026-08-14
 
 - Added per-challenge LLM token usage accounting: providers normalize `usage` from OpenAI Responses and 智谱 chat-completions payloads, `TrackingLLMProvider` records every solver and post-run critic call into a thread-safe `TokenLedger`.

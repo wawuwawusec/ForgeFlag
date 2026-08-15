@@ -40,3 +40,44 @@ jobs:
         run: pip install -e .
       - name: Run make smoke
         run: make smoke
+
+  capability:
+    name: Capability benchmark gate (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: pip install -e .
+      - name: Start ForgeFlag Web UI
+        run: |
+          forgeflag --db .forgeflag/benchmark.sqlite web --port 8080 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8080/api/tools > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8080/api/tools > /dev/null
+      - name: Run capability benchmark suites
+        run: |
+          python scripts/forgeflag-capability-benchmark --output .forgeflag/capability-benchmark-latest.json --history .forgeflag/capability-benchmark-history.jsonl
+          python - <<'EOF'
+          import json
+          scorecard = json.load(open(".forgeflag/capability-benchmark-latest.json"))
+          totals = scorecard["totals"]
+          rates = scorecard["rates"]
+          print(f"cases: {totals['passed']}/{totals['cases']}")
+          print(f"hard evidence: {totals['hard_score']}/{totals['hard_max_score']}")
+          print(f"ui flow: {totals['ui_passed']}/{totals['ui_total']}")
+          assert totals["failed"] == 0, f"capability regression: {totals['failed']} failed cases"
+          assert rates["case_pass_rate"] == 1.0, f"case pass rate regressed: {rates['case_pass_rate']}"
+          assert rates.get("evidence_score_rate") in (None, 1.0), "evidence score regressed"
+          assert rates.get("ui_flow_rate") in (None, 1.0), "ui flow rate regressed"
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capability-scorecard
+          path: .forgeflag/capability-benchmark-latest.json
+

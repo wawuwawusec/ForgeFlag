@@ -86,6 +86,25 @@ see [docs/delivery.md](docs/delivery.md) for details:
 - **Docker**: `make docker-build` builds the Kali-based toolchain image ToolRunner falls back to when host tools are missing.
 - **Source**: clone, `pip install -e .`, then `make test && make smoke`.
 
+## Capability benchmark
+
+The product carries its own solve-rate benchmark so capability regressions fail
+CI instead of shipping:
+
+```bash
+forgeflag --db .forgeflag/benchmark.sqlite web --port 8080 &   # benchmark drives the HTTP API
+python scripts/forgeflag-capability-benchmark                  # exits non-zero on any failed case
+```
+
+Current verified scorecard: **52/52 cases (100%) · hard evidence 118/118 ·
+browser UI flow 7/7 · held-out replay 8/8 · readiness `ready`**. CI reruns the
+built-in suites on every push; the held-out manifest (real public CTF
+challenges kept out of the repo) is a local release gate:
+
+```bash
+python scripts/forgeflag-capability-benchmark --manifest .forgeflag/heldout-platform-manifest.json
+```
+
 Run a local smoke test that does not need any network service:
 
 ```bash
