@@ -78,3 +78,43 @@ class VerifierTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlaceholderFlagRejectionTest(unittest.TestCase):
+    def setUp(self):
+        self.verifier = Verifier()
+
+    def _rejects(self, flag: str) -> None:
+        result = self.verifier.verify([], (flag,))
+        self.assertEqual(result.accepted, ())
+        self.assertIn(flag, result.rejected)
+
+    def test_handout_placeholder_bodies_are_rejected(self):
+        for candidate in (
+            "CTF{fake flag}",
+            "CTF{fakeflag}",
+            "CTF{TestingFlag}",
+            "CTF{FlagGoesHere}",
+            "CTF{not_the_real_thing}",
+            "CTF{not-a-real-flag}",
+            "CTF{*censored*}",
+            "CTF{flag}",
+            "CTF{[0-9a-zA-Z_@!?-]+}",
+        ):
+            with self.subTest(candidate=candidate):
+                self._rejects(candidate)
+
+    def test_real_flag_shapes_still_accepted(self):
+        from forgeflag.domain import Finding, FindingStatus
+
+        flag = "CTF{TheySayTheEmptyCanRattlesTheMost}"
+        finding = Finding(
+            challenge_id="x",
+            solver="MiscSolver",
+            finding="strings hit",
+            evidence={"stdout": flag},
+            confidence=0.9,
+            status=FindingStatus.ACTIVE,
+        )
+        result = self.verifier.verify([finding], (flag,))
+        self.assertEqual(result.accepted, (flag,))

@@ -103,7 +103,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run ForgeFlag capability benchmarks and emit one scorecard.")
     parser.add_argument("--url", default="http://127.0.0.1:8080", help="ForgeFlag Web UI base URL")
     parser.add_argument("--suite", action="append", choices=sorted(SUITES), help="Suite to run; may be repeated")
-    parser.add_argument("--manifest", help="JSON manifest of local held-out CTF cases to replay through ForgeFlag")
+    parser.add_argument("--manifest", action="append", help="JSON manifest of local held-out CTF cases; may be repeated")
     parser.add_argument("--manifest-only", action="store_true", help="Run only the held-out manifest and skip built-in suites")
     parser.add_argument("--list", action="store_true", help="List benchmark suites, metrics, and manifest schema")
     parser.add_argument("--keep", action="store_true", help="Keep generated benchmark challenges in the notebook")
@@ -125,7 +125,8 @@ def main() -> int:
     for suite_name in suite_names:
         summaries.append(run_suite(suite_name, args.url, keep=args.keep, llm=args.llm, timeout=args.timeout))
     if args.manifest:
-        summaries.append(run_manifest(Path(args.manifest), args.url, keep=args.keep, request_timeout=args.timeout))
+        for manifest_path in args.manifest:
+            summaries.append(run_manifest(Path(manifest_path), args.url, keep=args.keep, request_timeout=args.timeout))
     scorecard = build_scorecard(summaries)
     output = json.dumps(scorecard, ensure_ascii=False, indent=2)
     if args.output:
@@ -196,6 +197,7 @@ def summarize_json_rows(
 ) -> dict[str, Any]:
     categories: dict[str, dict[str, int]] = {}
     failures: list[dict[str, Any]] = []
+    passed_ids: list[str] = []
     hard_score = 0
     hard_max_score = 0
     passed = 0
@@ -207,6 +209,7 @@ def summarize_json_rows(
         ok = bool(row.get("ok"))
         if ok:
             passed += 1
+            passed_ids.append(str(row.get("challenge_id") or ""))
             categories[category]["passed"] += 1
         else:
             failures.append(
@@ -230,6 +233,7 @@ def summarize_json_rows(
         "returncode": returncode,
         "cases": len(rows),
         "passed": passed,
+        "passed_ids": passed_ids,
         "failed": len(rows) - passed,
         "categories": categories,
         "roles": _role_summary_from_rows(rows),
@@ -469,27 +473,56 @@ def _backlog_next_action(
 def run_manifest(manifest_path: Path, url: str, keep: bool = False, request_timeout: int = 60) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     rows = []
-    for case in manifest.get("cases", []):
+    for index, case in enumerate(manifest.get("cases", [])):
         challenge_id = str(case["challenge_id"])
-        missing_attachments = [
-            str(path)
-            for path in (case.get("attachments") or [])
-            if _resolve_manifest_attachment(str(path)) is None
-        ]
-        if missing_attachments:
-            rows.append(score_missing_attachment_case(case, missing_attachments))
-            continue
-        if not keep:
-            delete_challenge(url, challenge_id)
-        create_challenge(url, case)
-        summary = run_challenge(url, case, request_timeout)
-        findings = get_json(url, f"/api/challenges/{challenge_id}/findings")
-        report = get_json(url, f"/api/challenges/{challenge_id}/report")
-        replay = run_manifest_replay(case) if case.get("replay") else None
-        rows.append(score_manifest_case(case, summary, findings, report, replay))
-        if not keep:
-            delete_challenge(url, challenge_id)
+        try:
+            rows.append(_run_manifest_case(case, url, keep, request_timeout))
+        except Exception as exc:  # one broken case must not kill a whole corpus run
+            rows.append(
+                {
+                    "challenge_id": challenge_id,
+                    "category": case.get("category", "unknown"),
+                    "owner_roles": _owner_roles_for_category(str(case.get("category", "unknown"))),
+                    "status": f"harness_error:{type(exc).__name__}",
+                    "expected_flag": case.get("expected_flag"),
+                    "accepted_flags": [],
+                    "flag_ok": False,
+                    "matched_evidence": [],
+                    "missing_evidence": [str(item) for item in case.get("required_evidence", [])],
+                    "score": 0,
+                    "max_score": 1 + len(case.get("required_evidence", [])),
+                    "ok": False,
+                }
+            )
+            try:
+                delete_challenge(url, challenge_id)
+            except Exception:
+                pass
+        if (index + 1) % 10 == 0:
+            print(f"[manifest {manifest_path.stem}] {index + 1}/{len(manifest.get('cases', []))} cases processed", file=sys.stderr)
     return summarize_json_rows(f"manifest:{manifest_path.stem}", rows, 0, ["manifest", str(manifest_path)])
+
+
+def _run_manifest_case(case: dict[str, Any], url: str, keep: bool, request_timeout: int) -> dict[str, Any]:
+    challenge_id = str(case["challenge_id"])
+    missing_attachments = [
+        str(path)
+        for path in (case.get("attachments") or [])
+        if _resolve_manifest_attachment(str(path)) is None
+    ]
+    if missing_attachments:
+        return score_missing_attachment_case(case, missing_attachments)
+    if not keep:
+        delete_challenge(url, challenge_id)
+    create_challenge(url, case)
+    summary = run_challenge(url, case, request_timeout)
+    findings = get_json(url, f"/api/challenges/{challenge_id}/findings")
+    report = get_json(url, f"/api/challenges/{challenge_id}/report")
+    replay = run_manifest_replay(case) if case.get("replay") else None
+    row = score_manifest_case(case, summary, findings, report, replay)
+    if not keep:
+        delete_challenge(url, challenge_id)
+    return row
 
 
 def score_missing_attachment_case(case: dict[str, Any], missing_attachments: list[str]) -> dict[str, Any]:
@@ -522,7 +555,9 @@ def score_manifest_case(
     if replay:
         accepted.extend(str(flag) for flag in replay.get("accepted_flags") or [])
     accepted = list(dict.fromkeys(accepted))
-    flag_ok = expected_flag in accepted if expected_flag else True
+    # a case without a verifiable expected flag can never count as solved;
+    # unverified cases must stay out of solve-rate claims
+    flag_ok = bool(expected_flag) and expected_flag in accepted
     required = [str(item) for item in case.get("required_evidence", [])]
     haystack = json.dumps({"summary": summary, "findings": findings, "report": report, "replay": replay}, ensure_ascii=False)
     missing = [item for item in required if item not in haystack]

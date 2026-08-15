@@ -43,19 +43,36 @@ def _is_template_or_placeholder_flag(candidate: str) -> bool:
         "password123",
         "answer1",
         "dummy_flag",
+        "dummy flag",
         "testflag",
+        "testingflag",
+        "testing flag",
         "test_flag",
+        "test flag",
         "placeholder",
         "fake_flag",
+        "fake flag",
+        "fakeflag",
         "not_the_real_flag",
+        "not_the_real_thing",
+        "not-a-real-flag",
         "real_flag_on_instance",
+        "flag_goes_here",
+        "flaggoeshere",
+        "flag goes here",
+        "censored",
         "example",
     )
     if any(marker in inner for marker in markers):
         return True
+    if inner in {"flag", "test", "fake", "xyz", "todo", "flaggoeshere"}:
+        return True
     if "xxxx" in inner:
         return True
     if re.fullmatch(r"(?:\[\d+\]_?)+", inner):
+        return True
+    if re.fullmatch(r"\[[^\]]{2,40}\](?:\+|\{[\d,]+\}|\*)?", inner):
+        # handout regex templates like CTF{[0-9a-zA-Z_@!?-]+}
         return True
     if re.search(r"\bchr\s*\(", inner):
         return True

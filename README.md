@@ -86,6 +86,25 @@ see [docs/delivery.md](docs/delivery.md) for details:
 - **Docker**: `make docker-build` builds the Kali-based toolchain image ToolRunner falls back to when host tools are missing.
 - **Source**: clone, `pip install -e .`, then `make test && make smoke`.
 
+## Real-challenge corpus
+
+Beyond the synthetic suites, ForgeFlag benchmarks against real public CTF
+challenges with verified ground truth:
+
+```bash
+git clone --depth 1 https://github.com/google/google-ctf /tmp/google-ctf
+python scripts/forgeflag-real-corpus-collector --source gctf --root /tmp/google-ctf --output .forgeflag/gctf-manifest.json
+python scripts/forgeflag-capability-benchmark --manifest-only --manifest .forgeflag/gctf-manifest.json
+```
+
+The verified corpus shipped with this release covers **120 medium-plus real
+challenges** (Google CTF quals 2021-2025 plus SekaiCTF 2025) scored against
+exact expected flags, with challenge content kept in the gitignored local
+cache (upstream licenses). Deterministic solvers complete triage and evidence
+across the corpus; exact-flag auto-solving at this difficulty depends on the
+LLM planning layer, so configure `FORGEFLAG_LLM_PROVIDER` +
+`FORGEFLAG_LLM_API_KEY` before expecting flag captures on hard challenges.
+
 ## Capability benchmark
 
 The product carries its own solve-rate benchmark so capability regressions fail

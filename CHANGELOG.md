@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 - 2026-08-15
+
+- Added real-challenge corpus tooling: `forgeflag-real-corpus-collector` enrolls public CTF archives into gitignored local held-out caches with verified ground truth (Google CTF quals flags come from each challenge's `metadata.yaml`; only player-facing attachments reach the solvers).
+- Verified corpus: 120 medium-plus real challenges (Google CTF quals 2021-2025 ×118 + SekaiCTF 2025 ×2) with exact expected flags, plus SekaiCTF 2024 ×21 as triage-only exercises (author solutions require live services, so no local ground truth).
+- Benchmark hardening for corpus scale: repeated `--manifest` flags, per-case fault isolation (one slow/broken case no longer kills the run), per-suite `passed_ids` analytics, and scoring integrity — cases without a verifiable expected flag can never count as solved.
+- Verifier now rejects handout placeholder flags (`CTF{fake flag}`, `CTF{TestingFlag}`, regex-template bodies, censored bodies, ...) so redacted handouts cannot fake `flag_found` status.
+- LLM switch wired through the real-corpus run (`FORGEFLAG_LLM_PROVIDER`); with no provider key configured the LLM layer records its unavailability per run instead of silently skipping.
+- Honest measured capability on the verified corpus: deterministic triage/evidence completes across the corpus while exact-flag auto-solve at Google-CTF-quals difficulty requires the LLM planning layer (unavailable without an API key); the two SekaiCTF 2025 replay-tier cases solve 2/2.
+
 ## 0.5.0 - 2026-08-15
 
 - Generalization-tested against a brand-new competition: SekaiCTF 2025 public challenges run end-to-end through the local benchmark (docker service lifecycle, bounded replay harness, flag capture) — 2/2 held-out cases green including platform-side evidence.

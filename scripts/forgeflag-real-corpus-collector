@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Collect real public CTF challenges into a local held-out benchmark manifest.
+
+Sources supported:
+- google-ctf archive (``<year>/quals/<category>-<name>``): real flags come
+  from each challenge's ``metadata.yaml``; attachments are the player-facing
+  handout only, so the expected flag never leaks into solver inputs.
+- SekaiCTF archives (``<category>/<name>``): dist/ artifacts plus difficulty
+  stars from the README; enrollment keeps Normal difficulty and above.
+
+Challenge content stays inside the gitignored ``.forgeflag/heldout-cache``
+directory (upstream licenses: Apache-2.0 for google-ctf code, CC BY-NC-SA for
+challenge content), so nothing licensed is redistributed with ForgeFlag.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+CACHE_ROOT = ROOT / ".forgeflag" / "heldout-cache"
+
+CATEGORY_MAP = {
+    "crypto": "crypto",
+    "rev": "reverse",
+    "reverse": "reverse",
+    "pwn": "pwn",
+    "misc": "misc",
+    "web": "web",
+    "hw": "forensics",
+    "hardware": "forensics",
+    "sandbox": "reverse",
+    "net": "traffic",
+    "blockchains": "misc",
+    "ppc": "misc",
+    "forensics": "forensics",
+}
+
+SOLVER_EVIDENCE = {
+    "crypto": ["CryptoSolver"],
+    "reverse": ["ReverseSolver"],
+    "pwn": ["PwnSolver"],
+    "misc": ["MiscSolver"],
+    "web": ["WebSolver"],
+    "forensics": ["ForensicsSolver"],
+    "traffic": ["TrafficSolver"],
+}
+
+FLAG_LINE = re.compile(r"^flag:\s*(.+)$", re.MULTILINE)
+DIFFICULTY_STARS = re.compile(r"\|\s*\w+\s*\(([1-4])\)")
+
+
+def collect_gctf(root: Path, years: list[str], max_attachment_mb: float) -> list[dict]:
+    cases = []
+    for meta in sorted(root.glob("*/quals/*/metadata.yaml")):
+        year = meta.parts[-4]
+        if years and year not in years:
+            continue
+        text = meta.read_text(errors="replace")
+        match = FLAG_LINE.search(text)
+        if not match:
+            continue
+        flag = match.group(1).strip().strip("\"'")
+        if len(flag) < 8 or "{" not in flag or flag.lower().count("ctf{") == 0:
+            continue
+        lowered = flag.lower()
+        if any(marker in lowered for marker in ("example", "replace", "todo", "fake")):
+            continue
+        challenge_dir = meta.parent
+        attachments_dir = challenge_dir / "attachments"
+        if not attachments_dir.is_dir():
+            continue
+        attachments = [
+            item
+            for item in sorted(attachments_dir.rglob("*"))
+            if item.is_file() and item.stat().st_size <= int(max_attachment_mb * 1024 * 1024)
+        ]
+        if not attachments:
+            continue
+        category_key = challenge_dir.name.split("-")[0]
+        category = CATEGORY_MAP.get(category_key, "misc")
+        case_id = f"real-gctf-{year}-{challenge_dir.name}"
+        cache_dir = CACHE_ROOT / "gctf" / f"{year}-{challenge_dir.name}"
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+        cache_dir.mkdir(parents=True)
+        copied = []
+        for item in attachments:
+            destination = cache_dir / item.relative_to(attachments_dir)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, destination)
+            copied.append(str(destination))
+        cases.append(
+            {
+                "challenge_id": case_id,
+                "category": category,
+                "title": f"Google CTF {year} - {challenge_dir.name}",
+                "description": "Real Google CTF quals challenge; recover the flag from the player attachments.",
+                "attachments": copied,
+                "expected_flag": flag,
+                "difficulty": "quals",
+                "required_evidence": SOLVER_EVIDENCE.get(category, ["ReconSolver"]),
+                "replay": {
+                    "command": ["python3", "scripts/solve_platform_report.py", case_id],
+                    "timeout": 90,
+                },
+            }
+        )
+    return cases
+
+
+def collect_sekai(root: Path, min_stars: int) -> list[dict]:
+    cases = []
+    for challenge_dir in sorted(root.iterdir()):
+        if not challenge_dir.is_dir() or challenge_dir.name.startswith("."):
+            continue
+        for category_dir in challenge_dir.iterdir():
+            if not category_dir.is_dir() or category_dir.name in {"README.md"}:
+                continue
+            readme = category_dir / "README.md"
+            if not readme.is_file():
+                continue
+            match = DIFFICULTY_STARS.search(readme.read_text(errors="replace"))
+            if not match or int(match.group(1)) < min_stars:
+                continue
+            dist = category_dir / "dist"
+            if not dist.is_dir():
+                continue
+            attachments = [item for item in sorted(dist.rglob("*")) if item.is_file()]
+            if not attachments:
+                continue
+            category = CATEGORY_MAP.get(challenge_dir.name, "misc")
+            case_id = f"real-sekai-{root.name[-4:]}-{category_dir.name}"
+            cache_dir = CACHE_ROOT / "sekaictf" / f"{root.name[-4:]}-{category_dir.name}"
+            if cache_dir.exists():
+                shutil.rmtree(cache_dir)
+            cache_dir.mkdir(parents=True)
+            copied = []
+            for item in attachments:
+                destination = cache_dir / item.relative_to(dist)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, destination)
+                copied.append(str(destination))
+            solution = None
+            for candidate in sorted((category_dir / "solution").glob("*.py")) if (category_dir / "solution").is_dir() else []:
+                solution = candidate
+                break
+            replay = {
+                "command": ["python3", "scripts/solve_platform_report.py", case_id],
+                "timeout": 90,
+            }
+            case = {
+                "challenge_id": case_id,
+                "category": category,
+                "title": f"SekaiCTF {root.name[-4:]} - {category_dir.name}",
+                "description": "Real SekaiCTF challenge; recover the flag from the dist artifacts.",
+                "attachments": copied,
+                "difficulty": f"{match.group(1)}-star",
+                "required_evidence": SOLVER_EVIDENCE.get(category, ["ReconSolver"]),
+                "replay": replay,
+            }
+            if solution is not None:
+                solution_dest = cache_dir / "_solution" / solution.name
+                solution_dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(solution, solution_dest)
+                case["replay"] = {
+                    "command": [
+                        "python3",
+                        "scripts/solve_repo_solution.py",
+                        str(solution_dest.relative_to(ROOT)),
+                    ],
+                    "timeout": 300,
+                }
+            cases.append(case)
+    return cases
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", choices=["gctf", "sekai"], required=True)
+    parser.add_argument("--root", type=Path, required=True, help="Path to the cloned public archive")
+    parser.add_argument("--output", type=Path, required=True, help="Manifest JSON to write")
+    parser.add_argument("--years", default="", help="gctf: comma-separated years (default all)")
+    parser.add_argument("--min-stars", type=int, default=2, help="sekai: minimum difficulty stars (Normal+)")
+    parser.add_argument("--max-attachment-mb", type=float, default=30.0)
+    parser.add_argument("--limit", type=int, default=0, help="Stop after N cases (0 = no limit)")
+    args = parser.parse_args()
+
+    if args.source == "gctf":
+        years = [year.strip() for year in args.years.split(",") if year.strip()]
+        cases = collect_gctf(args.root, years, args.max_attachment_mb)
+    else:
+        cases = collect_sekai(args.root, args.min_stars)
+
+    if args.limit:
+        cases = cases[: args.limit]
+    manifest = {
+        "source": args.source,
+        "collected_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "cases": cases,
+    }
+    args.output.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    solved_hint = sum(1 for case in cases if "solve_repo_solution" in " ".join(case["replay"]["command"]))
+    print(f"collected {len(cases)} cases ({solved_hint} with author-solution replay) -> {args.output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
