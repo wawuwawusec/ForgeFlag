@@ -118,3 +118,26 @@ class PlaceholderFlagRejectionTest(unittest.TestCase):
         )
         result = self.verifier.verify([finding], (flag,))
         self.assertEqual(result.accepted, (flag,))
+
+
+class SourceTemplateFlagRejectionTest(unittest.TestCase):
+    def setUp(self):
+        self.verifier = Verifier()
+
+    def test_challenge_source_template_bodies_are_rejected(self):
+        for candidate in (
+            "CTF{decrypted_flag}",
+            "CTF{RecoveredFlag}",
+            "CTF{REDACTED_FLAG}",
+            "ctf{game_arcade_flag}",
+            "irisctf{real_flag}",
+            "CTF{decoded_flag}",
+            "irisctf{this_is_the_original_flag}",
+            "CTF{ThisIsTheFlag}",
+            "irisctf{...}",
+            "HTB{...}",
+            "CTF{web_postviewer_flag}",
+        ):
+            with self.subTest(candidate=candidate):
+                result = self.verifier.verify([], (candidate,))
+                self.assertEqual(result.accepted, ())

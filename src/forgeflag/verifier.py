@@ -65,7 +65,26 @@ def _is_template_or_placeholder_flag(candidate: str) -> bool:
     )
     if any(marker in inner for marker in markers):
         return True
-    if inner in {"flag", "test", "fake", "xyz", "todo", "flaggoeshere"}:
+    if inner in {"flag", "test", "fake", "xyz", "todo", "flaggoeshere", "...", "…"}:
+        return True
+    if "redacted" in inner:
+        return True
+    # handout template bodies; exact matches only, because real flags may
+    # legitimately end in _flag (e.g. raw_pcap_payload_flag)
+    if inner in {
+        "decoded_flag",
+        "decrypted_flag",
+        "recovered_flag",
+        "real_flag",
+        "redacted_flag",
+        "the_flag",
+        "original_flag",
+        "this_is_the_flag",
+        "this_is_the_original_flag",
+        "thisistheflag",
+        "sample_flag",
+        "your_flag",
+    }:
         return True
     if "xxxx" in inner:
         return True

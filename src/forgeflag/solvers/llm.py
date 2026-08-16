@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
 
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
-from forgeflag.flags import extract_flags
+from forgeflag.flags import extract_flags, extract_flags_generic
 from forgeflag.knowledge import KnowledgeBlock, format_knowledge_blocks, retrieved_knowledge_for
 from forgeflag.llm import LLMProvider
 from forgeflag.llm_prompts import category_playbook, prior_failure_patterns
@@ -133,7 +135,8 @@ def _instructions() -> str:
         "Suggest scoped, evidence-driven next steps only. Do not propose unauthorized access, arbitrary shell exposure, "
         "or unscoped network activity. Prefer passive artifact analysis first, then reproducible tool workflows, "
         "and explain what evidence to collect. "
-        "Only include flag_candidates when derived from the provided local artifact evidence; never guess placeholders. "
+        "Analyze the attachment previews directly: decode layers (base64/hex/zlib), reverse simple ciphers, evaluate logic puzzles, and compute small crypto by hand when feasible; show each decoding step in summary. "
+        "Only include flag_candidates when derived from the provided local artifact evidence or from deterministic reasoning over it; never guess placeholders. "
         "Use prior_failure_patterns to avoid known ForgeFlag CTF pitfalls, and state missing artifacts instead of inventing them. "
         "Return compact JSON with keys: summary, analysis_mode, hypotheses, suggested_solvers, next_actions, tool_hints, "
         "expected_evidence, artifact_requirements, blocked_by_missing_artifacts, manual_replay_needed, fallback_plan, risk_notes, "
@@ -246,7 +249,7 @@ def _flag_candidates_from_response(content: str, plan: LLMPlan | None) -> tuple[
     values: list[str] = []
     if plan:
         values.extend(plan.flag_candidates)
-    values.extend(extract_flags(content))
+    values.extend(extract_flags_generic(content))
     deduped: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -272,7 +275,7 @@ def _strip_markdown_json_fence(content: str) -> str:
     return stripped
 
 
-def _attachment_previews(paths: tuple[str, ...], max_files: int = 4, max_chars_per_file: int = 1800) -> str:
+def _attachment_previews(paths: tuple[str, ...], max_files: int = 6, max_chars_per_file: int = 2600) -> str:
     if not paths:
         return "attachment_previews:\n- none"
     rows = ["attachment_previews:"]
@@ -286,8 +289,18 @@ def _attachment_previews(paths: tuple[str, ...], max_files: int = 4, max_chars_p
         except OSError as exc:
             rows.append(f"- {raw_path}: unreadable ({exc})")
             continue
+        if path.suffix.lower() == ".zip" or data[:2] == b"PK":
+            rows.append(f"- {raw_path}: zip archive, size={len(data)} bytes")
+            rows.extend(f"  {line}" for line in _zip_preview_lines(path))
+            continue
         if _looks_binary(data):
             rows.append(f"- {raw_path}: binary file, size={len(data)} bytes")
+            rows.append("  hex_head: " + data[:256].hex())
+            printable = re.findall(rb"[ -~]{6,}", data[:65536])
+            runs = b"\n".join(printable[:40]).decode("ascii", errors="replace")
+            if runs:
+                rows.append("  strings_head:")
+                rows.extend(f"    {line}" for line in runs.splitlines()[:40])
             continue
         text = data.decode("utf-8", errors="replace")
         truncated = len(text) > max_chars_per_file
@@ -298,6 +311,29 @@ def _attachment_previews(paths: tuple[str, ...], max_files: int = 4, max_chars_p
     if len(paths) > max_files:
         rows.append(f"- {len(paths) - max_files} more attachment(s) omitted from LLM preview")
     return "\n".join(rows)
+
+
+def _zip_preview_lines(path: Path, max_entries: int = 8, max_chars: int = 1200) -> list[str]:
+    import zipfile
+
+    lines: list[str] = []
+    try:
+        with zipfile.ZipFile(path) as zf:
+            for info in zf.infolist()[:max_entries]:
+                lines.append(f"  entry: {info.filename} ({info.file_size} bytes)")
+                if info.file_size > 200_000 or info.is_dir():
+                    continue
+                try:
+                    raw = zf.read(info)
+                except (RuntimeError, zipfile.BadZipFile):
+                    continue
+                if _looks_binary(raw):
+                    continue
+                text = raw.decode("utf-8", errors="replace")[:max_chars]
+                lines.extend(f"    {line}" for line in text.splitlines()[:25])
+    except (zipfile.BadZipFile, OSError):
+        lines.append("  unreadable zip")
+    return lines
 
 
 def _looks_binary(data: bytes) -> bool:

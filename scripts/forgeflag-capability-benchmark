@@ -579,6 +579,7 @@ def score_manifest_case(
         "score": score,
         "max_score": max_score,
         "ok": flag_ok and not missing,
+        "token_usage": summary.get("token_usage") or {},
     }
 
 
@@ -761,6 +762,9 @@ def run_challenge(base_url: str, case: dict[str, Any], timeout: int = 60) -> dic
     payload = {
         "active_probe": bool(case.get("active_probe", False)),
         "allowed_hosts": case.get("allowed_hosts", "127.0.0.1,localhost"),
+        # let the webapp use its environment-configured LLM provider;
+        # without provider env vars this stays a no-op
+        "llm_enabled": True,
     }
     return post_json(base_url, f"/api/challenges/{case['challenge_id']}/run", payload, timeout=timeout)
 

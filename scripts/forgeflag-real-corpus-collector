@@ -183,18 +183,23 @@ def collect_sekai(root: Path, min_stars: int) -> list[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", choices=["gctf", "sekai"], required=True)
+    parser.add_argument("--source", choices=["gctf", "sekai", "cached"], required=True)
     parser.add_argument("--root", type=Path, required=True, help="Path to the cloned public archive")
     parser.add_argument("--output", type=Path, required=True, help="Manifest JSON to write")
     parser.add_argument("--years", default="", help="gctf: comma-separated years (default all)")
     parser.add_argument("--min-stars", type=int, default=2, help="sekai: minimum difficulty stars (Normal+)")
     parser.add_argument("--max-attachment-mb", type=float, default=30.0)
     parser.add_argument("--limit", type=int, default=0, help="Stop after N cases (0 = no limit)")
+    parser.add_argument("--flag-prefix", default="DUCTF", help="cached: flag prefix regex body")
+    parser.add_argument("--handout-names", default="dist,publish,handout", help="cached: comma-separated handout dir names")
+    parser.add_argument("--depth", type=int, default=2, help="cached: challenge dir depth under root")
     args = parser.parse_args()
 
     if args.source == "gctf":
         years = [year.strip() for year in args.years.split(",") if year.strip()]
         cases = collect_gctf(args.root, years, args.max_attachment_mb)
+    elif args.source == "cached":
+        cases = collect_cached_archive(args.root, args.flag_prefix, tuple(args.handout_names.split(",")), args.depth, args.max_attachment_mb)
     else:
         cases = collect_sekai(args.root, args.min_stars)
 
@@ -211,5 +216,85 @@ def main() -> int:
     return 0
 
 
+
+
+def collect_cached_archive(root: Path, flag_prefix: str, handout_names: tuple[str, ...], depth: int, max_attachment_mb: float = 20.0) -> list[dict]:
+    """Enroll challenges from a locally cached public archive.
+
+    Ground-truth flags are mined from the challenge SOURCE tree (deploy
+    configs, flag files) while solvers only receive the handout directory,
+    mirroring the player experience.
+    """
+    import re as _re
+
+    flag_rx = _re.compile(flag_prefix + r"\{[^{}\s]{8,120}\}")
+    bad = ("fake", "redacted", "example", "test", "todo", "placeholder", "sample", "xxx", "flag}", "change_me", "changeme", "insert", "your_flag")
+    cases = []
+    for chal in sorted((root).rglob("*")):
+        if not chal.is_dir():
+            continue
+        if len(chal.relative_to(root).parts) != depth:
+            continue
+        handout = None
+        for name in handout_names:
+            if (chal / name).is_dir() and any((chal / name).iterdir()):
+                handout = chal / name
+                break
+        if handout is None:
+            continue
+        readme = chal / "README.md"
+        readme_text = readme.read_text(errors="replace") if readme.is_file() else ""
+        if _re.search(r"\b(Easy|Beginner)\b", readme_text[:400], _re.I) or chal.name.startswith("[Easy]"):
+            continue
+        flags = set()
+        for f in chal.rglob("*"):
+            if not f.is_file() or handout in f.parents:
+                continue
+            if f.suffix.lower() in {".zip", ".png", ".jpg", ".jpeg", ".pcap", ".gif", ".gz", ".bin", ".woff", ".woff2", ".mp3", ".pdf", ".tar", ".gz"} or f.stat().st_size > 2_000_000:
+                continue
+            try:
+                text = f.read_text(errors="replace")
+            except Exception:
+                continue
+            for m in flag_rx.findall(text):
+                if not any(b in m.lower() for b in bad):
+                    flags.add(m)
+        if not flags:
+            continue
+        attachments = [item for item in sorted(handout.rglob("*")) if item.is_file() and item.stat().st_size <= int(max_attachment_mb * 1024 * 1024)]
+        if not attachments:
+            continue
+        category = CATEGORY_MAP.get(chal.parent.name, "misc")
+        case_id = f"real-{root.name}-{chal.name}".replace(" ", "_").replace("[", "").replace("]", "")
+        cache_dir = CACHE_ROOT / "cached" / f"{root.name}-{chal.name}".replace(" ", "_").replace("[", "").replace("]", "")
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+        cache_dir.mkdir(parents=True)
+        copied = []
+        for item in attachments[:20]:
+            destination = cache_dir / item.relative_to(handout)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, destination)
+            copied.append(str(destination))
+        cases.append(
+            {
+                "challenge_id": case_id,
+                "category": category,
+                "title": f"{root.name} - {chal.name}",
+                "description": "Real challenge from a cached public archive; recover the flag from the handout artifacts.",
+                "attachments": copied,
+                "expected_flag": sorted(flags, key=len)[0],
+                "difficulty": "medium-plus",
+                "required_evidence": SOLVER_EVIDENCE.get(category, ["ReconSolver"]),
+                "replay": {
+                    "command": ["python3", "scripts/solve_platform_report.py", case_id],
+                    "timeout": 90,
+                },
+            }
+        )
+    return cases
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
+

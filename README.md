@@ -97,8 +97,11 @@ python scripts/forgeflag-real-corpus-collector --source gctf --root /tmp/google-
 python scripts/forgeflag-capability-benchmark --manifest-only --manifest .forgeflag/gctf-manifest.json
 ```
 
-The verified corpus shipped with this release covers **120 medium-plus real
-challenges** (Google CTF quals 2021-2025 plus SekaiCTF 2025) scored against
+The verified corpus shipped with this release covers **206 medium-plus real
+challenges across six platforms** (Google CTF quals, DUCTF, IrisCTF, HTB,
+idekCTF, SekaiCTF) with exact expected flags and A/B LLM evaluation
+(`FORGEFLAG_LLM_PROVIDER=zhipu`, `ZAI_API_KEY`, `FORGEFLAG_LLM_MODEL`); per-challenge
+token usage is recorded in every scorecard. The previous release (Google CTF quals 2021-2025 plus SekaiCTF 2025) scored against
 exact expected flags, with challenge content kept in the gitignored local
 cache (upstream licenses). Deterministic solvers complete triage and evidence
 across the corpus; exact-flag auto-solving at this difficulty depends on the

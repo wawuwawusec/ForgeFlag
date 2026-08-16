@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 - 2026-08-16
+
+- Scaled the verified real-challenge corpus to **206 exact-flag cases across six platforms** (Google CTF quals 2021-2025, DUCTF 2024, IrisCTF 2024, HTB 2024, idekCTF 2024, SekaiCTF 2025) via the extended `forgeflag-real-corpus-collector` (`cached` source mines ground-truth flags from challenge source trees while solvers only see handouts; Easy/Beginner-labeled challenges excluded).
+- Fixed the benchmark LLM path: run requests now carry `llm_enabled`, so environment-configured providers actually fire during corpus runs.
+- Upgraded `LLMSolver` to solve-oriented mode: binary attachments contribute hex+strings previews, zips contribute entry previews, instructions ask the model to decode/compute over the artifact content, and flag candidates are extracted with the generic (unknown-prefix) extractor.
+- A/B evaluation over the 206-case corpus with zhipu `glm-4-flash` (the provided key's account has no balance for glm-5.3): LLM off solved 4/206, LLM on solved 5/206 (new: IrisCTF corrupted-world; no regressions), ~22 flag-shaped near misses vs ~5 without LLM.
+- Verifier now rejects handout template bodies (`decrypted_flag`, `REDACTED_FLAG`, literal ellipsis, exact template phrases) without touching real flags that merely end in `_flag`.
+- Benchmark scorecard rows now carry per-challenge `token_usage` so corpus-wide LLM cost is measurable.
+
 ## 0.6.0 - 2026-08-15
 
 - Added real-challenge corpus tooling: `forgeflag-real-corpus-collector` enrolls public CTF archives into gitignored local held-out caches with verified ground truth (Google CTF quals flags come from each challenge's `metadata.yaml`; only player-facing attachments reach the solvers).
