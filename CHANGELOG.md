@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 - 2026-08-16
+
+- Added binary debugging for pwn challenges (`forgeflag.pwn_debug`): checksec hardening matrix (PIE/NX/RELRO/canary/stripped), correct de Bruijn cyclic patterns (every 4-byte window unique), gdb batch debug sessions, crash-offset recovery from control registers, and format-string probing — all challenge-binary execution stays inside the Docker tool sandbox (network disabled, read-only fs, memory/cpu/pids caps).
+- `PwnSolver` now emits `checksec_summary`, `crash_debug_session`, and `format_string_probe` evidence on every local binary triage; new `readelf --syms` wrapper feeds the canary detection.
+- Benchmark now supports `--resume <scorecard>`: previously scored cases (matching id + expected flag) are reused instead of rerun, making 1000-case corpora practical to iterate on; per-suite rows are persisted in the scorecard for this.
+- Verified real corpus grew to **218 exact-flag medium-plus challenges across seven platforms** (adds SekaiCTF 2024 with source-mined flags; placeholder flags filtered).
+- Full-corpus run with LLM on (glm-4-flash) plus the new debugging: 5/218 solved, full token accounting at 1.76M tokens (1.60M prompt / 0.16M completion) recorded in the scorecard rows.
+
 ## 0.7.0 - 2026-08-16
 
 - Scaled the verified real-challenge corpus to **206 exact-flag cases across six platforms** (Google CTF quals 2021-2025, DUCTF 2024, IrisCTF 2024, HTB 2024, idekCTF 2024, SekaiCTF 2025) via the extended `forgeflag-real-corpus-collector` (`cached` source mines ground-truth flags from challenge source trees while solvers only see handouts; Easy/Beginner-labeled challenges excluded).

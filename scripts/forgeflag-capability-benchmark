@@ -99,6 +99,25 @@ MANIFEST_SCHEMA = {
 }
 
 
+
+def _load_resume_rows(path: str | None) -> dict[str, dict[str, Any]]:
+    if not path:
+        return {}
+    scorecard_path = Path(path)
+    if not scorecard_path.is_file():
+        return {}
+    try:
+        previous = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    rows: dict[str, dict[str, Any]] = {}
+    for suite in previous.get("suites", []):
+        for row in suite.get("rows", []):
+            if isinstance(row, dict) and row.get("challenge_id"):
+                rows[str(row["challenge_id"])] = row
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run ForgeFlag capability benchmarks and emit one scorecard.")
     parser.add_argument("--url", default="http://127.0.0.1:8080", help="ForgeFlag Web UI base URL")
@@ -111,6 +130,10 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=180, help="Per-suite subprocess timeout in seconds")
     parser.add_argument("--output", help="Write the emitted scorecard JSON to this path")
     parser.add_argument("--history", help="Append the emitted scorecard to a JSONL history file")
+    parser.add_argument(
+        "--resume",
+        help="Previous scorecard JSON; cases with identical challenge_id and expected_flag are reused instead of rerun",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -125,8 +148,9 @@ def main() -> int:
     for suite_name in suite_names:
         summaries.append(run_suite(suite_name, args.url, keep=args.keep, llm=args.llm, timeout=args.timeout))
     if args.manifest:
+        previous_rows = _load_resume_rows(args.resume)
         for manifest_path in args.manifest:
-            summaries.append(run_manifest(Path(manifest_path), args.url, keep=args.keep, request_timeout=args.timeout))
+            summaries.append(run_manifest(Path(manifest_path), args.url, keep=args.keep, request_timeout=args.timeout, resume_rows=previous_rows))
     scorecard = build_scorecard(summaries)
     output = json.dumps(scorecard, ensure_ascii=False, indent=2)
     if args.output:
@@ -234,6 +258,7 @@ def summarize_json_rows(
         "cases": len(rows),
         "passed": passed,
         "passed_ids": passed_ids,
+        "rows": rows,
         "failed": len(rows) - passed,
         "categories": categories,
         "roles": _role_summary_from_rows(rows),
@@ -470,11 +495,23 @@ def _backlog_next_action(
     )
 
 
-def run_manifest(manifest_path: Path, url: str, keep: bool = False, request_timeout: int = 60) -> dict[str, Any]:
+def run_manifest(
+    manifest_path: Path,
+    url: str,
+    keep: bool = False,
+    request_timeout: int = 60,
+    resume_rows: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     rows = []
+    resumed = 0
     for index, case in enumerate(manifest.get("cases", [])):
         challenge_id = str(case["challenge_id"])
+        cached = (resume_rows or {}).get(challenge_id)
+        if cached is not None and cached.get("expected_flag") == case.get("expected_flag"):
+            rows.append(cached)
+            resumed += 1
+            continue
         try:
             rows.append(_run_manifest_case(case, url, keep, request_timeout))
         except Exception as exc:  # one broken case must not kill a whole corpus run
@@ -499,7 +536,7 @@ def run_manifest(manifest_path: Path, url: str, keep: bool = False, request_time
             except Exception:
                 pass
         if (index + 1) % 10 == 0:
-            print(f"[manifest {manifest_path.stem}] {index + 1}/{len(manifest.get('cases', []))} cases processed", file=sys.stderr)
+            print(f"[manifest {manifest_path.stem}] {index + 1}/{len(manifest.get('cases', []))} cases processed ({resumed} resumed)", file=sys.stderr)
     return summarize_json_rows(f"manifest:{manifest_path.stem}", rows, 0, ["manifest", str(manifest_path)])
 
 
@@ -869,3 +906,4 @@ def _rate(numerator: int, denominator: int) -> float | None:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

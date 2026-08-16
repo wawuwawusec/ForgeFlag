@@ -51,6 +51,11 @@ def rsactftool_attack(
     return runner.run("RsaCtfTool", args, timeout_seconds=30)
 
 
+
+def readelf_symbols(path: str, scope: ScopePolicy | None = None) -> ToolResult:
+    runner = ToolRunner(scope or ScopePolicy())
+    return runner.run("readelf", ["--syms", path], timeout_seconds=20)
+
 def objdump_disassemble(path: str, scope: ScopePolicy | None = None) -> ToolResult:
     runner = ToolRunner(scope or ScopePolicy())
     return runner.run("objdump", ["-d", "-M", "intel", path], timeout_seconds=30)

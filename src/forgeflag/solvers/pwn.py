@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 
+from forgeflag.pwn_debug import checksec_summary, debug_session, debruijn_pattern, probe_format_string
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.ctf_scope import pwn_ctf_scope_evidence
 from forgeflag.flags import extract_flags
@@ -112,6 +113,7 @@ class PwnSolver:
             flags = _tool_result_flags(labeled_results)
             flag_candidates.extend(flags)
             workflow_evidence = _binary_workflow_evidence(labeled_results)
+            debug_evidence = _debug_session_evidence(resolved)
             evidence = {
                 "artifact": resolved,
                 "tool_statuses": {label: result.status for label, result in labeled_results},
@@ -120,6 +122,7 @@ class PwnSolver:
                 "ctf_scope": pwn_ctf_scope_evidence(),
             }
             evidence.update(workflow_evidence)
+            evidence.update(debug_evidence)
             finding = Finding(
                 challenge_id=context.challenge.challenge_id,
                 solver=self.name,
@@ -487,3 +490,30 @@ def _next_action(flags: tuple[str, ...]) -> str:
     if flags:
         return "Send candidates to Verifier and preserve IDA MCP tool outputs as replay evidence."
     return "Pivot into checksec, dangerous function callers, decompiled input paths, and proof-of-solve harness setup."
+
+
+def _debug_session_evidence(resolved: str) -> dict[str, object]:
+    """Bounded binary debugging: checksec matrix, crash offset, fmt-string probe."""
+    evidence: dict[str, object] = {}
+    try:
+        evidence["checksec_summary"] = checksec_summary(resolved)
+    except Exception:  # noqa: BLE001 - debugging evidence must not break triage
+        pass
+    try:
+        pattern = debruijn_pattern(1024)
+        session = debug_session(resolved, pattern, timeout_seconds=45)
+        if session.get("status") not in {"missing"}:
+            evidence["crash_debug_session"] = {
+                "status": session.get("status"),
+                "registers": session.get("registers", {}),
+                "cyclic_offset": session.get("cyclic_offset", {}),
+            }
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        fmt = probe_format_string(resolved, timeout_seconds=25)
+        if fmt.get("status") in {"vulnerable", "not_detected"}:
+            evidence["format_string_probe"] = fmt
+    except Exception:  # noqa: BLE001
+        pass
+    return evidence
