@@ -64,14 +64,26 @@ class DebugSessionTest(unittest.TestCase):
         self.assertEqual(result["status"], "missing")
 
     def test_debug_session_degrades_without_docker(self) -> None:
-        with mock.patch("forgeflag.pwn_debug._docker_available", return_value=False):
-            result = debug_session("/bin/ls", debruijn_pattern(64))
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "chal"
+            binary.write_bytes(b"\x7fELF fake")
+            with mock.patch("forgeflag.pwn_debug._docker_available", return_value=False):
+                result = debug_session(str(binary), debruijn_pattern(64))
         self.assertEqual(result["status"], "unavailable")
         self.assertIn("docker-build", result["error"])
 
     def test_format_string_probe_degrades_without_docker(self) -> None:
-        with mock.patch("forgeflag.pwn_debug._docker_available", return_value=False):
-            result = probe_format_string("/bin/ls")
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "chal"
+            binary.write_bytes(b"\x7fELF fake")
+            with mock.patch("forgeflag.pwn_debug._docker_available", return_value=False):
+                result = probe_format_string(str(binary))
         self.assertEqual(result["status"], "unavailable")
 
     def test_format_string_probe_detects_leaks(self) -> None:
