@@ -219,6 +219,8 @@ class AnthropicMessagesProvider:
             method="POST",
             headers={
                 "x-api-key": self.config.api_key,
+                # z.ai coding endpoints accept Bearer auth (ANTHROPIC_AUTH_TOKEN style)
+                "Authorization": f"Bearer {self.config.api_key}",
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json",
             },
