@@ -86,6 +86,20 @@ see [docs/delivery.md](docs/delivery.md) for details:
 - **Docker**: `make docker-build` builds the Kali-based toolchain image ToolRunner falls back to when host tools are missing.
 - **Source**: clone, `pip install -e .`, then `make test && make smoke`.
 
+## LLM providers
+
+`FORGEFLAG_LLM_PROVIDER` supports `zhipu` (BigModel pay-per-use), `anthropic`
+(GLM Coding Plan subscription quota via `https://open.bigmodel.cn/api/anthropic`
+— no recharge needed), and any OpenAI-compatible endpoint. Coding Plan setup:
+
+```bash
+export FORGEFLAG_LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=<your BigModel key>
+export FORGEFLAG_LLM_MODEL=glm-5.3
+export FORGEFLAG_LLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
+export FORGEFLAG_LLM_TIMEOUT_SECONDS=300
+```
+
 ## Real-challenge corpus
 
 Beyond the synthetic suites, ForgeFlag benchmarks against real public CTF

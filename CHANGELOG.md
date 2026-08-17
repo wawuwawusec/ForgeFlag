@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0 - 2026-08-17
+
+- GLM Coding Plan channel verified end-to-end: the same BigModel key authenticates against the Anthropic-compatible coding endpoint (`https://open.bigmodel.cn/api/anthropic`) on subscription quota, so `glm-5.3` runs without any balance recharge — provider `anthropic` now sends both `x-api-key` and Bearer auth.
+- Stratified 41-case slice with glm-5.3 (Coding Plan): 2/41 solved (the two SekaiCTF 2025 replay cases), zero regressions, 4 higher-quality cryptanalysis near-misses, 785K tokens metered; full 218-case run continues in the background via `--resume`.
+- Honest capability note: single-shot solver rounds remain the ceiling at this difficulty — deeper iterative agent loops are the next lever.
+
 ## 0.9.1 - 2026-08-17
 
 - Added the GLM Coding Plan channel: `provider=anthropic` speaks the Anthropic Messages API against `https://open.bigmodel.cn/api/anthropic`, so Coding Plan subscribers can run the whole LLM layer (planning, execution solver, critic) on their subscription quota instead of open-platform pay-per-use balance.
