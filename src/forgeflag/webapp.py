@@ -841,6 +841,7 @@ INDEX_HTML = r"""<!doctype html>
             <label>LLM Provider</label>
             <select id="llmProvider">
               <option value="zhipu">智谱 GLM</option>
+              <option value="anthropic">GLM Coding Plan / Anthropic-compatible</option>
               <option value="openai">OpenAI-compatible</option>
               <option value="disabled">Disabled</option>
             </select>
@@ -1032,11 +1033,15 @@ INDEX_HTML = r"""<!doctype html>
     function syncLLMSettings() {
       $("llmSettings").hidden = !$("llmEnabled").checked;
       if ($("llmEnabled").checked && $("llmProvider").value === "disabled") $("llmProvider").value = "zhipu";
-      const zhipu = $("llmProvider").value === "zhipu";
-      $("llmModel").placeholder = zhipu ? DEFAULT_ZHIPU_MODEL : "gpt-4.1";
+      const provider = $("llmProvider").value;
+      const zhipu = provider === "zhipu";
+      const anthropic = provider === "anthropic";
+      $("llmModel").placeholder = zhipu ? DEFAULT_ZHIPU_MODEL : (anthropic ? "glm-4.6" : "gpt-4.1");
       if (zhipu && !$("llmModel").value.trim()) $("llmModel").value = DEFAULT_ZHIPU_MODEL;
-      $("llmApiKey").placeholder = zhipu ? "ZAI_API_KEY" : "sk-...";
-      $("llmBaseUrl").placeholder = zhipu ? "https://open.bigmodel.cn/api/paas/v4" : "https://api.openai.com/v1";
+      $("llmApiKey").placeholder = zhipu ? "ZAI_API_KEY" : (anthropic ? "ANTHROPIC_API_KEY (Coding Plan)" : "sk-...");
+      $("llmBaseUrl").placeholder = zhipu
+        ? "https://open.bigmodel.cn/api/paas/v4"
+        : (anthropic ? "https://open.bigmodel.cn/api/anthropic" : "https://api.openai.com/v1");
       hydrateLLMKeyFromStorage();
       renderSavedLLMKeyOptions();
     }

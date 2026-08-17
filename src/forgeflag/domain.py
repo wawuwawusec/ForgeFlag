@@ -126,6 +126,10 @@ class LLMConfig:
                 or values.get("ZHIPUAI_API_KEY")
                 or values.get("BIGMODEL_API_KEY")
             )
+        if provider == "anthropic":
+            # GLM Coding Plan and Claude-compatible endpoints authenticate with
+            # an x-api-key key; ANTHROPIC_API_KEY is the conventional name.
+            api_key = api_key or values.get("ANTHROPIC_API_KEY")
         timeout = _int_env(values.get("FORGEFLAG_LLM_TIMEOUT_SECONDS"), default=30)
         return cls(
             provider=provider,
@@ -187,4 +191,7 @@ def _bool_env(value: str | None, default: bool) -> bool:
 def _default_llm_base_url(provider: str) -> str:
     if provider == "zhipu":
         return "https://open.bigmodel.cn/api/paas/v4"
+    if provider == "anthropic":
+        # GLM Coding Plan exposes an Anthropic-compatible endpoint
+        return "https://open.bigmodel.cn/api/anthropic"
     return "https://api.openai.com/v1"

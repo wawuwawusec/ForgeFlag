@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1 - 2026-08-17
+
+- Added the GLM Coding Plan channel: `provider=anthropic` speaks the Anthropic Messages API against `https://open.bigmodel.cn/api/anthropic`, so Coding Plan subscribers can run the whole LLM layer (planning, execution solver, critic) on their subscription quota instead of open-platform pay-per-use balance.
+- Env wiring: `FORGEFLAG_LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` (or `FORGEFLAG_LLM_API_KEY`) + `FORGEFLAG_LLM_MODEL` (e.g. glm-4.6); CLI `--llm-provider anthropic` and a Web UI provider option are included, with token usage still metered per challenge.
+
 ## 0.9.0 - 2026-08-17
 
 - Added `LLMExecuteSolver`: the model authors a self-contained Python solve script from the challenge artifacts, which runs inside the Docker tool sandbox (offline, read-only files, hard resource caps) using the image analysis venv (pycryptodome/z3/pwntools); failed runs feed tracebacks back for bounded revision rounds, and network imports are rejected before execution.

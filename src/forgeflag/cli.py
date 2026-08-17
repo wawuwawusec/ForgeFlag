@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--allow-host", action="append", default=[])
     run.add_argument("--active-probe", action="store_true", help="Enable scoped active probing")
     run.add_argument("--max-iterations", type=int, default=20)
-    run.add_argument("--llm-provider", choices=["disabled", "openai", "zhipu"], help="Optional LLM provider for strategy planning")
+    run.add_argument("--llm-provider", choices=["disabled", "openai", "zhipu", "anthropic"], help="Optional LLM provider for strategy planning")
     run.add_argument("--llm-model", help="Model name for the configured LLM provider")
     run.add_argument("--llm-base-url", help="Override the provider API base URL")
 
@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep running and pick up newly added challenges instead of exiting when the queue drains",
     )
     run_all.add_argument("--poll-interval", type=float, default=5.0, help="Seconds between watch-mode polls")
-    run_all.add_argument("--llm-provider", choices=["disabled", "openai", "zhipu"], help="Optional LLM provider for strategy planning")
+    run_all.add_argument("--llm-provider", choices=["disabled", "openai", "zhipu", "anthropic"], help="Optional LLM provider for strategy planning")
     run_all.add_argument("--llm-model", help="Model name for the configured LLM provider")
     run_all.add_argument("--llm-base-url", help="Override the provider API base URL")
 

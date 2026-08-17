@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, Finding, LLMConfig, RunConfig
-from forgeflag.llm import LLMResponse, OpenAIResponsesProvider, ZhipuChatCompletionsProvider
+from forgeflag.llm import AnthropicMessagesProvider, LLMResponse, OpenAIResponsesProvider, ZhipuChatCompletionsProvider
 from forgeflag.llm_prompts import category_playbook, prior_failure_patterns
 from forgeflag.manager import Manager
 from forgeflag.notebook import SQLiteNotebook
@@ -1203,3 +1203,47 @@ class LLMSolverTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnthropicMessagesProviderTest(unittest.TestCase):
+    def test_generate_posts_messages_api_and_extracts_usage(self) -> None:
+        response_payload = {
+            "content": [{"type": "text", "text": "flag{from_coding_plan}"}],
+            "usage": {"input_tokens": 120, "output_tokens": 30},
+        }
+        fake_response = Mock()
+        fake_response.__enter__ = Mock(return_value=fake_response)
+        fake_response.__exit__ = Mock(return_value=None)
+        fake_response.read.return_value = json.dumps(response_payload).encode("utf-8")
+
+        with patch("forgeflag.llm.request.urlopen", return_value=fake_response) as urlopen:
+            provider = AnthropicMessagesProvider(
+                LLMConfig(provider="anthropic", model="glm-4.6", api_key="plan-key", base_url="https://open.bigmodel.cn/api/anthropic", timeout_seconds=12)
+            )
+            result = provider.generate("You are ForgeFlag.", "Solve this scoped CTF challenge.")
+
+        self.assertIn("flag{from_coding_plan}", result.content)
+        self.assertEqual(result.usage["total_tokens"], 150)
+        request_obj = urlopen.call_args[0][0]
+        self.assertEqual(request_obj.full_url, "https://open.bigmodel.cn/api/anthropic/v1/messages")
+        self.assertEqual(request_obj.headers.get("X-api-key"), "plan-key")
+        self.assertEqual(request_obj.headers.get("Anthropic-version"), "2023-06-01")
+
+    def test_requires_key_and_model(self) -> None:
+        with self.assertRaises(ValueError):
+            AnthropicMessagesProvider(LLMConfig(provider="anthropic", model="glm-4.6"))
+        with self.assertRaises(ValueError):
+            AnthropicMessagesProvider(LLMConfig(provider="anthropic", api_key="k"))
+
+
+class AnthropicEnvConfigTest(unittest.TestCase):
+    def test_env_reads_anthropic_key_and_default_base_url(self) -> None:
+        config = LLMConfig.from_env(
+            {
+                "FORGEFLAG_LLM_PROVIDER": "anthropic",
+                "FORGEFLAG_LLM_MODEL": "glm-4.6",
+                "ANTHROPIC_API_KEY": "plan-key",
+            }
+        )
+        self.assertEqual(config.api_key, "plan-key")
+        self.assertEqual(config.base_url, "https://open.bigmodel.cn/api/anthropic")

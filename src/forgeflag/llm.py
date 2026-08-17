@@ -186,6 +186,73 @@ class OpenAIResponsesProvider:
         return LLMResponse(content=_extract_output_text(raw), raw=raw, usage=extract_usage(raw))
 
 
+
+class AnthropicMessagesProvider:
+    """Anthropic Messages API provider — the channel used by GLM Coding Plan.
+
+    Coding-plan quota is consumed instead of open-platform pay-per-use
+    balance, so subscribers can run ForgeFlag's LLM layer without recharging.
+    """
+
+    name = "anthropic"
+
+    def __init__(self, config: LLMConfig) -> None:
+        if not config.api_key:
+            raise ValueError("ANTHROPIC_API_KEY or FORGEFLAG_LLM_API_KEY is required for provider=anthropic")
+        if not config.model:
+            raise ValueError("FORGEFLAG_LLM_MODEL is required for provider=anthropic")
+        self.config = config
+        self.model = config.model
+        self.enabled = True
+
+    def generate(self, instructions: str, prompt: str) -> LLMResponse:
+        payload = {
+            "model": self.config.model,
+            "max_tokens": 8192,
+            "system": instructions,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = request.Request(
+            f"{self.config.base_url.rstrip('/')}/v1/messages",
+            data=data,
+            method="POST",
+            headers={
+                "x-api-key": self.config.api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+        )
+        with _open_llm_request(req, self.config, _cooldown_key(self.name, self.config.model, req.full_url)) as response:
+            raw = json.loads(response.read().decode("utf-8"))
+        return LLMResponse(content=_extract_messages_text(raw), raw=raw, usage=_messages_usage(raw))
+
+
+def _extract_messages_text(raw: dict[str, Any]) -> str:
+    texts: list[str] = []
+    for block in raw.get("content", []):
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+    return "\n".join(texts).strip()
+
+
+def _messages_usage(raw: dict[str, Any]) -> dict[str, int]:
+    usage = raw.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+    prompt = usage.get("input_tokens")
+    completion = usage.get("output_tokens")
+    if not isinstance(prompt, int) or not isinstance(completion, int):
+        return {}
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+
+
 class ZhipuChatCompletionsProvider:
     name = "zhipu"
 
@@ -234,6 +301,8 @@ def build_llm_provider(config: LLMConfig) -> LLMProvider:
         return OpenAIResponsesProvider(config)
     if config.provider == "zhipu":
         return ZhipuChatCompletionsProvider(config)
+    if config.provider == "anthropic":
+        return AnthropicMessagesProvider(config)
     raise ValueError(f"unknown LLM provider: {config.provider}")
 
 
