@@ -63,7 +63,6 @@ class Manager:
             )
         if llm_provider.enabled:
             solvers.append(LLMSolver(llm_provider))
-            solvers.append(LLMExecuteSolver(llm_provider))
         solvers.extend(
             [
                 WebSolver(),
@@ -76,6 +75,10 @@ class Manager:
                 InfraSolver(),
             ]
         )
+        if llm_provider.enabled:
+            # execution solver runs last so every deterministic solver's
+            # findings are already in the notebook as prior evidence
+            solvers.append(LLMExecuteSolver(llm_provider))
         return solvers
 
     def _instrument_llm_providers(self) -> None:

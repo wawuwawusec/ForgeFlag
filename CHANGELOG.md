@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0 - 2026-08-18
+
+- Fixed a critical sandbox bug: the in-container `timeout` wrapper made Docker return 125 on every model-script execution under QEMU emulation, so all execution-solver rounds silently failed; runs now use named containers with explicit `docker kill` on timeout instead.
+- Deep iteration: `LLMSolver`→deterministic solvers→`LLMExecuteSolver` ordering ships every prior finding (including cryptanalysis near-misses) into the execution loop, which now runs up to 8 rounds with full stdout/stderr feedback.
+- Tool image gained pillow and numpy (Dockerfile + live patch) so image-XOR and matrix challenges are scriptable.
+- Anti-hallucination protocol: the model must print byte-exact flags derived from parsed data or an explicit NOT_RECOVERED; 17 plausible-looking but wrong "flags" from the previous slice were verified as hallucinations against ground truth and are now suppressed.
+- glm-5.3 (Coding Plan) slice results: honest exact-flag solves stay 2/41 while real computational progress is now visible (e.g. partial XOR keystream recovery matching ground-truth fragments); full 218-case run executing.
+
 ## 0.10.0 - 2026-08-17
 
 - GLM Coding Plan channel verified end-to-end: the same BigModel key authenticates against the Anthropic-compatible coding endpoint (`https://open.bigmodel.cn/api/anthropic`) on subscription quota, so `glm-5.3` runs without any balance recharge — provider `anthropic` now sends both `x-api-key` and Bearer auth.

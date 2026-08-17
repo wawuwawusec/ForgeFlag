@@ -58,6 +58,8 @@ RUN apt-get update \
         angr \
         capstone \
         mcp[cli] \
+        numpy \
+        pillow \
         pwntools \
         pycryptodome \
         git+https://github.com/RsaCtfTool/RsaCtfTool.git \

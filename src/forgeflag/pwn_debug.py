@@ -19,6 +19,7 @@ import shlex
 import subprocess
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 from typing import Any, Sequence
 
 from forgeflag.tools import ctf
@@ -170,10 +171,13 @@ def debug_session(
         script_path = work / "gdb.cmd"
         script_path.write_text("\n".join(gdb_script) + "\n", encoding="utf-8")
 
+        container = f"forgeflag-gdb-{uuid4().hex[:12]}"
         argv = [
             "docker",
             "run",
             "--rm",
+            "--name",
+            container,
             "--network",
             "none",
             "--read-only",
@@ -190,10 +194,6 @@ def debug_session(
             "-w",
             "/challenge",
             image,
-            "timeout",
-            "-k",
-            "10",
-            "55",
             "gdb",
             "-q",
             "-batch",
@@ -211,6 +211,7 @@ def debug_session(
                 check=False,
             )
         except subprocess.TimeoutExpired:
+            subprocess.run(["docker", "kill", container], capture_output=True, timeout=30, check=False)
             return {"status": "timeout"}
         except OSError as exc:
             return {"status": "error", "error": str(exc)}
@@ -253,10 +254,13 @@ def probe_format_string(
             target = work / "challenge"
             _shutil.copy2(binary, target)
             target.chmod(0o500)
+            container = f"forgeflag-fmt-{uuid4().hex[:12]}"
             argv = [
                 "docker",
                 "run",
                 "--rm",
+                "--name",
+                container,
                 "-i",
                 "--network",
                 "none",
@@ -274,10 +278,6 @@ def probe_format_string(
                 "-w",
                 "/challenge",
                 image,
-                "timeout",
-                "-k",
-                "5",
-                "25",
                 "./challenge",
             ]
             try:
@@ -288,7 +288,10 @@ def probe_format_string(
                     timeout=max(5, min(timeout_seconds, 60)),
                     check=False,
                 )
-            except (subprocess.TimeoutExpired, OSError):
+            except subprocess.TimeoutExpired:
+                subprocess.run(["docker", "kill", container], capture_output=True, timeout=30, check=False)
+                continue
+            except OSError:
                 continue
         stdout = completed.stdout.decode("utf-8", errors="replace")
         leaked = re.findall(r"0x[0-9a-f]{4,16}", stdout)

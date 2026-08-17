@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from uuid import uuid4
 import subprocess
 import tempfile
 from pathlib import Path
@@ -27,7 +28,7 @@ from forgeflag.tools.runner import _docker_host_mount
 
 MAX_SCRIPT_CHARS = 16_000
 MAX_OUTPUT_CHARS = 16_000
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 8
 SANDBOX_IMAGE = "forgeflag-ctf:latest"
 SANDBOX_PYTHON = "/opt/forgeflag-venv/bin/python"
 
@@ -49,13 +50,14 @@ class LLMExecuteSolver:
 
         preview = _attachment_previews(tuple(attachments), max_files=6, max_chars_per_file=2600)
         observations = "\n".join(
-            f"- {observation.kind}: {observation.summary}" for observation in context.observations[-12:]
+            f"- {observation.kind}: {observation.summary}" for observation in context.observations[-20:]
         )
+        prior_findings = _prior_findings_digest(context)
         history: list[dict[str, str]] = []
         last_output = ""
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
-                response = self.provider.generate(_instructions(), _prompt(context, preview, observations, history))
+                response = self.provider.generate(_instructions(), _prompt(context, preview, observations, history, prior_findings))
             except Exception as exc:  # noqa: BLE001 - provider outages must not kill the run
                 finding = Finding(
                     challenge_id=challenge.challenge_id,
@@ -81,8 +83,8 @@ class LLMExecuteSolver:
                     "attempt": str(attempt),
                     "script": script[:4000],
                     "returncode": str(run["returncode"]),
-                    "stderr": run["stderr"][:2000],
-                    "stdout": run["stdout"][:2000],
+                    "stderr": run["stderr"][:3000],
+                    "stdout": run["stdout"][:3000],
                 }
             )
             if run["status"] == "unavailable":
@@ -112,15 +114,49 @@ class LLMExecuteSolver:
 def _instructions() -> str:
     return (
         "You are ForgeFlag's execution solver for an authorized local CTF challenge. "
-        "Write ONE self-contained Python 3 script that reads the challenge files from its "
-        "working directory and prints the recovered flag to stdout. "
-        "Available libraries: python stdlib, Crypto (pycryptodome), z3, gmpy2-free integer math, pwntools. "
+        "Each round you write ONE self-contained Python 3 script that reads the challenge files from its "
+        "working directory and prints the recovered flag to stdout. You have up to 8 rounds — use them to "
+        "explore: first round can inspect files (print listings, hexdumps, parse structures), later rounds "
+        "should attempt the full solve informed by every prior output. "
+        "Available libraries: python stdlib, Crypto (pycryptodome), z3, pwntools. "
         "There is NO network access; do not import sockets or make requests. "
         "Read files by relative name exactly as listed. Print every intermediate finding on its own line; "
         "end with the flag alone on a line if recovered. "
-        "If the previous attempt failed, its traceback and output are provided — fix the script. "
+        "Exploit the prior deterministic solver findings: their partial decodes, wrong-key cryptanalysis, "
+        "and near-miss flag candidates are the strongest starting points. "
+        "If a previous attempt failed, its full traceback and output are provided — fix and go deeper; "
+        "try brute-force over small keyspaces, known-plaintext attacks, and category-standard attacks. "
+        "NEVER guess or invent a flag: a flag candidate must be a byte-exact string your script printed from parsed challenge data. "
+        "If after all attempts you cannot recover it, print exactly NOT_RECOVERED — a wrong guess is worse than an honest failure. "
         "Respond with a single ```python code block and nothing else."
     )
+
+
+def _prior_findings_digest(context: SolverContext) -> str:
+    """Compress every prior solver finding into actionable hints.
+
+    Deterministic solvers often land one step away from the flag (wrong
+    substitution key, partial decode); feeding those near-misses to the
+    execution model is the highest-signal context available.
+    """
+    try:
+        findings = context.notebook.findings_for(context.challenge.challenge_id)
+    except Exception:  # noqa: BLE001
+        return ""
+    rows: list[str] = []
+    for finding in findings:
+        if finding.solver in ("LLMSolver", "LLMExecuteSolver", "ReconSolver"):
+            continue
+        evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
+        interesting = []
+        for key in ("flag_candidates", "decoded", "recovered", "analysis", "ciphertext", "script", "stdout"):
+            value = evidence.get(key)
+            if value:
+                interesting.append(f"{key}={str(value)[:300]}")
+        summary = finding.finding[:160]
+        detail = " | ".join(interesting)[:600]
+        rows.append(f"- [{finding.solver}] {summary}" + (f" :: {detail}" if detail else ""))
+    return "\n".join(rows[:20])
 
 
 def _prompt(
@@ -128,6 +164,7 @@ def _prompt(
     preview: str,
     observations: str,
     history: list[dict[str, str]],
+    prior_findings: str = "",
 ) -> str:
     challenge = context.challenge
     parts = [
@@ -140,6 +177,8 @@ def _prompt(
         preview,
         "prior solver observations:",
         observations or "- none",
+        "prior deterministic solver findings (near-misses and partial decodes are high-signal):",
+        prior_findings or "- none",
     ]
     for entry in history:
         parts.append(
@@ -179,10 +218,13 @@ def _run_in_sandbox(attachments: list[str], script: str) -> dict[str, Any]:
         script_path = work / "solve.py"
         script_path.write_text(script, encoding="utf-8")
         script_path.chmod(0o400)
+        container = f"forgeflag-llmexec-{uuid4().hex[:12]}"
         argv = [
             "docker",
             "run",
             "--rm",
+            "--name",
+            container,
             "--network",
             "none",
             "--read-only",
@@ -199,10 +241,6 @@ def _run_in_sandbox(attachments: list[str], script: str) -> dict[str, Any]:
             "-w",
             "/challenge",
             SANDBOX_IMAGE,
-            "timeout",
-            "-k",
-            "10",
-            "80",
             SANDBOX_PYTHON,
             "-I",
             "-B",
@@ -217,6 +255,7 @@ def _run_in_sandbox(attachments: list[str], script: str) -> dict[str, Any]:
                 check=False,
             )
         except subprocess.TimeoutExpired:
+            subprocess.run(["docker", "kill", container], capture_output=True, timeout=30, check=False)
             return {"status": "timeout", "returncode": -1, "stdout": "", "stderr": "sandbox timeout"}
         except OSError as exc:
             return {"status": "error", "returncode": -1, "stdout": "", "stderr": str(exc)}
