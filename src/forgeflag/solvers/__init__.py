@@ -3,6 +3,7 @@ from forgeflag.solvers.crypto import CryptoSolver
 from forgeflag.solvers.forensics import ForensicsSolver
 from forgeflag.solvers.infra import InfraSolver
 from forgeflag.solvers.llm import LLMSolver
+from forgeflag.solvers.llm_execute import LLMExecuteSolver
 from forgeflag.solvers.misc import MiscSolver
 from forgeflag.solvers.pwn import PwnSolver
 from forgeflag.solvers.recon import ReconSolver
@@ -15,6 +16,7 @@ __all__ = [
     "ForensicsSolver",
     "InfraSolver",
     "LLMSolver",
+    "LLMExecuteSolver",
     "MiscSolver",
     "PwnSolver",
     "ReconSolver",

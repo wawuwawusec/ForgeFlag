@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0 - 2026-08-17
+
+- Added `LLMExecuteSolver`: the model authors a self-contained Python solve script from the challenge artifacts, which runs inside the Docker tool sandbox (offline, read-only files, hard resource caps) using the image analysis venv (pycryptodome/z3/pwntools); failed runs feed tracebacks back for bounded revision rounds, and network imports are rejected before execution.
+- Sandbox hardening: model scripts, gdb sessions, and format-string probes all run under in-container `timeout` hard kills, so hanging scripts or stdin-blocked binaries can no longer accumulate zombie containers.
+- LLMExecuteSolver degrades cleanly on provider outages (rate limit, balance, transport) instead of failing the whole run request.
+- Full 218-case corpus run with the execution solver enabled (glm-4-flash): solve count unchanged at the flash tier (4-5/218; 14 cases hit provider HTTP errors mid-run, now prevented), token usage 3.03M recorded corpus-wide. The execution path is the intended lever for stronger models — glm-5.3 remains balance-blocked on the provided key.
+
 ## 0.8.0 - 2026-08-16
 
 - Added binary debugging for pwn challenges (`forgeflag.pwn_debug`): checksec hardening matrix (PIE/NX/RELRO/canary/stripped), correct de Bruijn cyclic patterns (every 4-byte window unique), gdb batch debug sessions, crash-offset recovery from control registers, and format-string probing — all challenge-binary execution stays inside the Docker tool sandbox (network disabled, read-only fs, memory/cpu/pids caps).

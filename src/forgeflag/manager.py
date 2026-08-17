@@ -14,6 +14,7 @@ from forgeflag.report import ReportBuilder
 from forgeflag.safety import ScopePolicy
 from forgeflag.solvers import (
     CryptoSolver,
+    LLMExecuteSolver,
     ForensicsSolver,
     InfraSolver,
     LLMSolver,
@@ -62,6 +63,7 @@ class Manager:
             )
         if llm_provider.enabled:
             solvers.append(LLMSolver(llm_provider))
+            solvers.append(LLMExecuteSolver(llm_provider))
         solvers.extend(
             [
                 WebSolver(),
@@ -77,9 +79,11 @@ class Manager:
         return solvers
 
     def _instrument_llm_providers(self) -> None:
-        """Wrap every LLMSolver provider so token usage lands in the ledger."""
+        """Wrap every LLM-backed solver provider so token usage lands in the ledger."""
         for solver in self.solvers:
-            if isinstance(solver, LLMSolver) and not isinstance(solver.provider, TrackingLLMProvider):
+            if not isinstance(solver, (LLMSolver, LLMExecuteSolver)):
+                continue
+            if not isinstance(solver.provider, TrackingLLMProvider):
                 solver.provider = TrackingLLMProvider(solver.provider, self.token_ledger, source="solver")
 
     def run_challenge(self, challenge_id: str) -> dict[str, object]:

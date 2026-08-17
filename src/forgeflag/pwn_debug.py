@@ -190,6 +190,10 @@ def debug_session(
             "-w",
             "/challenge",
             image,
+            "timeout",
+            "-k",
+            "10",
+            "55",
             "gdb",
             "-q",
             "-batch",
@@ -270,6 +274,10 @@ def probe_format_string(
                 "-w",
                 "/challenge",
                 image,
+                "timeout",
+                "-k",
+                "5",
+                "25",
                 "./challenge",
             ]
             try:
