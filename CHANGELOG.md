@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.0 - 2026-08-18
+
+- Deep agentic loop: `LLMExecuteSolver` now runs up to 30 rounds (`FORGEFLAG_LLMEXEC_MAX_ATTEMPTS`) with a persistent read-write `/work` scratch directory shared across rounds (decoded blobs, candidate keys, partial plaintexts survive between attempts), per-round `/work` listings fed back to the model, and guards for repeated scripts, honest NOT_RECOVERED streaks, wall-clock (`FORGEFLAG_LLMEXEC_MAX_SECONDS`, default 40 min) and token budget (`FORGEFLAG_LLMEXEC_MAX_TOKENS`, default 700k).
+- First genuine LLM-executed solve of a Google CTF quals challenge: crypto `numerology` cracked exactly (5 model calls, 36.6k tokens) on the targeted 8-case evaluation — the same challenge that stalled at partial keystream recovery under the 8-round budget.
+- Targeted deep evaluation: 1/8 solved on the hardest previously-near-miss subset; image-rendered flag challenges (OTP) burn budget on OCR-style loops and are bounded by the new token guard.
+
 ## 0.11.0 - 2026-08-18
 
 - Fixed a critical sandbox bug: the in-container `timeout` wrapper made Docker return 125 on every model-script execution under QEMU emulation, so all execution-solver rounds silently failed; runs now use named containers with explicit `docker kill` on timeout instead.

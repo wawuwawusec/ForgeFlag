@@ -16,6 +16,7 @@ import shlex
 from uuid import uuid4
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,10 @@ from forgeflag.tools.runner import _docker_host_mount
 
 MAX_SCRIPT_CHARS = 16_000
 MAX_OUTPUT_CHARS = 16_000
-MAX_ATTEMPTS = 8
+import os as _os
+
+MAX_ATTEMPTS = max(1, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_ATTEMPTS", "30")))
+MAX_SESSION_SECONDS = max(60, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_SECONDS", "2400")))
 SANDBOX_IMAGE = "forgeflag-ctf:latest"
 SANDBOX_PYTHON = "/opt/forgeflag-venv/bin/python"
 
@@ -55,9 +59,21 @@ class LLMExecuteSolver:
         prior_findings = _prior_findings_digest(context)
         history: list[dict[str, str]] = []
         last_output = ""
+        started = time.monotonic()
+        not_recovered_streak = 0
+        tokens_spent = 0
+        max_tokens_budget = max(50_000, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_TOKENS", "700000")))
+        import tempfile as _tempfile
+
+        session = _tempfile.mkdtemp(prefix="forgeflag-llmsession-")
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            if time.monotonic() - started > MAX_SESSION_SECONDS:
+                break
+            if tokens_spent >= max_tokens_budget:
+                break
             try:
                 response = self.provider.generate(_instructions(), _prompt(context, preview, observations, history, prior_findings))
+                tokens_spent += int(response.usage.get("total_tokens") or 0)
             except Exception as exc:  # noqa: BLE001 - provider outages must not kill the run
                 finding = Finding(
                     challenge_id=challenge.challenge_id,
@@ -75,7 +91,7 @@ class LLMExecuteSolver:
                 history.append({"role": "assistant", "content": response.content[:2000]})
                 last_output = "no python code block found in model response"
                 continue
-            run = _run_in_sandbox(attachments, script)
+            run = _run_in_sandbox(attachments, script, session=session)
             last_output = run["stdout"]
             flags = extract_flags_generic(run["stdout"])
             history.append(
@@ -91,6 +107,16 @@ class LLMExecuteSolver:
                 finding = _finding(context, script, run, attempt, (), "sandbox_unavailable")
                 context.notebook.add_finding(finding)
                 return SolverResult(self.name, challenge.challenge_id, "sandbox_unavailable", (finding,))
+            work_listing = _work_listing(Path(session) / "work")
+            history[-1]["work_files"] = work_listing[:600]
+            if "NOT_RECOVERED" in run["stdout"]:
+                not_recovered_streak += 1
+                if not_recovered_streak >= 3:
+                    break
+            else:
+                not_recovered_streak = 0
+            if len(history) >= 2 and history[-1].get("script") == history[-2].get("script"):
+                break
             if flags:
                 finding = _finding(context, script, run, attempt, flags, "flag_candidate")
                 context.notebook.add_finding(finding)
@@ -120,7 +146,7 @@ def _instructions() -> str:
         "should attempt the full solve informed by every prior output. "
         "Available libraries: python stdlib, Crypto (pycryptodome), z3, pwntools. "
         "There is NO network access; do not import sockets or make requests. "
-        "Read files by relative name exactly as listed. Print every intermediate finding on its own line; "
+        "Read files by relative name exactly as listed (cwd, read-only). A read-write scratch directory /work persists across ALL rounds: save intermediates (decoded blobs, candidate keys, partial plaintexts) there and reuse them in later rounds. Print every intermediate finding on its own line; "
         "end with the flag alone on a line if recovered. "
         "Exploit the prior deterministic solver findings: their partial decodes, wrong-key cryptanalysis, "
         "and near-miss flag candidates are the strongest starting points. "
@@ -202,20 +228,34 @@ def _extract_code(content: str) -> str:
     return script
 
 
-def _run_in_sandbox(attachments: list[str], script: str) -> dict[str, Any]:
+def _work_listing(work_dir: Path) -> str:
+    try:
+        rows = [f"{item.name}:{item.stat().st_size}B" for item in sorted(work_dir.rglob("*")) if item.is_file()]
+        return ", ".join(rows[:30])
+    except OSError:
+        return ""
+
+
+def _run_in_sandbox(attachments: list[str], script: str, session: str | None = None) -> dict[str, Any]:
     import shutil
 
     if not shutil.which("docker"):
         return {"status": "unavailable", "returncode": -1, "stdout": "", "stderr": "docker not found"}
     with tempfile.TemporaryDirectory(prefix="forgeflag-llmexec-") as tmp:
-        work = Path(tmp)
+        work = Path(session) / "challenge" if session else Path(tmp)
+        work.mkdir(parents=True, exist_ok=True)
+        scratch = Path(session) / "work" if session else None
+        if scratch is not None:
+            scratch.mkdir(parents=True, exist_ok=True)
         for attachment in attachments:
             source = Path(attachment)
             destination = work / source.name
-            if source.is_file():
+            if source.is_file() and not destination.exists():
                 shutil.copy2(source, destination)
                 destination.chmod(0o400)
         script_path = work / "solve.py"
+        if script_path.exists():
+            script_path.chmod(0o600)
         script_path.write_text(script, encoding="utf-8")
         script_path.chmod(0o400)
         container = f"forgeflag-llmexec-{uuid4().hex[:12]}"
@@ -238,6 +278,14 @@ def _run_in_sandbox(attachments: list[str], script: str) -> dict[str, Any]:
             "/tmp:rw,noexec,nosuid,size=64m",
             "-v",
             f"{_docker_host_mount(work.resolve())}:/challenge:ro",
+            *(
+                [
+                    "-v",
+                    f"{_docker_host_mount(scratch.resolve())}:/work:rw",
+                ]
+                if scratch is not None
+                else []
+            ),
             "-w",
             "/challenge",
             SANDBOX_IMAGE,
