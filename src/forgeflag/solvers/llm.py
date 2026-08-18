@@ -62,7 +62,12 @@ class LLMSolver:
 
         knowledge_blocks = _knowledge_blocks(context)
         try:
-            response = self.provider.generate(_instructions(), _prompt(context, knowledge_blocks))
+            vision_images = _image_attachments(context.challenge.attachment_paths)
+            response = self.provider.generate(
+                _instructions(),
+                _prompt(context, knowledge_blocks),
+                **({"images": vision_images} if vision_images else {}),
+            )
         except Exception as exc:  # noqa: BLE001 - LLM planning must not block scoped tool solvers.
             return self._unavailable_result(context, str(exc), knowledge_blocks)
         if response.raw.get("status") == "unavailable":
@@ -274,6 +279,24 @@ def _strip_markdown_json_fence(content: str) -> str:
         return "\n".join(lines[1:-1]).strip()
     return stripped
 
+
+
+def _image_attachments(paths: tuple[str, ...], max_images: int = 4, max_bytes: int = 3_000_000) -> tuple[bytes, ...]:
+    """Read small image attachments for vision-capable providers."""
+    images: list[bytes] = []
+    for raw_path in paths:
+        if len(images) >= max_images:
+            break
+        path = Path(raw_path)
+        if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".bmp", ".gif"}:
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if len(data) <= max_bytes:
+            images.append(data)
+    return tuple(images)
 
 def _attachment_previews(paths: tuple[str, ...], max_files: int = 6, max_chars_per_file: int = 2600) -> str:
     if not paths:

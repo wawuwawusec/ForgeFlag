@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
+import base64
 import json
 import random
 import threading
@@ -187,6 +188,18 @@ class OpenAIResponsesProvider:
 
 
 
+
+def _sniff_media_type(data: bytes) -> str:
+    if data.startswith(b"\x89PNG"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"GIF8"):
+        return "image/gif"
+    if data.startswith(b"BM"):
+        return "image/bmp"
+    return "image/png"
+
 class AnthropicMessagesProvider:
     """Anthropic Messages API provider — the channel used by GLM Coding Plan.
 
@@ -205,12 +218,25 @@ class AnthropicMessagesProvider:
         self.model = config.model
         self.enabled = True
 
-    def generate(self, instructions: str, prompt: str) -> LLMResponse:
+    def generate(self, instructions: str, prompt: str, images: tuple[bytes, ...] = ()) -> LLMResponse:
+        content: list[dict[str, Any]] = []
+        for image in images[:6]:
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": _sniff_media_type(image),
+                        "data": base64.b64encode(image).decode("ascii"),
+                    },
+                }
+            )
+        content.append({"type": "text", "text": prompt})
         payload = {
             "model": self.config.model,
             "max_tokens": 8192,
             "system": instructions,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": content}],
         }
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = request.Request(

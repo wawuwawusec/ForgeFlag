@@ -71,8 +71,13 @@ class LLMExecuteSolver:
                 break
             if tokens_spent >= max_tokens_budget:
                 break
+            vision_images = (*_image_attachments(attachments), *_work_images(Path(session) / "work"))
             try:
-                response = self.provider.generate(_instructions(), _prompt(context, preview, observations, history, prior_findings))
+                response = self.provider.generate(
+                    _instructions(),
+                    _prompt(context, preview, observations, history, prior_findings),
+                    **({"images": vision_images} if vision_images else {}),
+                )
                 tokens_spent += int(response.usage.get("total_tokens") or 0)
             except Exception as exc:  # noqa: BLE001 - provider outages must not kill the run
                 finding = Finding(
@@ -353,3 +358,32 @@ def _finding(
             else "Feed the failure transcript back for a revised script or escalate to manual analysis."
         ),
     )
+
+
+def _image_attachments(attachments: list[str], max_images: int = 3, max_bytes: int = 2_500_000) -> tuple[bytes, ...]:
+    from forgeflag.solvers.llm import _image_attachments as _read_images
+
+    return _read_images(tuple(attachments), max_images=max_images, max_bytes=max_bytes)
+
+
+def _work_images(work_dir: Path, max_images: int = 3, max_bytes: int = 2_500_000) -> tuple[bytes, ...]:
+    """Latest images produced in the persistent workspace, newest first."""
+    try:
+        candidates = [
+            item
+            for item in sorted(work_dir.rglob("*"), key=lambda i: i.stat().st_mtime, reverse=True)
+            if item.is_file() and item.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}
+        ]
+    except OSError:
+        return ()
+    images: list[bytes] = []
+    for item in candidates:
+        if len(images) >= max_images:
+            break
+        try:
+            data = item.read_bytes()
+        except OSError:
+            continue
+        if len(data) <= max_bytes:
+            images.append(data)
+    return tuple(images)

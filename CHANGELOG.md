@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.0 - 2026-08-18
+
+- Multimodal LLM layer: the Anthropic-compatible provider accepts image bytes and emits base64 image blocks; the planning solver attaches image attachments directly and the execution solver feeds both original images and the latest images produced in the persistent `/work` scratch back into every round — vision-capable checkpoints (glm-4.5v/4.6v on the Coding Plan endpoint) can now see challenge artifacts and intermediate renders. OCR fidelity of the currently available checkpoints is limited and documented honestly.
+- Deep-loop guards: honest-failure early exit relaxed to a 3-streak, and a per-challenge token budget (`FORGEFLAG_LLMEXEC_MAX_TOKENS`, default 700k) bounds runaway loops (an image-flag challenge burned 456k tokens in 22 calls under the previous settings).
+- Reproducibility finding: borderline solves are nondeterministic — `numerology` solved exactly in one 30-round session (5 calls, 36.6k tokens) and early-exited in another, so deep-budget results carry run-to-run variance until model/tooling stabilizes.
+
 ## 0.12.0 - 2026-08-18
 
 - Deep agentic loop: `LLMExecuteSolver` now runs up to 30 rounds (`FORGEFLAG_LLMEXEC_MAX_ATTEMPTS`) with a persistent read-write `/work` scratch directory shared across rounds (decoded blobs, candidate keys, partial plaintexts survive between attempts), per-round `/work` listings fed back to the model, and guards for repeated scripts, honest NOT_RECOVERED streaks, wall-clock (`FORGEFLAG_LLMEXEC_MAX_SECONDS`, default 40 min) and token budget (`FORGEFLAG_LLMEXEC_MAX_TOKENS`, default 700k).
