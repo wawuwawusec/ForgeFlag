@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.0 - 2026-08-19
+
+- Added the **service simulation layer**: `scripts/forgeflag-service-harness` deploys service-based held-out challenges locally (mines the deployed FLAG and entrypoint from the upstream Dockerfile, runs the server inside the ForgeFlag sandbox image via socat on a unique localhost port, batched lifecycle with wait/teardown), and emits runtime manifests whose cases carry live targets.
+- `LLMExecuteSolver` gained an interactive localhost mode: when the challenge targets an allowlisted local service, the script sandbox switches to host networking with `CHALLENGE_TARGET` injected and the prompt instructs real protocol interaction (pwntools remote/socket) — network access remains restricted to the locally deployed authorized challenge.
+- Measured impact on the 192-case mixed corpus: the service layer converted 7 previously-unsolved service challenges (decrypt-then-eval, v-for-vieta, accessible-sesamum-indicum, babycha, dhash, integral-communication, what-the-beep), lifting exact-flag accuracy from 4.2% to **7.8%** (from 1.8% at the deterministic baseline — 4.3x overall).
+- Collector `--include-easy` for mixed-tier corpus composition.
+
 ## 0.13.0 - 2026-08-18
 
 - Multimodal LLM layer: the Anthropic-compatible provider accepts image bytes and emits base64 image blocks; the planning solver attaches image attachments directly and the execution solver feeds both original images and the latest images produced in the persistent `/work` scratch back into every round — vision-capable checkpoints (glm-4.5v/4.6v on the Coding Plan endpoint) can now see challenge artifacts and intermediate renders. OCR fidelity of the currently available checkpoints is limited and documented honestly.

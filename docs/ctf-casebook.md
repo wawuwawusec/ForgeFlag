@@ -2730,6 +2730,43 @@ Solver lesson:
 - Use `--search-unstable --search-seeds <a,b,c> --search-steps <k> --candidate-trials <m> --search-output <json> --payload-output <txt>` for repeatable seed-sweep CPU experiments; the short smoke path with one step and one trial proves the wrapper emits final JSON, `all_results`, and a reusable payload file without committing to a long search.
 - Future work: make candidate evaluation faster without changing BatchNorm semantics, or cache a verified 30-pixel payload after reproducing it locally.
 
+### US Cyber Open 2026: mis1
+
+Category:
+
+- Misc / ML text-model fingerprinting.
+
+Signal:
+
+- The handout ships labelled `train.json`, unlabelled `test.json`, and a README asking for a digit-label string.
+- Training prompts repeat exactly four times, once per label, while the test set has four answers for each prompt.
+- Labels have strong style fingerprints: leading spaces, trailing newlines, Markdown headings/bold/list density, opening phrases, punctuation, and answer length.
+
+Shortest path:
+
+```bash
+python3 -m pip install --target .work/pydeps scikit-learn
+python3 scripts/solve_mis1_model_fingerprint.py --skip-validation \
+  --input-dir .work/mis1-20260818 \
+  --output .work/mis1-20260818/answer.txt
+```
+
+Validation evidence:
+
+```text
+prompt-group holdout: 1510 prompts / 6040 answers
+direct SVM accuracy: 0.964570
+grouped assignment accuracy: 0.988079
+final answer length: 10000
+final answer sha256: 1af931467ffa13b2319f2668443c2990ded5b553b2903b72ec985ac11cf0552a
+```
+
+Solver lesson:
+
+- Split validation by prompt, not by row, because otherwise the same prompt leaks between train and validation.
+- Use explicit style features alongside TF-IDF; positional formatting such as leading spaces and trailing newlines is easy for bag features to underweight.
+- When each prompt has exactly four candidate answers, solve a small assignment problem so every group receives labels `0`, `1`, `2`, and `3` exactly once.
+
 ### TJCTF 2024: golf-hard
 
 Category:

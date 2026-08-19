@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Batch lifecycle manager for service-based held-out challenges.
+
+Builds and runs each challenge's Dockerfile on a unique host port, emits a
+runtime manifest whose cases carry a localhost target (so PwnSolver/WebSolver
+and the LLM execution sandbox can interact with the live challenge), then
+tears the batch down. Only localhost-bound authorized challenge services are
+managed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PORT_BASE = 21000
+COMMON_PORTS = (1337, 5000, 9999, 8000, 8080, 4000)
+
+
+def docker(*args: str, timeout: int = 600) -> subprocess.CompletedProcess:
+    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def expose_port(dockerfile: Path) -> int | None:
+    try:
+        text = dockerfile.read_text(errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"\s*EXPOSE\s+(\d+)", line, re.I)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def wait_port(port: int, timeout: float = 25.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
+def parse_dockerfile(dockerfile: Path) -> dict:
+    info = {"flag": "", "entry": "", "sources": []}
+    try:
+        text = dockerfile.read_text(errors="replace")
+    except OSError:
+        return info
+    m = re.search(r'ENV\s+FLAG="?([^"\n]+)"?', text)
+    if m:
+        info["flag"] = m.group(1).strip()
+    for m in re.finditer(r"COPY\s+(\S+)\s+(\S+)", text):
+        info["sources"].append(m.group(1))
+        if m.group(2).endswith("/pwn") or m.group(2).endswith("/chal"):
+            info["entry"] = m.group(1)
+    return info
+
+
+def start_service(challenge_id: str, source_dir: Path, port: int, dockerfile: Path, expected_flag: str = "") -> dict:
+    """Run the challenge server inside the ForgeFlag sandbox image via socat.
+
+    The upstream challenge Dockerfile is only mined for the deployed FLAG and
+    entrypoint; the nsjail-style base images are not rebuilt.
+    """
+    container = f"ff-svc-{challenge_id}".replace("_", "-").lower()[:60]
+    docker("rm", "-f", container, timeout=60)
+    info = parse_dockerfile(dockerfile)
+    flag = info["flag"] or expected_flag
+    sources = sorted(p for p in source_dir.iterdir() if p.is_file()) if source_dir.is_dir() else []
+    entry = info["entry"] or next((p.name for p in sources if p.suffix == ".py"), "")
+    if not entry:
+        return {"status": "no_entry", "container": container}
+    cmd = f"cd /chal && socat TCP-LISTEN:{port},reuseaddr,fork SYSTEM:\"python3 {entry} 2>/dev/null\""
+    run = docker(
+        "run", "-d", "--rm", "--name", container,
+        "-p", f"127.0.0.1:{port}:{port}",
+        "-v", f"{source_dir.resolve()}:/chal:ro",
+        "-e", f"FLAG={flag}",
+        "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
+        "forgeflag-ctf:latest",
+        "sh", "-c", cmd,
+    )
+    if run.returncode != 0:
+        return {"status": "run_failed", "stderr": run.stderr[-300:], "container": container}
+    return {"status": "started", "container": container, "port": port, "entry": entry}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=["up", "down", "status"])
+    parser.add_argument("--deployable", default=".forgeflag/deployable.json", help="JSON list of [cid, path, kind]")
+    parser.add_argument("--manifests", nargs="+", required=True, help="Source manifests to pull cases from")
+    parser.add_argument("--batch", type=int, default=8, help="Services per batch")
+    parser.add_argument("--batch-index", type=int, default=0, help="Which batch to start (0-based)")
+    parser.add_argument("--runtime-out", default=".forgeflag/service-runtime.json", help="Runtime state (containers/ports)")
+    parser.add_argument("--manifest-out", default=".forgeflag/service-batch-manifest.json")
+    args = parser.parse_args()
+
+    state_path = Path(args.runtime_out)
+    if args.action == "down":
+        if state_path.is_file():
+            for entry in json.loads(state_path.read_text()).get("services", []):
+                docker("rm", "-f", entry["container"], timeout=60)
+        else:
+            for line in docker("ps", "--format", "{{.Names}}").stdout.splitlines():
+                if line.startswith("ff-svc-"):
+                    docker("rm", "-f", line, timeout=60)
+        state_path.unlink(missing_ok=True)
+        print("all services stopped")
+        return 0
+
+    if args.action == "status":
+        running = [n for n in docker("ps", "--format", "{{.Names}}").stdout.splitlines() if n.startswith("ff-svc-")]
+        print(json.dumps({"running": running}, indent=1))
+        return 0
+
+    # up
+    deployable = json.loads(Path(args.deployable).read_text())
+    cases_by_id = {}
+    for manifest in args.manifests:
+        for case in json.loads(Path(manifest).read_text())["cases"]:
+            cases_by_id[case["challenge_id"]] = case
+    batch = deployable[args.batch_index * args.batch : (args.batch_index + 1) * args.batch]
+
+    services, runtime_cases = [], []
+    for i, (cid, path, kind) in enumerate(batch):
+        source_dir = Path(path).parent
+        port = expose_port(Path(path)) or COMMON_PORTS[i % len(COMMON_PORTS)]
+        port = PORT_BASE + args.batch_index * 100 + i
+        case = cases_by_id.get(cid)
+        result = start_service(cid, source_dir, port, Path(path), expected_flag=(case or {}).get("expected_flag", ""))
+        if result["status"] != "started":
+            print(f"{cid}: {result['status']} {result.get('stderr', '')[:80]}", file=sys.stderr)
+            continue
+        if not wait_port(port):
+            print(f"{cid}: port {port} never opened", file=sys.stderr)
+            docker("rm", "-f", result["container"], timeout=60)
+            continue
+        if not case:
+            docker("rm", "-f", result["container"], timeout=60)
+            continue
+        case = dict(case)
+        case["target"] = f"nc://127.0.0.1:{port}"
+        case["active_probe"] = True
+        case["allowed_hosts"] = "127.0.0.1,localhost"
+        services.append(result)
+        runtime_cases.append(case)
+        print(f"{cid}: up on 127.0.0.1:{port}")
+
+    state_path.write_text(json.dumps({"services": services, "batch_index": args.batch_index}, indent=1))
+    Path(args.manifest_out).write_text(json.dumps({"source": "service-batch", "cases": runtime_cases}, indent=2, ensure_ascii=False))
+    print(f"batch {args.batch_index}: {len(runtime_cases)} services up -> {args.manifest_out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

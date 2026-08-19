@@ -206,6 +206,7 @@ ForgeFlag next additions:
 - For corrupted esolang or visual-code source, recover structure before execution. DoubleHelix-style Ruby can be decoded by matching the DNA-art row cycle, enumerating missing `AT/CG/GC/TA` pairs, and packing bits in little-endian byte order.
 - For Vivado hardware handouts, treat `.dcp` checkpoints as ZIP containers first. Extract `main.edf`, parse LUT `INIT` values and net joins, then simulate small combinational switch/LED/seven-segment designs before falling back to GUI schematic reconstruction.
 - For ML/adversarial-image tasks, match the service's exact model mode and preprocessing before optimizing. A ResNet left in train mode can score a single image differently from `eval()` mode, and BatchNorm makes batched candidate scoring differ from the single-image service path, so preserve baseline score, pixel budget, and server-returned proof separately from model-only experiments.
+- For model-fingerprint text tasks, split validation by prompt when multiple model answers share the same prompt. Combine TF-IDF with explicit style features such as leading spaces, trailing newlines, Markdown density, first words, punctuation, and length; if each prompt has one answer per label, use group-wise assignment instead of independent argmax predictions.
 
 ForgeFlag next additions:
 

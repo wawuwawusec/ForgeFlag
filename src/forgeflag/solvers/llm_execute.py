@@ -65,6 +65,8 @@ class LLMExecuteSolver:
         max_tokens_budget = max(50_000, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_TOKENS", "700000")))
         import tempfile as _tempfile
 
+        target = (challenge.target or "").strip()
+        allow_localhost = bool(target) and ("127.0.0.1" in target or "localhost" in target)
         session = _tempfile.mkdtemp(prefix="forgeflag-llmsession-")
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if time.monotonic() - started > MAX_SESSION_SECONDS:
@@ -96,7 +98,7 @@ class LLMExecuteSolver:
                 history.append({"role": "assistant", "content": response.content[:2000]})
                 last_output = "no python code block found in model response"
                 continue
-            run = _run_in_sandbox(attachments, script, session=session)
+            run = _run_in_sandbox(attachments, script, session=session, allow_localhost=allow_localhost, target=target)
             last_output = run["stdout"]
             flags = extract_flags_generic(run["stdout"])
             history.append(
@@ -206,6 +208,7 @@ def _prompt(
         "attachment files (read-only, in the working directory):",
         ", ".join(Path(path).name for path in challenge.attachment_paths),
         preview,
+        *( [f"live local challenge service reachable at: {challenge.target} (env CHALLENGE_TARGET; use pwntools remote/socket to 127.0.0.1) — interact with it, read menus, send payloads"] if (challenge.target and "127.0.0.1" in (challenge.target or "")) else [] ),
         "prior solver observations:",
         observations or "- none",
         "prior deterministic solver findings (near-misses and partial decodes are high-signal):",
@@ -241,7 +244,7 @@ def _work_listing(work_dir: Path) -> str:
         return ""
 
 
-def _run_in_sandbox(attachments: list[str], script: str, session: str | None = None) -> dict[str, Any]:
+def _run_in_sandbox(attachments: list[str], script: str, session: str | None = None, allow_localhost: bool = False, target: str = "") -> dict[str, Any]:
     import shutil
 
     if not shutil.which("docker"):
@@ -264,6 +267,11 @@ def _run_in_sandbox(attachments: list[str], script: str, session: str | None = N
         script_path.write_text(script, encoding="utf-8")
         script_path.chmod(0o400)
         container = f"forgeflag-llmexec-{uuid4().hex[:12]}"
+        network_mode = "none"
+        if allow_localhost:
+            # service challenges: reach the locally deployed authorized
+            # challenge service; still no other network egress via docker
+            network_mode = "host"
         argv = [
             "docker",
             "run",
@@ -271,7 +279,7 @@ def _run_in_sandbox(attachments: list[str], script: str, session: str | None = N
             "--name",
             container,
             "--network",
-            "none",
+            network_mode,
             "--read-only",
             "--memory",
             "512m",
@@ -293,6 +301,7 @@ def _run_in_sandbox(attachments: list[str], script: str, session: str | None = N
             ),
             "-w",
             "/challenge",
+            *([ "-e", f"CHALLENGE_TARGET={target}" ] if (allow_localhost and target) else []),
             SANDBOX_IMAGE,
             SANDBOX_PYTHON,
             "-I",
