@@ -193,13 +193,14 @@ def main() -> int:
     parser.add_argument("--flag-prefix", default="DUCTF", help="cached: flag prefix regex body")
     parser.add_argument("--handout-names", default="dist,publish,handout", help="cached: comma-separated handout dir names")
     parser.add_argument("--depth", type=int, default=2, help="cached: challenge dir depth under root")
+    parser.add_argument("--include-easy", action="store_true", help="cached: keep Easy/Beginner-labeled challenges")
     args = parser.parse_args()
 
     if args.source == "gctf":
         years = [year.strip() for year in args.years.split(",") if year.strip()]
         cases = collect_gctf(args.root, years, args.max_attachment_mb)
     elif args.source == "cached":
-        cases = collect_cached_archive(args.root, args.flag_prefix, tuple(args.handout_names.split(",")), args.depth, args.max_attachment_mb)
+        cases = collect_cached_archive(args.root, args.flag_prefix, tuple(args.handout_names.split(",")), args.depth, args.max_attachment_mb, include_easy=args.include_easy)
     else:
         cases = collect_sekai(args.root, args.min_stars)
 
@@ -218,7 +219,7 @@ def main() -> int:
 
 
 
-def collect_cached_archive(root: Path, flag_prefix: str, handout_names: tuple[str, ...], depth: int, max_attachment_mb: float = 20.0) -> list[dict]:
+def collect_cached_archive(root: Path, flag_prefix: str, handout_names: tuple[str, ...], depth: int, max_attachment_mb: float = 20.0, include_easy: bool = False) -> list[dict]:
     """Enroll challenges from a locally cached public archive.
 
     Ground-truth flags are mined from the challenge SOURCE tree (deploy
@@ -244,8 +245,9 @@ def collect_cached_archive(root: Path, flag_prefix: str, handout_names: tuple[st
             continue
         readme = chal / "README.md"
         readme_text = readme.read_text(errors="replace") if readme.is_file() else ""
-        if _re.search(r"\b(Easy|Beginner)\b", readme_text[:400], _re.I) or chal.name.startswith("[Easy]"):
-            continue
+        if not include_easy:
+            if _re.search(r"\b(Easy|Beginner)\b", readme_text[:400], _re.I) or chal.name.startswith("[Easy]"):
+                continue
         flags = set()
         for f in chal.rglob("*"):
             if not f.is_file() or handout in f.parents:
