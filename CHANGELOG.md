@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.1 - 2026-08-20
+
+- Failure-analysis-driven fixes for the 192-case corpus:
+  - `LLMExecuteSolver` now records every round (script/stdout/stderr/work-files) as `llm_exec_round` observations, giving the ReviewerAgent full trajectories to judge and operators direct visibility into where attempts stall.
+  - Executable-response protocol: a model reply without a runnable ```python block is fed back as an explicit failed round ("wasted round") instead of being silently skipped — the deep-dive showed only 1 of 10 budgeted rounds actually executed on the AES case.
+  - SageMath-aware execution: scripts with a sage shebang or sage imports run under `/usr/bin/sage` when the sagemath image variant is present (`.sage` crypto handouts were dead-on-arrival in the plain venv sandbox).
+- Documented root-cause taxonomy of the 15/192 result: 46% offline-depth gap, 19% service-available-but-unsolved, 8% near-miss wrong flags, 8% pwn exploit gap, 6% web-needs-live-instance, 4% no artifacts, 1% harness.
+
 ## 0.15.0 - 2026-08-20
 
 - Added the **ReviewerAgent** (`forgeflag.reviewer`): CTFJudge-style LLM-as-judge over solver trajectories (arXiv:2508.05674) combined with deterministic evidence checks — placeholder-flag detection, missing ctf_scope findings, empty-execution warnings — producing a quality verdict plus a concrete `reflection_hint`.

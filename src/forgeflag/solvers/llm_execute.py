@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from forgeflag.ctf_scope import ctf_scope_evidence
-from forgeflag.domain import ChallengeCategory, Finding, SolverResult
+from forgeflag.domain import ChallengeCategory, Finding, Observation, SolverResult
 from forgeflag.flags import extract_flags_generic
 from forgeflag.solvers.base import SolverContext
 from forgeflag.reviewer import reflection_hint_from_observations
@@ -79,7 +79,7 @@ class LLMExecuteSolver:
             try:
                 response = self.provider.generate(
                     _instructions(),
-                    _prompt(context, preview, observations, history, prior_findings),
+                    _prompt(context, preview, observations, history, prior_findings, reviewer_hint),
                     **({"images": vision_images} if vision_images else {}),
                 )
                 tokens_spent += int(response.usage.get("total_tokens") or 0)
@@ -97,7 +97,14 @@ class LLMExecuteSolver:
                 return SolverResult(self.name, challenge.challenge_id, "provider_unavailable", (finding,))
             script = _extract_code(response.content)
             if not script:
-                history.append({"role": "assistant", "content": response.content[:2000]})
+                history.append({
+                    "role": "assistant",
+                    "content": response.content[:2000],
+                    "script": "",
+                    "returncode": "-",
+                    "stderr": "RESPONSE CONTAINED NO EXECUTABLE ```python BLOCK. Every round MUST end with one complete runnable script.",
+                    "stdout": "",
+                })
                 last_output = "no python code block found in model response"
                 continue
             run = _run_in_sandbox(attachments, script, session=session, allow_localhost=allow_localhost, target=target)
@@ -118,6 +125,21 @@ class LLMExecuteSolver:
                 return SolverResult(self.name, challenge.challenge_id, "sandbox_unavailable", (finding,))
             work_listing = _work_listing(Path(session) / "work")
             history[-1]["work_files"] = work_listing[:600]
+            context.notebook.add_observation(
+                Observation(
+                    challenge_id=challenge.challenge_id,
+                    source=self.name,
+                    kind="llm_exec_round",
+                    summary=f"round {attempt}: rc={run.get('returncode')} :: {str(run.get('stdout', ''))[:160].replace(chr(10), ' | ')}",
+                    evidence={
+                        "attempt": attempt,
+                        "script": script[:1200],
+                        "stdout": str(run.get("stdout", ""))[:1200],
+                        "stderr": str(run.get("stderr", ""))[:400],
+                        "work_files": work_listing[:300],
+                    },
+                )
+            )
             if "NOT_RECOVERED" in run["stdout"]:
                 not_recovered_streak += 1
                 if not_recovered_streak >= 3:
@@ -153,7 +175,7 @@ def _instructions() -> str:
         "working directory and prints the recovered flag to stdout. You have up to 8 rounds — use them to "
         "explore: first round can inspect files (print listings, hexdumps, parse structures), later rounds "
         "should attempt the full solve informed by every prior output. "
-        "Available libraries: python stdlib, Crypto (pycryptodome), z3, pwntools. "
+        "Available libraries: python stdlib, Crypto (pycryptodome), z3, pwntools, and SageMath (start scripts with #!/usr/bin/env sage when finite fields, lattices, or elliptic curves are needed). "
         "There is NO network access; do not import sockets or make requests. "
         "Read files by relative name exactly as listed (cwd, read-only). A read-write scratch directory /work persists across ALL rounds: save intermediates (decoded blobs, candidate keys, partial plaintexts) there and reuse them in later rounds. Print every intermediate finding on its own line; "
         "end with the flag alone on a line if recovered. "
@@ -163,7 +185,7 @@ def _instructions() -> str:
         "try brute-force over small keyspaces, known-plaintext attacks, and category-standard attacks. "
         "NEVER guess or invent a flag: a flag candidate must be a byte-exact string your script printed from parsed challenge data. "
         "If after all attempts you cannot recover it, print exactly NOT_RECOVERED — a wrong guess is worse than an honest failure. "
-        "Respond with a single ```python code block and nothing else."
+        "Respond with a single ```python code block and nothing else — a response without an executable block is a wasted round."
     )
 
 
@@ -200,6 +222,7 @@ def _prompt(
     observations: str,
     history: list[dict[str, str]],
     prior_findings: str = "",
+    reviewer_hint: str = "",
 ) -> str:
     challenge = context.challenge
     parts = [
@@ -275,6 +298,9 @@ def _run_in_sandbox(attachments: list[str], script: str, session: str | None = N
             # service challenges: reach the locally deployed authorized
             # challenge service; still no other network egress via docker
             network_mode = "host"
+        interpreter = SANDBOX_PYTHON
+        if script.startswith(("#!/usr/bin/env sage", "#!/usr/bin/sage")) or "from sage" in script[:400] or "import sage" in script[:400]:
+            interpreter = "/usr/bin/sage"
         argv = [
             "docker",
             "run",
@@ -306,10 +332,7 @@ def _run_in_sandbox(attachments: list[str], script: str, session: str | None = N
             "/challenge",
             *([ "-e", f"CHALLENGE_TARGET={target}" ] if (allow_localhost and target) else []),
             SANDBOX_IMAGE,
-            SANDBOX_PYTHON,
-            "-I",
-            "-B",
-            "-u",
+            *([interpreter] if interpreter.endswith("sage") else [interpreter, "-I", "-B", "-u"]),
             "/challenge/solve.py",
         ]
         try:
