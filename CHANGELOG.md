@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.0 - 2026-08-20
+
+- Added the **ReviewerAgent** (`forgeflag.reviewer`): CTFJudge-style LLM-as-judge over solver trajectories (arXiv:2508.05674) combined with deterministic evidence checks — placeholder-flag detection, missing ctf_scope findings, empty-execution warnings — producing a quality verdict plus a concrete `reflection_hint`.
+- Reflection-driven retry (arXiv:2405.06682): every failed run now records a reviewer verdict in the notebook, and `LLMExecuteSolver` injects the latest reflection hint into retry prompts so the next attempt starts from an informed critique instead of repeating itself.
+- Corpus-level auto-optimization loop: `forgeflag optimize --scorecard ... --manifests ...` reviews a scorecard into actionable buckets (near-miss, service-deployable, no-progress, harness), emits a prioritized retry manifest with reviewer guidance baked into challenge descriptions, and surfaces run-to-run variance (flaky challenges) from scorecard history — addressing the reliability concern raised by CTFusion (arXiv:2605.11504).
+- New `forgeflag review <challenge_id>` CLI command for single-challenge trajectory judging.
+- Techniques adopted from recent agentic-CTF research: interactive-tool emphasis validated by EnIGMA (arXiv:2409.16165) matches our service-layer results.
+
 ## 0.14.0 - 2026-08-19
 
 - Added the **service simulation layer**: `scripts/forgeflag-service-harness` deploys service-based held-out challenges locally (mines the deployed FLAG and entrypoint from the upstream Dockerfile, runs the server inside the ForgeFlag sandbox image via socat on a unique localhost port, batched lifecycle with wait/teardown), and emits runtime manifests whose cases carry live targets.

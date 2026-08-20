@@ -24,6 +24,7 @@ from forgeflag.ctf_scope import ctf_scope_evidence
 from forgeflag.domain import ChallengeCategory, Finding, SolverResult
 from forgeflag.flags import extract_flags_generic
 from forgeflag.solvers.base import SolverContext
+from forgeflag.reviewer import reflection_hint_from_observations
 from forgeflag.solvers.llm import LLMProvider, _attachment_previews
 from forgeflag.tools.runner import _docker_host_mount
 
@@ -57,6 +58,7 @@ class LLMExecuteSolver:
             f"- {observation.kind}: {observation.summary}" for observation in context.observations[-20:]
         )
         prior_findings = _prior_findings_digest(context)
+        reviewer_hint = reflection_hint_from_observations(context.observations)
         history: list[dict[str, str]] = []
         last_output = ""
         started = time.monotonic()
@@ -213,6 +215,7 @@ def _prompt(
         observations or "- none",
         "prior deterministic solver findings (near-misses and partial decodes are high-signal):",
         prior_findings or "- none",
+        *([ "reviewer reflection hint from a previous failed attempt — follow it:", reviewer_hint ] if reviewer_hint else []),
     ]
     for entry in history:
         parts.append(

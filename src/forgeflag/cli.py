@@ -63,6 +63,19 @@ def build_parser() -> argparse.ArgumentParser:
     run_all.add_argument("--llm-model", help="Model name for the configured LLM provider")
     run_all.add_argument("--llm-base-url", help="Override the provider API base URL")
 
+    review = subparsers.add_parser("review", help="Run the reviewer agent over one challenge's trajectory")
+    review.add_argument("challenge_id")
+
+    optimize = subparsers.add_parser(
+        "optimize",
+        help="Review a scorecard and emit a prioritized retry manifest with reflection guidance",
+    )
+    optimize.add_argument("--scorecard", default=".forgeflag/capability-benchmark-latest.json")
+    optimize.add_argument("--manifests", nargs="+", required=True, help="Manifests containing the failed cases")
+    optimize.add_argument("--top", type=int, default=10)
+    optimize.add_argument("--output", default=".forgeflag/optimize-retry-manifest.json")
+    optimize.add_argument("--history", help="Optional scorecard history JSONL for variance analysis")
+
     findings = subparsers.add_parser("findings", help="Show findings for one challenge")
     findings.add_argument("challenge_id")
 
@@ -201,6 +214,81 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
 
+    if args.command == "review":
+        from forgeflag.llm import build_llm_provider
+        from forgeflag.reviewer import ReviewerAgent
+
+        provider = None
+        try:
+            candidate = build_llm_provider(_llm_config_from_args_env())
+            provider = candidate if candidate.enabled else None
+        except ValueError:
+            provider = None
+        verdict = ReviewerAgent(provider).review_challenge(notebook, args.challenge_id)
+        print(
+            json.dumps(
+                {
+                    "challenge_id": verdict.challenge_id,
+                    "quality": verdict.quality,
+                    "issues": verdict.issues,
+                    "reflection_hint": verdict.reflection_hint,
+                    "llm_analysis": verdict.llm_analysis,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "optimize":
+        from forgeflag.reviewer import ReviewerAgent
+
+        scorecard = json.loads(Path(args.scorecard).read_text(encoding="utf-8"))
+        try:
+            deployable = {row[0] for row in json.loads(Path(".forgeflag/deployable.json").read_text())}
+        except (OSError, json.JSONDecodeError):
+            deployable = set()
+        review = ReviewerAgent().review_corpus(scorecard, deployable_ids=deployable)
+        retry_ids = review["prioritized_retry_ids"][: args.top]
+        cases_by_id = {}
+        for manifest_path in args.manifests:
+            for case in json.loads(Path(manifest_path).read_text(encoding="utf-8"))["cases"]:
+                cases_by_id[case["challenge_id"]] = case
+        retry_cases = []
+        for cid in retry_ids:
+            case = cases_by_id.get(cid)
+            if case is None:
+                continue
+            case = dict(case)
+            hint = (
+                "Reviewer guidance: prior attempt reached flag-shaped output but did not match; "
+                "verify against challenge data, use the live local service when provided, and "
+                "never guess flag text."
+            )
+            case["description"] = f"{case.get('description') or ''}\n\n{hint}".strip()
+            retry_cases.append(case)
+        Path(args.output).write_text(
+            json.dumps({"source": "optimize-retry", "cases": retry_cases}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        payload = {
+            "buckets": {k: len(v) for k, v in review["buckets"].items()},
+            "retries": [c["challenge_id"] for c in retry_cases],
+            "retry_manifest": args.output,
+            "recommendations": review["recommendations"],
+        }
+        history_path = args.history
+        if history_path and Path(history_path).is_file():
+            scorecards = []
+            for line in Path(history_path).read_text(encoding="utf-8").splitlines():
+                try:
+                    scorecards.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+            payload["variance"] = ReviewerAgent.variance_report(scorecards)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "findings":
         rows = [
             {
@@ -286,6 +374,10 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _llm_config_from_args_env() -> LLMConfig:
+    return LLMConfig.from_env()
 
 
 def _llm_config_from_args(args: argparse.Namespace) -> LLMConfig:

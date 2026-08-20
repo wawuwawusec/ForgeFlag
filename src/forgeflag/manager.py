@@ -11,6 +11,7 @@ from forgeflag.llm_critic import build_post_run_critic_observation
 from forgeflag.notebook import SQLiteNotebook
 from forgeflag.observer import Observer
 from forgeflag.report import ReportBuilder
+from forgeflag.reviewer import ReviewerAgent, reviewer_observation
 from forgeflag.safety import ScopePolicy
 from forgeflag.solvers import (
     CryptoSolver,
@@ -183,6 +184,14 @@ class Manager:
             if critic is not None:
                 self.notebook.add_observation(critic)
                 summary["post_run_critic"] = critic.evidence
+            reviewer_provider = self._critic_provider()
+            verdict = ReviewerAgent(reviewer_provider).review_challenge(self.notebook, challenge_id)
+            self.notebook.add_observation(reviewer_observation(verdict))
+            summary["reviewer"] = {
+                "quality": verdict.quality,
+                "issues": verdict.issues,
+                "reflection_hint": verdict.reflection_hint,
+            }
         token_usage = self.token_ledger.summary_for(challenge_id)
         if token_usage["calls"]:
             summary["token_usage"] = token_usage

@@ -86,6 +86,23 @@ see [docs/delivery.md](docs/delivery.md) for details:
 - **Docker**: `make docker-build` builds the Kali-based toolchain image ToolRunner falls back to when host tools are missing.
 - **Source**: clone, `pip install -e .`, then `make test && make smoke`.
 
+## Reviewer agent and auto-optimization
+
+Every failed run is judged by the `ReviewerAgent` (deterministic evidence
+checks + LLM-as-judge over the trajectory), which records a quality verdict and
+a reflection hint that later retries consume. Corpus-level optimization:
+
+```bash
+forgeflag optimize --scorecard .forgeflag/mixed200-result.json \
+  --manifests .forgeflag/ductf-mixed.json --top 10
+forgeflag review <challenge_id>   # single-challenge trajectory judging
+```
+
+The optimizer buckets failures (near-miss / service-deployable / no-progress /
+harness), emits a prioritized retry manifest, and reports flaky challenges from
+scorecard history — grounding in CTFJudge-style judging and reflection-retry
+research.
+
 ## LLM providers
 
 `FORGEFLAG_LLM_PROVIDER` supports `zhipu` (BigModel pay-per-use), `anthropic`
