@@ -59,6 +59,7 @@ RUN apt-get update \
         capstone \
         mcp[cli] \
         numpy \
+        passagemath-standard \
         pillow \
         pwntools \
         pycryptodome \
@@ -68,6 +69,10 @@ RUN apt-get update \
     && if ! command -v RsaCtfTool >/dev/null 2>&1 && command -v RsaCtfTool.py >/dev/null 2>&1; then ln -s "$(command -v RsaCtfTool.py)" /usr/local/bin/RsaCtfTool; fi \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+RUN printf '#!/bin/sh\nexec /opt/forgeflag-venv/bin/python /opt/forgeflag-venv/sage-runner.py\n' > /usr/local/bin/sage \
+    && printf 'from sage.all import *\nfrom sage.repl.preparse import preparse\nexec(preparse(open("/challenge/solve.py").read()))\n' > /opt/forgeflag-venv/sage-runner.py \
+    && chmod +x /usr/local/bin/sage
 
 ENV PATH="/opt/forgeflag-venv/bin:${PATH}"
 WORKDIR /workspace

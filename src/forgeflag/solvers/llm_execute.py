@@ -34,7 +34,7 @@ import os as _os
 
 MAX_ATTEMPTS = max(1, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_ATTEMPTS", "30")))
 MAX_SESSION_SECONDS = max(60, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_SECONDS", "2400")))
-SANDBOX_IMAGE = "forgeflag-ctf:latest"
+SANDBOX_IMAGE = _os.environ.get("FORGEFLAG_LLMEXEC_IMAGE", "forgeflag-ctf:latest")
 SANDBOX_PYTHON = "/opt/forgeflag-venv/bin/python"
 
 

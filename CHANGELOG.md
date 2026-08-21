@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.2 - 2026-08-21
+
+- SageMath now runs inside the execution sandbox: the tool image venv installs `passagemath-standard` with a `sage` shim (preparse-enabled runner), `.sage`-heuristic interpreter selection from 0.15.1 activates it, and the sandbox image is env-selectable (`FORGEFLAG_LLMEXEC_IMAGE`) — verified live: model-authored sage scripts execute against finite-field handouts.
+- Reflection-retry loop validated on the near-miss bucket: converted `irisctf whats-a-rune` (corpus tally 16/192 = 8.3%).
+- Honest note: the AES/braid-KAP sage challenge now computes for real but its first flag candidate was the handout's own `DUCTF{dummy_flag}` placeholder — correctly rejected by the verifier; research-grade crypto remains model-bound.
+
 ## 0.15.1 - 2026-08-20
 
 - Failure-analysis-driven fixes for the 192-case corpus:
