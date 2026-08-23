@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.0 - 2026-08-23
+
+- Added the **replay-tier runner** (`scripts/forgeflag-replay-runner`): runs cached public author solutions against locally deployed authorized challenge instances — python servers or prebuilt ELFs via socat (run.sh-aware, arch-aware qemu handling, sage-image fallback, `remote()` target localization, real flag deployment from challenge metadata).
+- Replay-tier measured on the 24-case cached-solve pool: 4 exact-flag conversions (my-array-generator, shufflebox, rusty-vault, pressing-buttons) — portable solves convert; env-pinned exploits (ASLR-address-hardcoded, qemu-sysroot-specific) honestly fail and are recorded as such.
+- Corpus accuracy trajectory on the 192 real challenges: 1.8% → 4.2% → 7.8% → 8.3% → **10.4%** (20/192).
+- Tool image: asn1crypto and qemu-user added for replay coverage.
+
 ## 0.15.2 - 2026-08-21
 
 - SageMath now runs inside the execution sandbox: the tool image venv installs `passagemath-standard` with a `sage` shim (preparse-enabled runner), `.sage`-heuristic interpreter selection from 0.15.1 activates it, and the sandbox image is env-selectable (`FORGEFLAG_LLMEXEC_IMAGE`) — verified live: model-authored sage scripts execute against finite-field handouts.

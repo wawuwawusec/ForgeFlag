@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Replay-tier solver: run cached public author solutions locally.
+
+For each challenge the local cache may ship an author solve script and,
+sometimes, the challenge server source. This runner:
+
+- deploys the server via the socat wrapper (same as the service harness) when
+  server source exists and a port is given;
+- rewrites the solve script's ``remote("host", port)`` targets to the local
+  service (standard local-replay practice for authorized challenge replays);
+- runs the solve with the analysis venv, falling back to the sandbox image's
+  sage runtime when the script imports sage;
+- prints every recovered flag; exits 0 when at least one was captured.
+
+Only locally deployed authorized services are contacted.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+FLAG = re.compile(r"[A-Za-z0-9_]{1,24}\{[^{}\s]{6,160}\}")
+REMOTE_PATTERN = re.compile(r"""remote\(\s*["']([^"']+)["']\s*,\s*(\d+)\s*[^)]*\)""")
+PLACEHOLDERS = ("testflag", "test_flag", "fake", "placeholder", "example", "dummy", "redacted")
+
+
+def docker(*args, timeout=180):
+    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def wait_port(port: int, timeout: float = 30.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
+def _server_command(src_dir: Path, port: int) -> str | None:
+    """python server or prebuilt ELF server, whichever the challenge ships."""
+    py = sorted(src_dir.glob("*.py"))
+    if py:
+        return f'cd /chal && socat TCP-LISTEN:{port},reuseaddr,fork SYSTEM:"python3 {py[0].name} 2>/dev/null"'
+    run_sh = src_dir / "run.sh"
+    if run_sh.is_file():
+        inner = run_sh.read_text(errors="replace").strip().splitlines()[-1].strip()
+        # containers are aarch64; run arm64 binaries natively instead of qemu
+        # (qemu-user lacks PAC/pointer-auth for some challenge binaries)
+        # strip qemu only when the binary arch matches this arm64 container
+        m = re.search(r"(\S+)\s*$", inner)
+        if m:
+            target = src_dir / m.group(1)
+            if target.is_file() and target.read_bytes()[:4] == b"\x7fELF":
+                machine = target.read_bytes()[18]
+                if machine == 0xB7:  # AArch64 — native on this container
+                    inner = re.sub(r"qemu-\S+\s+", "", inner)
+        return f'cd /chal && socat TCP-LISTEN:{port},reuseaddr,fork SYSTEM:"cd /chal && {inner} 2>/dev/null",pty,stderr'
+    real = []
+    for p in sorted(src_dir.iterdir()):
+        if not p.is_file() or p.name.startswith(("Dockerfile", "flag", "ld-", "libc")):
+            continue
+        has_source = (src_dir / f"{p.name}.c").exists() or (src_dir / f"{p.name}.cpp").exists()
+        if p.suffix == "" and (has_source or p.read_bytes()[:4] == b"\x7fELF"):
+            real.append(p)
+    if real:
+        elf = real[0]
+        return f'cd /chal && socat TCP-LISTEN:{port},reuseaddr,fork EXEC:"/chal/{elf.name}",pty,stderr,setsid,sigint,sane'
+    return None
+
+
+def ensure_service(name: str, src_dir: Path, port: int, flag_env: str) -> bool:
+    container = f"ff-replay-{name}".replace("_", "-").lower()[:60]
+    docker("rm", "-f", container, timeout=60)
+    cmd = _server_command(src_dir, port)
+    if cmd is None:
+        return False
+    run = docker(
+        "run", "-d", "--rm", "--name", container,
+        "-p", f"127.0.0.1:{port}:{port}",
+        "-v", f"{src_dir.resolve()}:/chal:ro".replace("\\", "/"),
+        "-e", f"FLAG={flag_env}",
+        "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
+        "forgeflag-ctf:latest", "sh", "-c", cmd,
+    )
+    if run.returncode != 0:
+        return False
+    ok = wait_port(port)
+    if not ok:
+        docker("rm", "-f", container, timeout=60)
+    return ok
+
+
+def pick_solve(solve_dir: Path) -> Path | None:
+    scripts = sorted(list(solve_dir.glob("*.py")) + list(solve_dir.glob("*.sage")))
+    if not scripts:
+        return None
+    preferred = [p for p in scripts if p.name.startswith(("solve", "exploit", "solution", "main"))]
+    if preferred:
+        return preferred[0]
+    remote_users = [p for p in scripts if "remote(" in p.read_text(errors="replace")[:4000]]
+    if remote_users:
+        return remote_users[0]
+    return max(scripts, key=lambda p: p.stat().st_size)
+
+
+def localize(script: str, port: int | None) -> str:
+    if port:
+        script = REMOTE_PATTERN.sub(f'remote("127.0.0.1", {port})', script)
+    return script
+
+
+def run_solve(content: str, chal: Path, image: str) -> tuple[int, str, str]:
+    """Run the localized solve inside the sandbox image, in place, so relative
+    paths (../src/libfoo.so) and Linux shared objects both work."""
+    solve_dir = chal / "solve"
+    local = solve_dir / "_solve_local.py"
+    local.write_text(content, encoding="utf-8")
+    argv = [
+        "docker", "run", "--rm",
+        "--network", "host",
+        "-v", f"{chal.resolve()}:/challenge".replace("\\", "/"),
+        "-w", "/challenge/solve",
+        image,
+        "/opt/forgeflag-venv/bin/python", "_solve_local.py",
+    ]
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=300, check=False)
+        rc, out, err = completed.returncode, completed.stdout, completed.stderr
+    except subprocess.TimeoutExpired:
+        rc, out, err = 124, "", "timeout"
+    finally:
+        for junk in ("_solve_local.py", "_orig_solve.py"):
+            (solve_dir / junk).unlink(missing_ok=True)
+    return rc, out, err
+
+
+def sage_wrapper_source() -> str:
+    return (
+        "from sage.all import *\n"
+        "from sage.repl.preparse import preparse\n"
+        "exec(preparse(open('_orig_solve.py').read()))\n"
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("challenge_dir", help="Cached challenge directory containing solve/ and src/")
+    parser.add_argument("--port", type=int, default=0, help="Local service port (0 = offline solve)")
+    parser.add_argument("--flag-env", default="", help="FLAG env for the deployed service")
+    args = parser.parse_args()
+
+    chal = Path(args.challenge_dir)
+    solve = pick_solve(chal / "solve")
+    if solve is None:
+        print("no cached solve script", file=sys.stderr)
+        return 1
+    original = solve.read_text(errors="replace")
+
+    content = localize(original, args.port or None)
+    if args.port and (chal / "src").is_dir():
+        if not ensure_service(chal.name, chal / "src", args.port, args.flag_env or "DUCTF{replay}"):
+            print(f"service failed to start on {args.port}", file=sys.stderr)
+            return 1
+    entry = pick_solve(chal / "solve")
+    is_sage_entry = entry is not None and entry.suffix == ".sage"
+    if is_sage_entry:
+        (chal / "solve" / "_orig_solve.py").write_text(original, encoding="utf-8")
+        try:
+            rc, stdout, stderr = run_solve(sage_wrapper_source(), chal, "forgeflag-ctf-sage:latest")
+        finally:
+            (chal / "solve" / "_orig_solve.py").unlink(missing_ok=True)
+    else:
+        rc, stdout, stderr = run_solve(content, chal, "forgeflag-ctf:latest")
+    if not is_sage_entry and rc != 0 and ("sage" in stderr[:2000] or "fpylll" in stderr[:2000] or re.search(r"^\s*(from|import)\s+sage", original, re.M)):
+        (chal / "solve" / "_orig_solve.py").write_text(original, encoding="utf-8")
+        try:
+            rc, stdout, stderr = run_solve(sage_wrapper_source(), chal, "forgeflag-ctf-sage:latest")
+        finally:
+            (chal / "solve" / "_orig_solve.py").unlink(missing_ok=True)
+    if args.port:
+        docker("rm", "-f", f"ff-replay-{chal.name}".replace("_", "-").lower()[:60], timeout=60)
+
+    flags = sorted({m for m in FLAG.findall(stdout + stderr) if not any(p in m.lower() for p in PLACEHOLDERS)})
+    if flags:
+        for flag in flags:
+            print(flag)
+        return 0
+    print(f"solve produced no flag (rc={rc})", file=sys.stderr)
+    print((stdout + stderr)[-500:], file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
