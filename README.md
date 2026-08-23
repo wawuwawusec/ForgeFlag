@@ -119,9 +119,11 @@ export FORGEFLAG_LLM_TIMEOUT_SECONDS=300
 
 ## Dual-metric accuracy (never conflated)
 
+The Web UI ships a 题目调试台 (Debug tab): checksec, gdb sessions, format-string probes, cyclic-offset calculation, 21-tool runner, and a sandboxed script console per challenge.
+
 | Metric | Accuracy | What it measures |
 | --- | --- | --- |
-| **Synthetic curriculum** (204 seeded challenges, 6 tiers) | **81.4%** (166/204) | the product's own capability envelope: encoding 97%, forensics 100%, logic 100%, mini-VM rev 97%, classic crypto 94%, cyclic-offset pwn 0% (counted) |
+| **Synthetic curriculum** (204 seeded challenges, 6 tiers) | **97.5%** (199/204) | the product's own capability envelope: encoding/forensics/logic/classic/minirev 100%, cyclic-offset pwn 85% (counted) |
 | **Real multi-platform corpus** (192 exact-flag challenges, 7 competitions) | **10.4%** (20/192) | generalization to real competition difficulty |
 
 ```bash

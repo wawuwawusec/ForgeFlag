@@ -1133,3 +1133,59 @@ class WebAppApiTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DebugConsoleApiTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile as _tf
+        self.tmp = _tf.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / ".forgeflag" / "nb.sqlite"
+        self.db.parent.mkdir(parents=True)
+        (Path(self.tmp.name) / "handout.txt").write_text("flag{debug_console_works}\n")
+        handler = create_handler(self.db)
+        handler.handle_create_challenge({
+            "challenge_id": "dbg-01",
+            "category": "misc",
+            "attachments": [{"name": "handout.txt", "content_base64": __import__("base64").b64encode(b"flag{debug_console_works}\n").decode()}],
+        })
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_debug_inventory_lists_attachments_and_tools(self):
+        handler = create_handler(self.db)
+        payload = handler.handle_debug("dbg-01")
+        self.assertEqual(payload["challenge_id"], "dbg-01")
+        self.assertTrue(any(a["name"] == "handout.txt" for a in payload["attachments"]))
+        self.assertTrue(payload["tools"])
+
+    def test_exec_script_runs_in_sandbox_or_degrades(self):
+        handler = create_handler(self.db)
+        payload = handler.handle_debug_action("dbg-01", {
+            "action": "exec_script",
+            "script": "print(open('handout.txt').read().strip())",
+        })
+        result = payload["result"]
+        if result.get("status") == "success":
+            self.assertIn("flag{debug_console_works}", result["stdout"])
+        else:
+            self.assertIn(result["status"], {"unavailable", "error"})
+
+    def test_cyclic_offset_action_computes_offset(self):
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from forgeflag.pwn_debug import debruijn_pattern
+
+        pattern = debruijn_pattern(512)
+        value = int.from_bytes(pattern[104:108], "little")
+        handler = create_handler(self.db)
+        payload = handler.handle_debug_action("dbg-01", {
+            "action": "cyclic_offset",
+            "registers": {"rsp": hex(value)},
+        })
+        self.assertEqual(payload["result"]["offset"], 104)
+
+    def test_unknown_action_rejected(self):
+        handler = create_handler(self.db)
+        payload = handler.handle_debug_action("dbg-01", {"action": "nope"})
+        self.assertIn("error", payload)

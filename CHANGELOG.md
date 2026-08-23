@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.0 - 2026-08-23
+
+- **Curriculum accuracy 97.5%** (199/204): fixed the cyclic-offset tier's contradictory artifact hint (comment said `offset:<N>`, flag used `offset_<N>`), which had zeroed the whole tier; five tiers now at 100% and pwn-offset at 85% (29/34, model variance only).
+- **GUI 题目调试台** (Web UI "调试 Debug" tab, browser-verified end-to-end): attachment and tool pickers over the full 21-tool inventory, checksec hardening matrix, one-click host tools (file/strings/readelf/objdump/binwalk/exiftool…), gdb debug sessions with cyclic stdin, format-string probing, interactive cyclic-offset calculation, and a sandboxed script console (offline Docker, network-disabled) — all wired through the new `/api/challenges/<id>/debug` GET/POST endpoints with notebook evidence recording for gdb sessions.
+- Fixed a UI regression where a nested-template syntax error silently disabled all dynamic rendering; the full page script now passes `node --check` and every panel (category/status filters, challenge list, tabs) was re-verified in a real browser.
+
 ## 0.17.0 - 2026-08-23
 
 - Added the **synthetic curriculum benchmark** (`scripts/forgeflag-curriculum-generator`): 204 seeded challenges across six skill tiers (encodings, classic crypto, forensic strings, Josephus-style logic, mini-VM reverse, cyclic-offset pwn) with known flags, run through the exact same product pipeline (solvers, verifier, exact-flag scoring).

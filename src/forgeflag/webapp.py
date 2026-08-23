@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from forgeflag.agent_roster import agent_roster_path_for_db, load_agent_roster
 from forgeflag.analysis_hints import recommended_analysis_hints
 from forgeflag.artifacts import ArtifactWorkspace, summarize_artifact_paths
-from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, LLMConfig, RunConfig
+from forgeflag.domain import DEFAULT_ZHIPU_MODEL, Challenge, ChallengeCategory, LLMConfig, Observation, RunConfig
 from forgeflag.health import (
     capability_benchmark_history_path as _capability_benchmark_history_path,
     capability_benchmark_path as _capability_benchmark_path,
@@ -99,6 +99,9 @@ def create_handler(db_path: str | Path):
             if challenge_id and suffix == "artifacts":
                 self._send_json(self.handle_artifacts(challenge_id))
                 return
+            if challenge_id and suffix == "debug":
+                self._send_json(self.handle_debug(challenge_id))
+                return
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
@@ -115,6 +118,9 @@ def create_handler(db_path: str | Path):
                 challenge_id, suffix = _challenge_route(path)
                 if challenge_id and suffix == "run":
                     self._send_json(self.handle_run_challenge(challenge_id, payload))
+                    return
+                if challenge_id and suffix == "debug":
+                    self._send_json(self.handle_debug_action(challenge_id, payload))
                     return
                 self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
             except Exception as exc:  # noqa: BLE001 - API should return JSON errors to the UI.
@@ -372,6 +378,89 @@ def create_handler(db_path: str | Path):
                 "challenge_id": challenge.challenge_id,
                 "artifacts": summarize_artifact_paths(challenge.attachment_paths),
             }
+
+        @classmethod
+        def handle_debug(cls, challenge_id: str) -> dict[str, Any]:
+            challenge = cls.notebook.get_challenge(challenge_id)
+            attachments = [
+                {"name": Path(path).name, "path": path, "size": Path(path).stat().st_size if Path(path).is_file() else 0}
+                for path in challenge.attachment_paths
+            ]
+            inventory = ToolRunner(ScopePolicy()).inventory()
+            return {
+                "challenge_id": challenge_id,
+                "attachments": attachments,
+                "tools": [{"tool": t.get("name"), "available": t.get("available")} for t in inventory],
+            }
+
+        @classmethod
+        def handle_debug_action(cls, challenge_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+            """Integrated debugging console: checksec, host tools, gdb session,
+            format-string probe, cyclic offset, sandboxed script execution."""
+            challenge = cls.notebook.get_challenge(challenge_id)
+            action = str(payload.get("action") or "")
+            scope = ScopePolicy(
+                allowed_hosts=tuple(_string_list(payload.get("allowed_hosts")) or ("127.0.0.1", "localhost")),
+                active_probe=bool(payload.get("active_probe", False)),
+            )
+            attachment = str(payload.get("attachment") or (challenge.attachment_paths[0] if challenge.attachment_paths else ""))
+            resolved = Path(attachment)
+            if attachment and not resolved.is_absolute() and challenge.attachment_paths:
+                resolved = next((Path(p) for p in challenge.attachment_paths if Path(p).name == attachment), resolved)
+            if action == "checksec":
+                from forgeflag.pwn_debug import checksec_summary
+
+                return {"action": action, "result": checksec_summary(str(resolved))}
+            if action == "run_tool":
+                tool = str(payload.get("tool") or "file")
+                args = [str(a) for a in (payload.get("args") or [])][:6]
+                runner = ToolRunner(scope)
+                result = runner.run(tool, [str(resolved), *args] if tool in {"file", "strings", "readelf", "objdump", "binwalk", "exiftool"} else args)
+                cls.notebook.add_tool_result(challenge_id, result)
+                return {"action": action, "tool": tool, "status": result.status,
+                        "stdout": str(result.raw.get("stdout", ""))[:20000], "stderr": str(result.raw.get("stderr", ""))[:4000]}
+            if action == "gdb_session":
+                from forgeflag.pwn_debug import debug_session, debruijn_pattern
+
+                stdin_mode = str(payload.get("stdin") or "cyclic")
+                payload_bytes = (
+                    debruijn_pattern(int(payload.get("cyclic_length") or 1024))
+                    if stdin_mode == "cyclic"
+                    else str(payload.get("raw") or "").encode()[:4096]
+                )
+                session = debug_session(str(resolved), payload_bytes, timeout_seconds=int(payload.get("timeout") or 60))
+                cls.notebook.add_observation(Observation(
+                    challenge_id=challenge_id, source="DebugConsole", kind="gdb_session",
+                    summary=f"gdb debug session: {session.get('status')}",
+                    evidence={k: session.get(k) for k in ("status", "registers", "cyclic_offset")},
+                ))
+                return {"action": action, "result": session}
+            if action == "format_probe":
+                from forgeflag.pwn_debug import probe_format_string
+
+                result = probe_format_string(str(resolved), timeout_seconds=int(payload.get("timeout") or 25))
+                return {"action": action, "result": result}
+            if action == "cyclic_offset":
+                from forgeflag.pwn_debug import crash_offset_from_registers, debruijn_pattern
+
+                pattern = debruijn_pattern(int(payload.get("pattern_length") or 512))
+                registers = {}
+                for name, value in (payload.get("registers") or {}).items():
+                    try:
+                        registers[str(name)] = int(str(value), 16) if isinstance(value, str) else int(value)
+                    except ValueError:
+                        continue
+                offset = crash_offset_from_registers(registers, pattern)
+                return {"action": action, "result": offset or {}}
+            if action == "exec_script":
+                from forgeflag.solvers.llm_execute import _run_in_sandbox
+
+                script = str(payload.get("script") or "")
+                if not script or len(script) > 16000:
+                    return {"error": "script required (max 16k chars)"}
+                run = _run_in_sandbox([p for p in challenge.attachment_paths if Path(p).is_file()], script)
+                return {"action": action, "result": run}
+            return {"error": f"unknown debug action: {action}"}
 
         @classmethod
         def handle_report(cls, challenge_id: str) -> dict[str, Any]:
@@ -886,6 +975,7 @@ INDEX_HTML = r"""<!doctype html>
           <button data-tab="findings">Findings</button>
           <button data-tab="observations">Observations</button>
           <button data-tab="artifacts">Artifacts</button>
+          <button data-tab="debug">调试 Debug</button>
           <button data-tab="benchmark">Benchmark</button>
           <button data-tab="health">Health</button>
           <button data-tab="tools">Tools</button>
@@ -1777,6 +1867,44 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           ${rawJson(obs)}
         </div>`).join("");
+    }
+    function showDebugConsole(data) {
+      const challenge = encodeURIComponent(state.selected);
+      const esc = escapeHtml;
+      const attachments = (data.attachments || []).map(a => '<option value="' + esc(String(a.name)) + '">' + esc(String(a.name)) + ' (' + a.size + 'B)</option>').join("");
+      const tools = (data.tools || []).map(t => '<option value="' + esc(String(t.tool)) + '">' + esc(String(t.tool)) + (t.available ? "" : " (缺)") + '</option>').join("");
+      $("output").innerHTML = '<div class="panel">'
+        + '<h3>题目调试台 · ' + esc(String(state.selected)) + '</h3>'
+        + '<div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">'
+        + '<label>附件 <select id="dbgAtt">' + attachments + '</select></label>'
+        + '<label>工具 <select id="dbgTool">' + tools + '</select></label>'
+        + '</div>'
+        + '<div class="row" style="gap:8px;flex-wrap:wrap;margin:10px 0">'
+        + '<button id="dbgChecksec">checksec 加固矩阵</button>'
+        + '<button id="dbgToolRun">运行工具</button>'
+        + '<button id="dbgGdb">gdb 会话 (cyclic 输入)</button>'
+        + '<button id="dbgFmt">格式化字符串探测</button>'
+        + '</div>'
+        + '<div class="row" style="gap:8px;align-items:center;margin:6px 0">'
+        + '<label>寄存器 <input id="dbgRegName" placeholder="rsp" style="width:70px"> = <input id="dbgRegVal" placeholder="0x64616170" style="width:120px"></label>'
+        + '<button id="dbgOffset">计算循环偏移</button>'
+        + '</div>'
+        + '<h4>沙箱脚本控制台（离线 Docker 沙箱内执行，禁网只读）</h4>'
+        + '<textarea id="dbgScript" rows="8" spellcheck="false" style="width:100%;font-family:ui-monospace,monospace" placeholder="import os; print(sorted(os.listdir(&#39;.&#39;)))"></textarea>'
+        + '<button id="dbgExec" style="margin-top:8px">在沙箱执行</button>'
+        + '<pre id="dbgOut" style="margin-top:12px;max-height:340px;overflow:auto;background:rgba(0,0,0,.35);padding:12px;border-radius:8px;font-size:12px;white-space:pre-wrap"></pre>'
+        + '</div>';
+      const out = (payload) => { $("dbgOut").textContent = JSON.stringify(payload, null, 2); };
+      const act = (action, extra={}) => api("/api/challenges/" + challenge + "/debug", {
+        method: "POST", headers: {"content-type": "application/json"},
+        body: JSON.stringify(Object.assign({action: action, attachment: $("dbgAtt") ? $("dbgAtt").value : undefined}, extra || {}))
+      }).then(out).catch(e => out({error: e.message}));
+      $("dbgChecksec").onclick = () => act("checksec");
+      $("dbgToolRun").onclick = () => act("run_tool", {tool: $("dbgTool").value});
+      $("dbgGdb").onclick = () => act("gdb_session", {stdin: "cyclic"});
+      $("dbgFmt").onclick = () => act("format_probe");
+      $("dbgOffset").onclick = () => act("cyclic_offset", {registers: (function(){ var o = {}; o[$("dbgRegName").value.trim() || "rsp"] = $("dbgRegVal").value.trim(); return o; })()});
+      $("dbgExec").onclick = () => act("exec_script", {script: $("dbgScript").value});
     }
     function renderArtifacts(data) {
       const artifacts = asList(data && data.artifacts);
@@ -2883,6 +3011,7 @@ INDEX_HTML = r"""<!doctype html>
       if (tab === "summary") return show(await loadLatestSummary(), "summary");
       if (!state.selected) return status($("challengeId").value.trim() ? "请先保存题目或从列表选择已有题目" : "请先选择一道题目", "error");
       if (tab === "agent") return show(await loadAgentView(), "agent");
+      if (tab === "debug") return showDebugConsole(await api(`/api/challenges/${encodeURIComponent(state.selected)}/debug`));
       show(await api(`/api/challenges/${encodeURIComponent(state.selected)}/${tab}`), tab);
     }
     async function loadLatestSummary() {
