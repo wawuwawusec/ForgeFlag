@@ -158,6 +158,7 @@ def main() -> int:
     parser.add_argument("challenge_dir", help="Cached challenge directory containing solve/ and src/")
     parser.add_argument("--port", type=int, default=0, help="Local service port (0 = offline solve)")
     parser.add_argument("--flag-env", default="", help="FLAG env for the deployed service")
+    parser.add_argument("--skip-service", action="store_true", help="Service already running externally; solve only")
     args = parser.parse_args()
 
     chal = Path(args.challenge_dir)
@@ -168,7 +169,7 @@ def main() -> int:
     original = solve.read_text(errors="replace")
 
     content = localize(original, args.port or None)
-    if args.port and (chal / "src").is_dir():
+    if args.port and not args.skip_service and (chal / "src").is_dir():
         if not ensure_service(chal.name, chal / "src", args.port, args.flag_env or "DUCTF{replay}"):
             print(f"service failed to start on {args.port}", file=sys.stderr)
             return 1
@@ -188,7 +189,7 @@ def main() -> int:
             rc, stdout, stderr = run_solve(sage_wrapper_source(), chal, "forgeflag-ctf-sage:latest")
         finally:
             (chal / "solve" / "_orig_solve.py").unlink(missing_ok=True)
-    if args.port:
+    if args.port and not args.skip_service:
         docker("rm", "-f", f"ff-replay-{chal.name}".replace("_", "-").lower()[:60], timeout=60)
 
     flags = sorted({m for m in FLAG.findall(stdout + stderr) if not any(p in m.lower() for p in PLACEHOLDERS)})
