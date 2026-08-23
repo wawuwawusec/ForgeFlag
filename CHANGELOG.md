@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.1 - 2026-08-23
+
+- Replay runner `--skip-service` mode enables original-image deployments: upstream vendor base images (ghcr nsjail, forced linux/amd64 + `--privileged`) reproduce the exact memory layout that ASLR-pinned exploits expect; solves now connect to these instances (final per-case interaction tuning under QEMU emulation remains open).
+
 ## 0.16.0 - 2026-08-23
 
 - Added the **replay-tier runner** (`scripts/forgeflag-replay-runner`): runs cached public author solutions against locally deployed authorized challenge instances — python servers or prebuilt ELFs via socat (run.sh-aware, arch-aware qemu handling, sage-image fallback, `remote()` target localization, real flag deployment from challenge metadata).
