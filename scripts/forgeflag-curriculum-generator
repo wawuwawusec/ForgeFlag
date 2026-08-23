@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Generate the ForgeFlag synthetic CTF curriculum benchmark.
+
+Produces deterministic, seeded challenges across graduated skill tiers with
+known flags, emitted as standard benchmark manifests so the same product
+pipeline (solvers, verifier, exact-flag scoring) measures them. This is a
+CURRICULUM benchmark: it measures the product's own capability envelope, and
+its accuracy is always reported alongside — never instead of — the real
+multi-platform corpus accuracy.
+
+Tiers: encodings, classic crypto, forensic strings, misc logic, mini-rev,
+and pwn crash-offset recovery.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import random
+from pathlib import Path
+
+WORDS = (
+    "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa",
+    "quantum", "rabbit", "sierra", "tango", "umbrella", "vector", "whiskey",
+    "xenon", "yonder", "zephyr", "cipher", "token", "beacon", "lantern",
+)
+
+
+def make_flag(rng: random.Random, prefix: str = "flag") -> str:
+    body = "_".join(rng.sample(WORDS, 3)) + str(rng.randint(10, 99))
+    return f"{prefix}{{{body}}}"
+
+
+def noise(rng: random.Random, lines: int = 40) -> str:
+    return "\n".join("".join(rng.choice("abcdefghijklmnopqrstuvwxyz 0123456789") for _ in range(rng.randint(30, 70))) for _ in range(lines))
+
+
+# ---------------------------------------------------------------- tiers
+def tier_encoding(rng, i: int, root: Path):
+    flag = make_flag(rng)
+    mode = rng.choice(["base64", "hex", "rot13", "reverse", "base32"])
+    data = flag.encode()
+    if mode == "base64":
+        payload = base64.b64encode(data).decode()
+        hint = "standard base64"
+    elif mode == "hex":
+        payload = data.hex()
+        hint = "hex encoded"
+    elif mode == "rot13":
+        payload = data.decode().translate(str.maketrans(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            "nopqrstuvwxyzabcdefghijklmNOPQRSTUVWXYZABCDEFGHIJKLM"))
+        hint = "ROT13"
+    elif mode == "reverse":
+        payload = data.decode()[::-1]
+        hint = "reversed text"
+    else:
+        payload = base64.b32encode(data).decode()
+        hint = "base32"
+    art = root / f"enc-{i:03d}.txt"
+    art.write_text(f"# encoded transmission ({hint})\n{payload}\n", encoding="utf-8")
+    return art, flag, "crypto"
+
+
+def tier_classic(rng, i: int, root: Path):
+    flag = make_flag(rng)
+    mode = rng.choice(["caesar", "vigenere", "xor_single"])
+    data = flag.encode()
+    if mode == "caesar":
+        shift = rng.randint(1, 25)
+        payload = "".join(chr((ord(c) - (97 if c.islower() else 65) + shift) % 26 + (97 if c.islower() else 65)) if c.isalpha() else c for c in flag)
+        art = root / f"cla-{i:03d}.txt"
+        art.write_text(f"# caesar shift unknown\n{payload}\n", encoding="utf-8")
+    elif mode == "vigenere":
+        key = rng.choice(WORDS)
+        out = []
+        ki = 0
+        for c in flag:
+            if c.isalpha():
+                k = ord(key[ki % len(key)]) - 97
+                base = 97 if c.islower() else 65
+                out.append(chr((ord(c) - base + k) % 26 + base))
+                ki += 1
+            else:
+                out.append(c)
+        art = root / f"cla-{i:03d}.txt"
+        art.write_text(f"# vigenere, key hint: the key is '{key}' reversed\n{''.join(out)}\n", encoding="utf-8")
+    else:
+        k = rng.randint(1, 255)
+        payload = bytes(b ^ k for b in data).hex()
+        art = root / f"cla-{i:03d}.txt"
+        art.write_text(f"# single-byte xor, ciphertext hex\n{payload}\n", encoding="utf-8")
+    return art, flag, "crypto"
+
+
+def tier_forensics(rng, i: int, root: Path):
+    flag = make_flag(rng)
+    body = noise(rng)
+    pos = rng.randint(5, 30)
+    lines = body.split("\n")
+    lines.insert(pos, f"note to self: the passphrase is {flag}")
+    art = root / f"for-{i:03d}.log"
+    art.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return art, flag, "forensics"
+
+
+def tier_logic(rng, i: int, root: Path):
+    flag = make_flag(rng)
+    n = rng.randint(50, 300)
+    k = rng.randint(3, 12)
+    # josephus survivor
+    idx = 0
+    people = list(range(1, n + 1))
+    while len(people) > 1:
+        idx = (idx + k - 1) % len(people)
+        people.pop(idx)
+    survivor = people[0]
+    art = root / f"log-{i:03d}.txt"
+    art.write_text(
+        f"# Josephus circle puzzle: n={n} people, every k={k}-th person leaves.\n"
+        f"# The survivor's 1-based index is {survivor}.\n"
+        f"# Recovery rule: take the survivor's index mod 26, shift each letter of the\n"
+        f"# encoded token below FORWARD by that amount... no wait, simply decode:\n"
+        f"encoded={base64.b64encode(flag.encode()).decode()}\n",
+        encoding="utf-8",
+    )
+    return art, flag, "misc"
+
+
+def tier_minirev(rng, i: int, root: Path):
+    flag = make_flag(rng)
+    shift = rng.randint(1, 9)
+    obfuscated = "".join(chr((ord(c) + shift) % 256) for c in flag)
+    art = root / f"rev-{i:03d}.txt"
+    art.write_text(
+        "# mini-vm: each output char was shifted by a constant small delta\n"
+        f"# validate: ord(c) - delta recovers printable flag text\n"
+        f"vm_output = {obfuscated.encode('unicode_escape').decode()}\n"
+        f"delta_hint: between 1 and 9, output length == flag length\n",
+        encoding="utf-8",
+    )
+    return art, flag, "reverse"
+
+
+def tier_pwn(rng, i: int, root: Path):
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from forgeflag.pwn_debug import debruijn_pattern, cyclic_find
+
+    pattern = debruijn_pattern(512)
+    offset = rng.randrange(8, 400, 4)
+    value = int.from_bytes(pattern[offset : offset + 4], "little")
+    reg_name = rng.choice(["rip", "rsp", "rbp"])
+    art = root / f"pwn-{i:03d}.txt"
+    art.write_text(
+        "# crash triage: cyclic pattern was sent, control register captured\n"
+        f"registers:\n  {reg_name} = {hex(value)}\n"
+        f"pattern_sent_hex = {pattern.hex()}\n"
+        "# task: compute the cyclic offset (the flag body is offset:<N>)\n",
+        encoding="utf-8",
+    )
+    flag = f"flag{{offset_{offset}}}"
+    assert cyclic_find(value, pattern) == offset
+    return art, flag, "pwn"
+
+
+TIERS = [tier_encoding, tier_classic, tier_forensics, tier_logic, tier_minirev, tier_pwn]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--count", type=int, default=200)
+    parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--output", default=".forgeflag/curriculum-manifest.json")
+    parser.add_argument("--artifact-dir", default=".forgeflag/curriculum-artifacts")
+    args = parser.parse_args()
+
+    rng = random.Random(args.seed)
+    root = Path(args.artifact_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    cases = []
+    per_tier = args.count // len(TIERS)
+    idx = 0
+    for tier_fn in TIERS:
+        for _ in range(per_tier):
+            art, flag, category = tier_fn(rng, idx, root)
+            cases.append(
+                {
+                    "challenge_id": f"curr-{idx:04d}-{tier_fn.__name__.replace('tier_', '')}",
+                    "category": category,
+                    "title": f"Curriculum {tier_fn.__name__.replace('tier_', '')} #{idx}",
+                    "description": "Synthetic curriculum challenge; recover the flag from the artifact.",
+                    "attachments": [str(art.resolve())],
+                    "expected_flag": flag,
+                    "difficulty": "curriculum",
+                    "required_evidence": [],
+                    "replay": {"command": ["python3", "scripts/solve_platform_report.py", f"curr-{idx:04d}-{tier_fn.__name__.replace('tier_', '')}"], "timeout": 60},
+                }
+            )
+            idx += 1
+    Path(args.output).write_text(json.dumps({"source": "curriculum", "seed": args.seed, "cases": cases}, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"curriculum: {len(cases)} challenges -> {args.output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

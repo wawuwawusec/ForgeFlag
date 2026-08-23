@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.0 - 2026-08-23
+
+- Added the **synthetic curriculum benchmark** (`scripts/forgeflag-curriculum-generator`): 204 seeded challenges across six skill tiers (encodings, classic crypto, forensic strings, Josephus-style logic, mini-VM reverse, cyclic-offset pwn) with known flags, run through the exact same product pipeline (solvers, verifier, exact-flag scoring).
+- Dual-metric reporting (always side by side, never conflated):
+  - **Curriculum accuracy 81.4%** (166/204; deterministic layer 36.8% + glm-5.3 execution layer +44.6%, 871k Coding-Plan tokens). Tier detail: forensics 100%, logic 100%, minirev 97%, encoding 97%, classic 94%, cyclic-offset pwn 0% (kept in the denominator).
+  - **Real multi-platform corpus accuracy: 10.4%** (20/192 exact flags) — unchanged, reported as the harder, authoritative generalization number.
+- The curriculum measures the product's own capability envelope; the real corpus measures generalization to competition difficulty. Neither number is presented as the other.
+
 ## 0.16.1 - 2026-08-23
 
 - Replay runner `--skip-service` mode enables original-image deployments: upstream vendor base images (ghcr nsjail, forced linux/amd64 + `--privileged`) reproduce the exact memory layout that ASLR-pinned exploits expect; solves now connect to these instances (final per-case interaction tuning under QEMU emulation remains open).
