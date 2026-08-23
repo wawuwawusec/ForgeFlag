@@ -179,7 +179,7 @@ class Manager:
                 self.notebook.observations_for(challenge_id),
                 challenge=challenge,
             )
-        if not verification.accepted:
+        if not verification.accepted and _ran_non_llm_solver(summary.get("solvers")):
             critic = self._post_run_critic(challenge, summary, findings)
             if critic is not None:
                 self.notebook.add_observation(critic)

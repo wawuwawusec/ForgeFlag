@@ -1146,7 +1146,9 @@ class LLMSolverTest(unittest.TestCase):
         self.assertEqual(summary["post_run_critic"]["suggested_solvers"], ["MiscSolver"])
         self.assertEqual(critic.evidence["missing_evidence"], ["IDAT payload decode result"])
         self.assertIn("Parse PNG chunks", critic.evidence["next_actions"][0])
-        self.assertEqual(len(provider.prompts), 2)
+        self.assertEqual(len(provider.prompts), 3)
+        # third call is the reviewer judging the trajectory digest
+        self.assertIn("[StuckSolver]", provider.prompts[2])
         self.assertIn("controlled challenge research", provider.instructions[1])
         self.assertIn("run_status: completed", provider.prompts[1])
         self.assertIn("attachment_previews:", provider.prompts[1])
