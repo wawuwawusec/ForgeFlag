@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Probe which LLM models the current credentials can actually reach.
+
+Verifies in seconds that a recharge or new key took effect, before committing
+hours to a corpus retest. Probes the zhipu open platform (ZAI_API_KEY) and the
+GLM Coding Plan Anthropic endpoint, reporting OK / blocked(reason) per model.
+
+    python scripts/forgeflag-model-probe            # human table
+    python scripts/forgeflag-model-probe --json     # machine readable
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import urllib.error
+import urllib.request
+
+ZHIPU_MODELS = [
+    "glm-5.3", "glm-5.2", "glm-5.1", "glm-5", "glm-4.7", "glm-4.6", "glm-4.5",
+    "glm-4.7-flash", "glm-4.5-flash", "glm-4-flash", "glm-4-plus",
+]
+CODING_MODELS = ["glm-5.3", "glm-4.6", "glm-4.5-flash"]
+
+
+def probe_chat(model: str, key: str, base: str) -> dict:
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 4}).encode()
+    req = urllib.request.Request(
+        f"{base.rstrip('/')}/chat/completions", data=body, method="POST",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            return {"model": model, "status": "ok"}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:120]
+        if exc.code == 429 and "1113" in detail:
+            return {"model": model, "status": "balance_blocked"}
+        if exc.code == 400 and "1214" in detail:
+            return {"model": model, "status": "not_exists"}
+        return {"model": model, "status": f"http_{exc.code}", "detail": detail[:80]}
+    except Exception as exc:  # noqa: BLE001
+        return {"model": model, "status": "error", "detail": str(exc)[:80]}
+
+
+def probe_messages(model: str, key: str, base: str) -> dict:
+    body = json.dumps({"model": model, "max_tokens": 4, "messages": [{"role": "user", "content": "hi"}]}).encode()
+    req = urllib.request.Request(
+        f"{base.rstrip('/')}/v1/messages", data=body, method="POST",
+        headers={"x-api-key": key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=25):
+            return {"model": model, "status": "ok", "channel": "coding_plan"}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:120]
+        if exc.code == 429 and "1113" in detail:
+            return {"model": model, "status": "balance_blocked", "channel": "coding_plan"}
+        return {"model": model, "status": f"http_{exc.code}", "detail": detail[:80], "channel": "coding_plan"}
+    except Exception as exc:  # noqa: BLE001
+        return {"model": model, "status": "error", "detail": str(exc)[:80], "channel": "coding_plan"}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    key = os.environ.get("ZAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("FORGEFLAG_LLM_API_KEY")
+    base = os.environ.get("FORGEFLAG_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+    if not key:
+        print(json.dumps({"error": "no ZAI_API_KEY/ANTHROPIC_API_KEY set"}) if args.json else "未检测到 API key")
+        return 1
+
+    results = {"zhipu_open_platform": [probe_chat(m, key, base) for m in ZHIPU_MODELS]}
+    coding_base = "https://open.bigmodel.cn/api/anthropic"
+    results["glm_coding_plan"] = [probe_messages(m, key, coding_base) for m in CODING_MODELS]
+
+    if args.json:
+        print(json.dumps(results, ensure_ascii=False, indent=1))
+        return 0
+    for channel, rows in results.items():
+        print(f"== {channel} ==")
+        for row in rows:
+            mark = "✓" if row["status"] == "ok" else "✗"
+            print(f"  {mark} {row['model']:16} {row['status']}" + (f"  {row.get('detail','')}" if row['status'] not in ("ok", "balance_blocked", "not_exists") else ""))
+    ok = [r["model"] for rows in results.values() for r in rows if r["status"] == "ok"]
+    print("\n可用:", ok or "无（充值/换 key 后重跑本命令验证）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

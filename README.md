@@ -119,6 +119,17 @@ export FORGEFLAG_LLM_TIMEOUT_SECONDS=300
 
 Full trajectory, solved list, failure taxonomy, and reproduction commands: [docs/RESULTS.md](docs/RESULTS.md)
 
+### Retest with a stronger model (one command)
+
+```bash
+# 1. verify quota/key took effect (seconds)
+ZAI_API_KEY=<key> python scripts/forgeflag-model-probe
+# 2. full real-corpus retest: offline + service batches + replay sweep + aggregated scorecard
+ZAI_API_KEY=<key> FORGEFLAG_LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=<key> \
+  FORGEFLAG_LLM_MODEL=glm-5.3 FORGEFLAG_LLM_BASE_URL=https://open.bigmodel.cn/api/anthropic \
+  python scripts/forgeflag-real-retest --output .forgeflag/retest.json
+```
+
 ## Dual-metric accuracy (never conflated)
 
 The Web UI ships a 题目调试台 (Debug tab): checksec, gdb sessions, format-string probes, cyclic-offset calculation, 21-tool runner, and a sandboxed script console per challenge.
