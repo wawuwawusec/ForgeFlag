@@ -129,6 +129,7 @@ def run_solve(content: str, chal: Path, image: str) -> tuple[int, str, str]:
     argv = [
         "docker", "run", "--rm",
         "--network", "host",
+        "-e", "TERM=xterm",
         "-v", f"{chal.resolve()}:/challenge".replace("\\", "/"),
         "-w", "/challenge/solve",
         image,
