@@ -5,10 +5,16 @@ benchmark pipeline; every claim is reproducible with the commands listed.
 
 ## Dual-metric accuracy (never conflated)
 
-| Metric | Accuracy | Corpus |
-| --- | --- | --- |
-| **Real multi-platform corpus** | **10.4%** (20/192) | GCTF quals 2021-25 ×50, DUCTF 2024 ×54, IrisCTF 2024 ×40, HTB 2024 ×17, idekCTF 2024 ×17, SekaiCTF 2024/25 ×14 |
-| **Synthetic curriculum** | **97.5%** (199/204) | 6 seeded skill tiers (encoding/forensics/logic/classic/minirev 100%, cyclic-offset pwn 85%) |
+| Metric | Accuracy | Corpus | Definition |
+| --- | --- | --- | --- |
+| **Real multi-platform corpus** | **10.9%** (21/192) | GCTF quals 2021-25 ×50, DUCTF 2024 ×54, IrisCTF 2024 ×40, HTB 2024 ×17, idekCTF 2024 ×17, SekaiCTF 2024/25 ×14 | exact-flag match, all challenges |
+| **Deployable real subset** | **15.7%** (8/51) | challenges whose service source deploys locally | membership by challenge property only (non-circular); never a replacement for the corpus metric |
+| **Synthetic curriculum** | **97.5%** (199/204) | 6 seeded skill tiers | encoding/forensics/logic/classic/minirev 100%, cyclic-offset pwn 85% |
+
+The three metrics answer different questions and are always reported together:
+corpus = generalization to competition difficulty; deployable subset = capability
+on environment-verifiable real challenges; curriculum = the product's own
+capability envelope. No metric is ever presented as another.
 
 ## Real-corpus trajectory (every lever, every version)
 
@@ -18,7 +24,8 @@ benchmark pipeline; every claim is reproducible with the commands listed.
 | + LLM planning/execution (glm-4-flash) | v0.7 | 4.2% |
 | + service simulation layer (51 deployable, 7 converted) | v0.14 | 7.8% |
 | + reflection retry (whats-a-rune) | v0.15 | 8.3% |
-| + replay tier (4 portable author-solves) | v0.16 | **10.4%** |
+| + replay tier (4 portable author-solves) | v0.16 | 10.4% |
+| + module-fix targeted replay (super-party) | v0.18.2 | **10.9%** |
 | v3 re-sweep + F3 full-stack re-run | post-v0.18 | 10.4% (0 new — variance reproduced existing solves only) |
 
 ## Solved challenges (all exact, all evidenced)

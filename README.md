@@ -137,7 +137,8 @@ The Web UI ships a 题目调试台 (Debug tab): checksec, gdb sessions, format-s
 | Metric | Accuracy | What it measures |
 | --- | --- | --- |
 | **Synthetic curriculum** (204 seeded challenges, 6 tiers) | **97.5%** (199/204) | the product's own capability envelope: encoding/forensics/logic/classic/minirev 100%, cyclic-offset pwn 85% (counted) |
-| **Real multi-platform corpus** (192 exact-flag challenges, 7 competitions) | **10.4%** (20/192) | generalization to real competition difficulty |
+| **Real multi-platform corpus** (192 exact-flag challenges, 7 competitions) | **10.9%** (21/192) | generalization to real competition difficulty |
+| **Deployable real subset** (51 service-deployable challenges, property-defined) | **15.7%** (8/51) | capability on environment-verifiable real challenges |
 
 ```bash
 python scripts/forgeflag-curriculum-generator --count 204   # regenerate the curriculum
