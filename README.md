@@ -117,6 +117,8 @@ export FORGEFLAG_LLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
 export FORGEFLAG_LLM_TIMEOUT_SECONDS=300
 ```
 
+Full trajectory, solved list, failure taxonomy, and reproduction commands: [docs/RESULTS.md](docs/RESULTS.md)
+
 ## Dual-metric accuracy (never conflated)
 
 The Web UI ships a 题目调试台 (Debug tab): checksec, gdb sessions, format-string probes, cyclic-offset calculation, 21-tool runner, and a sandboxed script console per challenge.
