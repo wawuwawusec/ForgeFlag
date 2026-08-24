@@ -27,6 +27,7 @@ capability envelope. No metric is ever presented as another.
 | + replay tier (4 portable author-solves) | v0.16 | 10.4% |
 | + module-fix targeted replay (super-party) | v0.18.2 | **10.9%** |
 | v3 re-sweep + F3 full-stack re-run | post-v0.18 | 10.4% (0 new — variance reproduced existing solves only) |
+| variance-harvest pass (20 hardest, Coding Plan glm-5.3, 137 LLM calls / 633k tokens) | post-v0.18.2 | 0 new conversions — remaining failures are capability-bound, not variance-bound |
 
 ## Solved challenges (all exact, all evidenced)
 
