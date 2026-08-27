@@ -28,6 +28,49 @@ capability envelope. No metric is ever presented as another.
 | + module-fix targeted replay (super-party) | v0.18.2 | **10.9%** |
 | v3 re-sweep + F3 full-stack re-run | post-v0.18 | 10.4% (0 new — variance reproduced existing solves only) |
 | variance-harvest pass (20 hardest, Coding Plan glm-5.3, 137 LLM calls / 633k tokens) | post-v0.18.2 | 0 new conversions — remaining failures are capability-bound, not variance-bound |
+| suppressor-hunt pass (6 fixes, 8-case service pilot R1-R3, Coding Plan glm-5.3) | post-v0.18.2 | 0 new conversions — but five mechanical suppressors found and removed (see below); deep-work ceiling now measurable without harness artifacts |
+
+## Suppressor hunt (why glm-5.3 could not rise, mechanically)
+
+A code-level audit plus three instrumented pilot runs (R1: fixes 1-3,
+R2: +early-exit, R3: +size/provider fixes; 8 historically-1/8 service
+cases) found five suppressors that silently discarded model effort.
+All are fixed on main with tests (full suite green):
+
+1. Service-challenge network suppression: `_extract_code` rejected any
+   script importing socket/urllib/requests even for 127.0.0.1 service
+   challenges, and the system prompt simultaneously said "NO network;
+   do not import sockets" and "use pwntools remote()". Correct
+   interactive exploits were silently discarded as "no executable
+   block".
+2. Empty thinking responses: glm-5.3 (coding plan) sometimes spends the
+   whole output budget on thinking and returns zero text blocks; a
+   round was burned each time (observed 3 consecutive on co2). Now
+   retried immediately, with history trimming, and max_tokens 8192→16384.
+3. Premature exits: identical-script and NOT_RECOVERED-streak breaks
+   ended sessions at ~2 LLM calls (yawa/dungeon used 1.9k of 700k
+   tokens). Both now fire only after round 10; early surrender instead
+   triggers a strategy-pivot prompt.
+4. Script size ceiling: a valid >16k-char script was silently rejected
+   with a false "no block" message (vector-overflow round 4). Limit now
+   40k with accurate split-the-work feedback.
+5. Single-fault abort: one 240s read timeout killed the whole session
+   (yawa, dungeon in R2). The solver now backs off 45s and retries,
+   surrendering only after 3 consecutive faults.
+
+Pilot evidence the fixes work end-to-end: model scripts now connect to
+deployed services (`connecting to 127.0.0.1`), run checksec→cyclic→ROP
+chains, extract full challenge source from service banners (dungeon,
+502KB), and reach 74k tokens of genuine deep work per challenge.
+R1-R3 still converted 0 new cases: with all mechanical waste removed,
+the remaining gap on the hardest service set is model reasoning depth
+plus endpoint congestion (R3 lost 4 cases to benchmark client timeouts
+at 2700s — rerun at 5400s pending) and one flag-deployment mismatch
+(number-mashing's runner serves a fallback test flag, so a logic-solve
+cannot convert to the corpus metric). Literature anchor: EnIGMA, the
+NYU-CTF SOTA agent with Claude 3.5 Sonnet, reports 13.5% on a comparable
+mix — interactive tools were its biggest single lever, which is exactly
+what fix #1 restored.
 
 ## Solved challenges (all exact, all evidenced)
 
