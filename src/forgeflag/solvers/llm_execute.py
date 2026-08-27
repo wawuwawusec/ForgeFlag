@@ -28,7 +28,7 @@ from forgeflag.reviewer import reflection_hint_from_observations
 from forgeflag.solvers.llm import LLMProvider, _attachment_previews
 from forgeflag.tools.runner import _docker_host_mount
 
-MAX_SCRIPT_CHARS = 16_000
+MAX_SCRIPT_CHARS = 40_000
 MAX_OUTPUT_CHARS = 16_000
 import os as _os
 
@@ -124,12 +124,21 @@ class LLMExecuteSolver:
                 return SolverResult(self.name, challenge.challenge_id, "provider_unavailable", (finding,))
             script = _extract_code(response.content, allow_network=allow_localhost)
             if not script:
+                # distinguish the two rejection causes: a model that DID write
+                # a code block but overshot the size limit needs different
+                # feedback than one that answered in prose
+                has_block = "```" in response.content
+                reject_reason = (
+                    f"SCRIPT EXCEEDED THE {MAX_SCRIPT_CHARS}-CHARACTER LIMIT and was not executed. Split the work: save intermediates to /work in early rounds and keep each round's script focused."
+                    if has_block
+                    else "RESPONSE CONTAINED NO EXECUTABLE ```python BLOCK. Every round MUST end with one complete runnable script."
+                )
                 context.notebook.add_observation(
                     Observation(
                         challenge_id=challenge.challenge_id,
                         source=self.name,
                         kind="llm_exec_round",
-                        summary=f"round {attempt}: REJECTED (no executable block extracted)",
+                        summary=f"round {attempt}: REJECTED ({'script too long' if has_block else 'no executable block extracted'})",
                         evidence={"attempt": attempt, "rejected": True, "response_head": response.content[:400]},
                     )
                 )
@@ -138,7 +147,7 @@ class LLMExecuteSolver:
                     "content": response.content[:2000],
                     "script": "",
                     "returncode": "-",
-                    "stderr": "RESPONSE CONTAINED NO EXECUTABLE ```python BLOCK. Every round MUST end with one complete runnable script.",
+                    "stderr": reject_reason,
                     "stdout": "",
                 })
                 last_output = "no python code block found in model response"
