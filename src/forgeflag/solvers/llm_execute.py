@@ -74,6 +74,7 @@ class LLMExecuteSolver:
         first_flag_script = ""
         first_flag_run: dict[str, Any] = {}
         empty_response_retries = 0
+        provider_failures = 0
         max_tokens_budget = max(50_000, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_TOKENS", "700000")))
         import tempfile as _tempfile
 
@@ -93,6 +94,7 @@ class LLMExecuteSolver:
                     **({"images": vision_images} if vision_images else {}),
                 )
                 tokens_spent += int(response.usage.get("total_tokens") or 0)
+                provider_failures = 0
                 # glm-5.3 (coding plan) sometimes spends the whole output
                 # budget on thinking and returns zero text blocks; an
                 # immediate retry recovers a usable response instead of
@@ -110,18 +112,35 @@ class LLMExecuteSolver:
                         **({"images": vision_images} if vision_images else {}),
                     )
                     tokens_spent += int(response.usage.get("total_tokens") or 0)
-            except Exception as exc:  # noqa: BLE001 - provider outages must not kill the run
-                finding = Finding(
-                    challenge_id=challenge.challenge_id,
-                    solver=self.name,
-                    finding="LLM execution solver unavailable",
-                    evidence={"error": str(exc)[:500], "attempt": attempt, "ctf_scope": ctf_scope_evidence(challenge.category)},
-                    hypothesis="The LLM provider errored (rate limit, balance, transport); deterministic solvers remain authoritative.",
-                    confidence=0.1,
-                    next_action="Retry when the provider recovers; check llm_status for details.",
+            except Exception as exc:  # noqa: BLE001 - transient transport faults must not kill the run
+                # a single timed-out request (thinking-heavy rounds can
+                # exceed the read timeout) used to abort the whole session
+                # with every remaining round unspent; back off and retry
+                # before surrendering
+                provider_failures += 1
+                if provider_failures >= 3:
+                    finding = Finding(
+                        challenge_id=challenge.challenge_id,
+                        solver=self.name,
+                        finding="LLM execution solver unavailable",
+                        evidence={"error": str(exc)[:500], "attempt": attempt, "ctf_scope": ctf_scope_evidence(challenge.category)},
+                        hypothesis="The LLM provider errored repeatedly (rate limit, balance, transport); deterministic solvers remain authoritative.",
+                        confidence=0.1,
+                        next_action="Retry when the provider recovers; check llm_status for details.",
+                    )
+                    context.notebook.add_finding(finding)
+                    return SolverResult(self.name, challenge.challenge_id, "provider_unavailable", (finding,))
+                context.notebook.add_observation(
+                    Observation(
+                        challenge_id=challenge.challenge_id,
+                        source=self.name,
+                        kind="llm_exec_round",
+                        summary=f"round {attempt}: provider transport fault ({provider_failures}/3), backing off 45s",
+                        evidence={"error": str(exc)[:200], "attempt": attempt},
+                    )
                 )
-                context.notebook.add_finding(finding)
-                return SolverResult(self.name, challenge.challenge_id, "provider_unavailable", (finding,))
+                time.sleep(45)
+                continue
             script = _extract_code(response.content, allow_network=allow_localhost)
             if not script:
                 # distinguish the two rejection causes: a model that DID write
