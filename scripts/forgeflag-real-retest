@@ -72,14 +72,17 @@ def main() -> int:
         cmd = [str(ROOT / ".venv/bin/python"), "scripts/forgeflag-capability-benchmark", "--manifest-only"]
         for m in manifests:
             cmd += ["--manifest", m]
-        cmd += ["--timeout", "1800", "--output", str(ROOT / ".forgeflag/retest-offline.json")]
+        cmd += ["--timeout", "5400", "--output", str(ROOT / ".forgeflag/retest-offline.json")]
         offline = run(cmd, timeout=6 * 3600)
         print(offline.stderr.strip().splitlines()[-1] if offline.stderr.strip() else "done")
         summaries["offline"] = str(ROOT / ".forgeflag/retest-offline.json")
 
-        # 4. service batches
+        # 4. service batches (cover every deployable case: 51 entries in
+        # batches of 9 need 6 batches — 4 silently skipped the tail)
         if not args.skip_services:
-            for idx in range(4):
+            deployable_count = len(json.loads((ROOT / ".forgeflag/deployable.json").read_text()))
+            batch_count = -(-deployable_count // 9)
+            for idx in range(batch_count):
                 up = run([str(ROOT / ".venv/bin/python"), "scripts/forgeflag-service-harness", "up",
                           "--manifests", str(ROOT / ".forgeflag/ductf-mixed.json"),
                           str(ROOT / ".forgeflag/iris-mixed.json"),
@@ -94,7 +97,7 @@ def main() -> int:
                     print(f"== service batch {idx} ({cases} cases) ==")
                     bench = run([str(ROOT / ".venv/bin/python"), "scripts/forgeflag-capability-benchmark",
                                  "--manifest-only", "--manifest", f"/tmp/retest-svc-{idx}.json",
-                                 "--timeout", "1800",
+                                 "--timeout", "5400",
                                  "--output", str(ROOT / f".forgeflag/retest-svc-{idx}.json")], timeout=6 * 3600)
                     print(bench.stderr.strip().splitlines()[-1] if bench.stderr.strip() else "done")
                     summaries[f"service_batch_{idx}"] = str(ROOT / f".forgeflag/retest-retest-svc-{idx}.json")
