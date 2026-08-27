@@ -34,6 +34,11 @@ import os as _os
 
 MAX_ATTEMPTS = max(1, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_ATTEMPTS", "30")))
 MAX_SESSION_SECONDS = max(60, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_SECONDS", "2400")))
+# early-round terminations (identical-script, NOT_RECOVERED streaks) fire
+# only after this many rounds: pilot telemetry showed challenges dying at
+# ~2 LLM calls with 700k tokens unspent because the model resubmitted one
+# script twice or gave up honestly on round 3 of 30
+MIN_ROUNDS_BEFORE_GIVE_UP = max(1, int(_os.environ.get("FORGEFLAG_LLMEXEC_MIN_ROUNDS", "10")))
 SANDBOX_IMAGE = _os.environ.get("FORGEFLAG_LLMEXEC_IMAGE", "forgeflag-ctf:latest")
 SANDBOX_PYTHON = "/opt/forgeflag-venv/bin/python"
 
@@ -174,10 +179,26 @@ class LLMExecuteSolver:
             if "NOT_RECOVERED" in run["stdout"]:
                 not_recovered_streak += 1
                 if not_recovered_streak >= 3:
-                    break
+                    if attempt >= MIN_ROUNDS_BEFORE_GIVE_UP:
+                        break
+                    # honest "cannot recover" streaks on early rounds are
+                    # usually a strategy dead-end, not exhaustion: force one
+                    # pivot prompt before honouring the surrender
+                    history.append({
+                        "attempt": f"{attempt}p",
+                        "script": script[:4000],
+                        "returncode": str(run["returncode"]),
+                        "stderr": "STRATEGY PIVOT REQUIRED: you reported NOT_RECOVERED three times. Your current approach is a dead end — switch technique entirely (different attack class, different parser, different algebra, or interact with the live service differently).",
+                        "stdout": run["stdout"][:1500],
+                    })
+                    not_recovered_streak = 0
             else:
                 not_recovered_streak = 0
-            if len(history) >= 2 and history[-1].get("script") == history[-2].get("script"):
+            if (
+                len(history) >= 2
+                and history[-1].get("script") == history[-2].get("script")
+                and attempt >= MIN_ROUNDS_BEFORE_GIVE_UP
+            ):
                 break
             if flags:
                 for flag in flags:
