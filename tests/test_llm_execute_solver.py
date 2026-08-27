@@ -73,6 +73,26 @@ class LLMExecuteSolverTest(unittest.TestCase):
         self.assertTrue(findings)
         self.assertIn("handout.txt", findings[0].evidence["script"])
 
+    def test_verification_round_collects_alternative_candidates(self) -> None:
+        provider = FakeExecuteProvider([
+            "```python\nprint('DUCTF{n3ar_miss}')\n```",
+            "```python\nprint('DUCTF{recovered_correctly}')\n```",
+        ])
+        first = mock.Mock(returncode=0)
+        first.stdout = b"DUCTF{n3ar_miss}\n"
+        first.stderr = b""
+        second = mock.Mock(returncode=0)
+        second.stdout = b"DUCTF{recovered_correctly}\n"
+        second.stderr = b""
+        context, _, _ = _context_with_attachment()
+        outputs = [first, second]
+        with mock.patch("shutil.which", return_value="/usr/bin/docker"), \
+             mock.patch("subprocess.run", side_effect=lambda *a, **k: outputs.pop(0)):
+            result = LLMExecuteSolver(provider).solve(context)
+        self.assertEqual(result.status, "flag_candidate")
+        self.assertIn("DUCTF{n3ar_miss}", result.flag_candidates)
+        self.assertIn("DUCTF{recovered_correctly}", result.flag_candidates)
+
     def test_revision_loop_recovers_from_failure(self) -> None:
         provider = FakeExecuteProvider(
             [
@@ -108,6 +128,61 @@ def _extract_script_guard(content: str) -> str:
     from forgeflag.solvers.llm_execute import _extract_code
 
     return _extract_code(content)
+
+
+class ServiceNetworkPolicyTest(unittest.TestCase):
+    def test_network_scripts_allowed_for_service_challenges(self) -> None:
+        from forgeflag.solvers.llm_execute import _extract_code
+
+        script = "```python\nimport socket\ns = socket.create_connection(('127.0.0.1', 1337))\nprint(s.recv(4096))\n```"
+        self.assertIn("socket.create_connection", _extract_code(script, allow_network=True))
+        self.assertEqual("", _extract_code(script, allow_network=False))
+
+    def test_instructions_match_network_policy(self) -> None:
+        from forgeflag.solvers.llm_execute import _instructions
+
+        service = _instructions(allow_localhost=True)
+        offline = _instructions(allow_localhost=False)
+        self.assertIn("IS reachable", service)
+        self.assertIn("CHALLENGE_TARGET", service)
+        self.assertNotIn("do not import sockets", service)
+        self.assertIn("do not import sockets", offline)
+        self.assertNotIn("IS reachable", offline)
+
+    def test_service_challenge_prompt_passes_network_scripts(self) -> None:
+        provider = FakeExecuteProvider([
+            "```python\nfrom pwn import remote\nimport socket\nr = remote('127.0.0.1', 1337)\nprint(r.recvline())\n```",
+        ])
+        import importlib
+
+        from forgeflag.solvers.base import SolverContext
+
+        tmp = tempfile.mkdtemp()
+        artifact = Path(tmp) / "handout"
+        artifact.write_bytes(b"data")
+        notebook = SQLiteNotebook(Path(tmp) / "nb.sqlite")
+        challenge = Challenge(
+            challenge_id="svc-01",
+            category=ChallengeCategory.PWN,
+            title="svc",
+            description="nc service",
+            attachment_paths=[str(artifact)],
+            target="nc://127.0.0.1:1337",
+        )
+        notebook.add_challenge(challenge)
+        context = SolverContext(challenge=challenge, notebook=notebook, scope=None)
+        captured: dict[str, str] = {}
+
+        def fake_run(attachments, script, session=None, allow_localhost=False, target=""):
+            captured["allow_localhost"] = allow_localhost
+            captured["script"] = script
+            return {"status": "ok", "returncode": 0, "stdout": "DUCTF{real_service_flag_body}\n", "stderr": ""}
+
+        with mock.patch("forgeflag.solvers.llm_execute._run_in_sandbox", side_effect=fake_run):
+            result = LLMExecuteSolver(provider).solve(context)
+        self.assertEqual(result.status, "flag_candidate")
+        self.assertTrue(captured["allow_localhost"])
+        self.assertIn("remote", captured["script"])
 
 
 class ManagerIntegrationTest(unittest.TestCase):

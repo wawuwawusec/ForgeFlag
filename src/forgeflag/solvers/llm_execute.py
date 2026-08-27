@@ -64,6 +64,10 @@ class LLMExecuteSolver:
         started = time.monotonic()
         not_recovered_streak = 0
         tokens_spent = 0
+        verified_once = False
+        all_flags: list[str] = []
+        first_flag_script = ""
+        first_flag_run: dict[str, Any] = {}
         max_tokens_budget = max(50_000, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_TOKENS", "700000")))
         import tempfile as _tempfile
 
@@ -78,7 +82,7 @@ class LLMExecuteSolver:
             vision_images = (*_image_attachments(attachments), *_work_images(Path(session) / "work"))
             try:
                 response = self.provider.generate(
-                    _instructions(),
+                    _instructions(allow_localhost),
                     _prompt(context, preview, observations, history, prior_findings, reviewer_hint),
                     **({"images": vision_images} if vision_images else {}),
                 )
@@ -95,8 +99,17 @@ class LLMExecuteSolver:
                 )
                 context.notebook.add_finding(finding)
                 return SolverResult(self.name, challenge.challenge_id, "provider_unavailable", (finding,))
-            script = _extract_code(response.content)
+            script = _extract_code(response.content, allow_network=allow_localhost)
             if not script:
+                context.notebook.add_observation(
+                    Observation(
+                        challenge_id=challenge.challenge_id,
+                        source=self.name,
+                        kind="llm_exec_round",
+                        summary=f"round {attempt}: REJECTED (no executable block extracted)",
+                        evidence={"attempt": attempt, "rejected": True, "response_head": response.content[:400]},
+                    )
+                )
                 history.append({
                     "role": "assistant",
                     "content": response.content[:2000],
@@ -149,26 +162,71 @@ class LLMExecuteSolver:
             if len(history) >= 2 and history[-1].get("script") == history[-2].get("script"):
                 break
             if flags:
-                finding = _finding(context, script, run, attempt, flags, "flag_candidate")
+                for flag in flags:
+                    if flag not in all_flags:
+                        all_flags.append(flag)
+                if not first_flag_script:
+                    first_flag_script = script
+                    first_flag_run = run
+                if not verified_once:
+                    # one bounded verification round: near-miss flags (wrong
+                    # prefix/format, close-but-wrong decode) are the cheapest
+                    # real-corpus conversions; ask the model to double-check
+                    # against the challenge's own format hints and print any
+                    # alternative byte-exact candidates it can defend.
+                    verified_once = True
+                    history.append({
+                        "attempt": f"{attempt}v",
+                        "script": script[:4000],
+                        "returncode": "0",
+                        "stderr": "",
+                        "stdout": (
+                            f"CANDIDATE FLAGS EXTRACTED: {', '.join(flags)}\n"
+                            "VERIFICATION ROUND: check each candidate byte-exactly against the challenge "
+                            "description's flag-format hints and the raw data you parsed. If the format/prefix "
+                            "could differ or the value looks like a near-miss (off-by-one decode, unpadded "
+                            "base64, wrong case), recompute and print EVERY distinct flag-shaped string you "
+                            "can defend, one per line."
+                        )[:3000],
+                    })
+                    continue
+                finding = _finding(context, script, run, attempt, tuple(all_flags), "flag_candidate")
                 context.notebook.add_finding(finding)
                 return SolverResult(
                     self.name,
                     challenge.challenge_id,
                     "flag_candidate",
                     (finding,),
-                    tuple(flags),
+                    tuple(all_flags),
                 )
             if run["returncode"] == 0:
                 # script ran cleanly without recovering a flag; one more
                 # attempt with the output as context is still useful
                 continue
 
+        if all_flags:
+            finding = _finding(context, first_flag_script, first_flag_run or {"stdout": "\n".join(all_flags), "stderr": "", "returncode": 0, "status": "ok"}, MAX_ATTEMPTS, tuple(all_flags), "flag_candidate")
+            context.notebook.add_finding(finding)
+            return SolverResult(
+                self.name,
+                challenge.challenge_id,
+                "flag_candidate",
+                (finding,),
+                tuple(all_flags),
+            )
         finding = _finding(context, "", {"stdout": last_output, "stderr": "", "returncode": -1, "status": "failed"}, MAX_ATTEMPTS, (), "no_flag_recovered")
         context.notebook.add_finding(finding)
         return SolverResult(self.name, challenge.challenge_id, "no_flag_recovered", (finding,))
 
 
-def _instructions() -> str:
+def _instructions(allow_localhost: bool = False) -> str:
+    network_policy = (
+        "NETWORK: the challenge's own service is deployed locally and IS reachable — use pwntools remote() or raw sockets "
+        "to the address given as CHALLENGE_TARGET (127.0.0.1, also in the env var). Interactive protocols are expected: "
+        "connect, read menus/prompts, send payloads, parse responses. External internet is still blocked; only the local service works."
+        if allow_localhost else
+        "There is NO network access; do not import sockets or make requests. "
+    )
     return (
         "You are ForgeFlag's execution solver for an authorized local CTF challenge. "
         "Each round you write ONE self-contained Python 3 script that reads the challenge files from its "
@@ -176,7 +234,9 @@ def _instructions() -> str:
         "explore: first round can inspect files (print listings, hexdumps, parse structures), later rounds "
         "should attempt the full solve informed by every prior output. "
         "Available libraries: python stdlib, Crypto (pycryptodome), z3, pwntools, and SageMath (start scripts with #!/usr/bin/env sage when finite fields, lattices, or elliptic curves are needed). "
-        "There is NO network access; do not import sockets or make requests. "
+        "Also installed and callable from Python via subprocess: gdb (batch mode), radare2 (r2), ROPgadget, ropper, and angr — e.g. subprocess.run(['ROPgadget','--binary','./chal'],capture_output=True,text=True). "
+        "For pwn services the standard chain is: ELF('./chal').checksec() → decompile/disassemble (r2 -AA or objdump) → find the bug → cyclic pattern for the offset (pwntools cyclic/cyclic_find) → build the exploit (ret2win/ROP/shellcode/format-string write) → remote(...) with the payload. "
+        + network_policy +
         "Read files by relative name exactly as listed (cwd, read-only). A read-write scratch directory /work persists across ALL rounds: save intermediates (decoded blobs, candidate keys, partial plaintexts) there and reuse them in later rounds. Print every intermediate finding on its own line; "
         "end with the flag alone on a line if recovered. "
         "Exploit the prior deterministic solver findings: their partial decodes, wrong-key cryptanalysis, "
@@ -250,14 +310,14 @@ def _prompt(
     return "\n".join(parts)
 
 
-def _extract_code(content: str) -> str:
+def _extract_code(content: str, allow_network: bool = False) -> str:
     match = re.search(r"```(?:python|py)?\s*\n(.*?)```", content, re.S)
     if not match:
         return ""
     script = match.group(1).strip()
     if not script or len(script) > MAX_SCRIPT_CHARS:
         return ""
-    if re.search(r"\b(?:socket|urllib|requests|http\.client|telnetlib|ftplib)\b", script):
+    if not allow_network and re.search(r"\b(?:socket|urllib|requests|http\.client|telnetlib|ftplib)\b", script):
         return ""
     return script
 
