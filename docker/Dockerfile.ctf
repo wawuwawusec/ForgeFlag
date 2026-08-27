@@ -100,6 +100,13 @@ RUN apt-get update \
 
 ENV GHIDRA_HEADLESS=/usr/bin/analyzeHeadless
 
+# x86_64 challenge ELFs under qemu on arm64 hosts need the amd64 runtime
+RUN dpkg --add-architecture amd64 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libc6:amd64 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 
 FROM forgeflag-core AS forgeflag-default
 

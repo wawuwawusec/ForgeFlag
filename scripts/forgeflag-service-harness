@@ -119,6 +119,15 @@ def _detect_arch(path: Path) -> str:
     return "x86_64"
 
 
+def _image_arch() -> str:
+    """Arch of the sandbox service image (arm64 images lack x86_64 loaders)."""
+    try:
+        out = docker("run", "--rm", "forgeflag-ctf:latest", "uname", "-m", timeout=60)
+        return out.stdout.strip() or "x86_64"
+    except Exception:  # noqa: BLE001 - fall back to native launch
+        return "x86_64"
+
+
 def start_service(challenge_id: str, source_dir: Path, port: int, dockerfile: Path, expected_flag: str = "") -> dict:
     """Run the challenge server inside the ForgeFlag sandbox image via socat.
 
@@ -145,12 +154,12 @@ def start_service(challenge_id: str, source_dir: Path, port: int, dockerfile: Pa
     entry_path = source_dir / entry
     arch = _detect_arch(entry_path) if entry_path.is_file() else "x86_64"
     launch = _entry_command(entry)
-    if not entry.endswith((".py", ".sh")) and arch != "x86_64":
-        loader = {"aarch64": "/usr/aarch64-linux-gnu", "arm": "/usr/arm-linux-gnueabihf", "riscv64": "/usr/riscv64-linux-gnu"}.get(arch)
-        if loader:
-            launch = f"qemu-{arch} -L {loader} ./{entry}"
-        else:
-            launch = f"qemu-{arch} ./{entry}"
+    image_arch = _image_arch()
+    native_names = {"x86_64": "x86_64", "aarch64": "arm64"}
+    if not entry.endswith((".py", ".sh")) and arch != image_arch and native_names.get(arch) != image_arch:
+        loader = {"aarch64": "/usr/aarch64-linux-gnu", "arm": "/usr/arm-linux-gnueabihf", "riscv64": "/usr/riscv64-linux-gnu", "x86_64": ""}.get(arch, "")
+        prefix = f"qemu-{arch}" + (f" -L {loader}" if loader else "")
+        launch = f"{prefix} ./{entry}"
     cmd = f"cd /chal && socat TCP-LISTEN:{port},reuseaddr,fork SYSTEM:\"{launch} 2>/dev/null\""
     run = docker(
         "run", "-d", "--rm", "--name", container,
