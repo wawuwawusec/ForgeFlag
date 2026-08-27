@@ -68,6 +68,7 @@ class LLMExecuteSolver:
         all_flags: list[str] = []
         first_flag_script = ""
         first_flag_run: dict[str, Any] = {}
+        empty_response_retries = 0
         max_tokens_budget = max(50_000, int(_os.environ.get("FORGEFLAG_LLMEXEC_MAX_TOKENS", "700000")))
         import tempfile as _tempfile
 
@@ -87,6 +88,19 @@ class LLMExecuteSolver:
                     **({"images": vision_images} if vision_images else {}),
                 )
                 tokens_spent += int(response.usage.get("total_tokens") or 0)
+                # glm-5.3 (coding plan) sometimes spends the whole output
+                # budget on thinking and returns zero text blocks; an
+                # immediate retry recovers a usable response instead of
+                # burning one of the bounded rounds.
+                while not response.content.strip() and empty_response_retries < 2:
+                    empty_response_retries += 1
+                    response = self.provider.generate(
+                        _instructions(allow_localhost),
+                        _prompt(context, preview, observations, history, prior_findings, reviewer_hint)
+                        + "\nIMPORTANT: your previous response contained no visible text. Respond NOW with a single ```python code block.",
+                        **({"images": vision_images} if vision_images else {}),
+                    )
+                    tokens_spent += int(response.usage.get("total_tokens") or 0)
             except Exception as exc:  # noqa: BLE001 - provider outages must not kill the run
                 finding = Finding(
                     challenge_id=challenge.challenge_id,
