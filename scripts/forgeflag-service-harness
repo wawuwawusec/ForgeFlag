@@ -51,7 +51,19 @@ def wait_port(port: int, timeout: float = 25.0) -> bool:
     return False
 
 
-def parse_dockerfile(dockerfile: Path) -> dict:
+def _is_executable_artifact(path: Path) -> bool:
+    """True for launchable challenge entries (ELF or shell script), False for
+    data files like flag.txt that nsjail Dockerfiles also COPY to /chal."""
+    try:
+        head = path.read_bytes()[:64]
+    except OSError:
+        return False
+    if head.startswith(b"\x7fELF") or head.startswith(b"#!"):
+        return True
+    return path.suffix in {".sh", ".py"}
+
+
+def parse_dockerfile(dockerfile: Path, source_dir: Path | None = None) -> dict:
     info = {"flag": "", "entry": "", "sources": []}
     try:
         text = dockerfile.read_text(errors="replace")
@@ -62,9 +74,49 @@ def parse_dockerfile(dockerfile: Path) -> dict:
         info["flag"] = m.group(1).strip()
     for m in re.finditer(r"COPY\s+(\S+)\s+(\S+)", text):
         info["sources"].append(m.group(1))
-        if m.group(2).endswith("/pwn") or m.group(2).endswith("/chal"):
+        src = (source_dir / m.group(1)) if source_dir is not None and source_dir.is_dir() else None
+        launchable = src is not None and _is_executable_artifact(src)
+        # nsjail images COPY flag.txt to /chal too; only a real executable
+        # dest can be the entrypoint (dest /pwn wins over bare /chal)
+        if m.group(2).endswith("/pwn"):
             info["entry"] = m.group(1)
+        elif m.group(2).endswith("/chal") and launchable and not info["entry"]:
+            info["entry"] = m.group(1)
+    if not info["entry"] and source_dir is not None and source_dir.is_dir():
+        # fallback: run.sh convention, then any executable artifact
+        names = {p.name: p for p in source_dir.iterdir() if p.is_file()}
+        for preferred in ("run.sh", "pwn", "chal"):
+            if preferred in names and _is_executable_artifact(names[preferred]):
+                info["entry"] = preferred
+                break
+        else:
+            for name, path in sorted(names.items()):
+                if _is_executable_artifact(path):
+                    info["entry"] = name
+                    break
     return info
+
+
+def _entry_command(entry: str) -> str:
+    if entry.endswith(".py"):
+        return f"python3 {entry}"
+    if entry.endswith(".sh"):
+        return f"sh {entry}"
+    # binaries: the /chal mount is read-only so +x cannot be set; launch
+    # through the dynamic loader, and emulate non-x86 architectures
+    return f"./{entry}"
+
+
+def _detect_arch(path: Path) -> str:
+    try:
+        head = path.read_bytes()[:20]
+    except OSError:
+        return "x86_64"
+    if head.startswith(b"\x7fELF") and len(head) >= 19:
+        machine = int.from_bytes(head[18:20], "little")
+        arches = {0xB7: "aarch64", 0x03: "i386", 0x3E: "x86_64", 0xF3: "riscv64", 0x28: "arm"}
+        return arches.get(machine, "x86_64")
+    return "x86_64"
 
 
 def start_service(challenge_id: str, source_dir: Path, port: int, dockerfile: Path, expected_flag: str = "") -> dict:
@@ -75,13 +127,31 @@ def start_service(challenge_id: str, source_dir: Path, port: int, dockerfile: Pa
     """
     container = f"ff-svc-{challenge_id}".replace("_", "-").lower()[:60]
     docker("rm", "-f", container, timeout=60)
-    info = parse_dockerfile(dockerfile)
-    flag = info["flag"] or expected_flag
-    sources = sorted(p for p in source_dir.iterdir() if p.is_file()) if source_dir.is_dir() else []
-    entry = info["entry"] or next((p.name for p in sources if p.suffix == ".py"), "")
+    info = parse_dockerfile(dockerfile, source_dir)
+    # the real flag ships in the mounted flag.txt; prefer it over any
+    # Dockerfile ENV or manifest value so a logic-solve converts to the
+    # corpus metric instead of a deployment placeholder
+    flag = expected_flag
+    flag_txt = source_dir / "flag.txt" if source_dir.is_dir() else None
+    if flag_txt is not None and flag_txt.is_file():
+        content = flag_txt.read_text(errors="replace").strip()
+        if content:
+            flag = content
+    if not flag:
+        flag = info["flag"]
+    entry = info["entry"] or next((p.name for p in sorted(source_dir.iterdir()) if p.suffix == ".py"), "") if source_dir.is_dir() else info["entry"]
     if not entry:
         return {"status": "no_entry", "container": container}
-    cmd = f"cd /chal && socat TCP-LISTEN:{port},reuseaddr,fork SYSTEM:\"python3 {entry} 2>/dev/null\""
+    entry_path = source_dir / entry
+    arch = _detect_arch(entry_path) if entry_path.is_file() else "x86_64"
+    launch = _entry_command(entry)
+    if not entry.endswith((".py", ".sh")) and arch != "x86_64":
+        loader = {"aarch64": "/usr/aarch64-linux-gnu", "arm": "/usr/arm-linux-gnueabihf", "riscv64": "/usr/riscv64-linux-gnu"}.get(arch)
+        if loader:
+            launch = f"qemu-{arch} -L {loader} ./{entry}"
+        else:
+            launch = f"qemu-{arch} ./{entry}"
+    cmd = f"cd /chal && socat TCP-LISTEN:{port},reuseaddr,fork SYSTEM:\"{launch} 2>/dev/null\""
     run = docker(
         "run", "-d", "--rm", "--name", container,
         "-p", f"127.0.0.1:{port}:{port}",
@@ -93,7 +163,7 @@ def start_service(challenge_id: str, source_dir: Path, port: int, dockerfile: Pa
     )
     if run.returncode != 0:
         return {"status": "run_failed", "stderr": run.stderr[-300:], "container": container}
-    return {"status": "started", "container": container, "port": port, "entry": entry}
+    return {"status": "started", "container": container, "port": port, "entry": entry, "arch": arch, "flag_source": "flag.txt" if flag_txt is not None and flag_txt.is_file() else "env"}
 
 
 def main() -> int:
