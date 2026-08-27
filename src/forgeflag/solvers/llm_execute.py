@@ -94,9 +94,13 @@ class LLMExecuteSolver:
                 # burning one of the bounded rounds.
                 while not response.content.strip() and empty_response_retries < 2:
                     empty_response_retries += 1
+                    # a bloated prompt pushes the model into ever-longer
+                    # thinking; the second retry drops all but the freshest
+                    # history so reasoning has room to finish and emit text
+                    trimmed_history = history[-2:] if empty_response_retries > 1 else history
                     response = self.provider.generate(
                         _instructions(allow_localhost),
-                        _prompt(context, preview, observations, history, prior_findings, reviewer_hint)
+                        _prompt(context, preview, observations, trimmed_history, prior_findings, reviewer_hint)
                         + "\nIMPORTANT: your previous response contained no visible text. Respond NOW with a single ```python code block.",
                         **({"images": vision_images} if vision_images else {}),
                     )

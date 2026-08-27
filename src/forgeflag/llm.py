@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 import base64
 import json
+import os
 import random
 import threading
 import time
@@ -234,7 +235,10 @@ class AnthropicMessagesProvider:
         content.append({"type": "text", "text": prompt})
         payload = {
             "model": self.config.model,
-            "max_tokens": 8192,
+            # thinking-first models (glm-5.3) can burn the whole output
+            # budget on reasoning before emitting any text block; a larger
+            # ceiling keeps hard CTF rounds from returning empty content
+            "max_tokens": int(os.environ.get("FORGEFLAG_LLM_MAX_TOKENS", "16384")),
             "system": instructions,
             "messages": [{"role": "user", "content": content}],
         }
