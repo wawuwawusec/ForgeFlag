@@ -62,15 +62,17 @@ Pilot evidence the fixes work end-to-end: model scripts now connect to
 deployed services (`connecting to 127.0.0.1`), run checksec→cyclic→ROP
 chains, extract full challenge source from service banners (dungeon,
 502KB), and reach 74k tokens of genuine deep work per challenge.
-R1-R3 still converted 0 new cases: with all mechanical waste removed,
-the remaining gap on the hardest service set is model reasoning depth
-plus endpoint congestion (R3 lost 4 cases to benchmark client timeouts
-at 2700s — rerun at 5400s pending) and one flag-deployment mismatch
-(number-mashing's runner serves a fallback test flag, so a logic-solve
-cannot convert to the corpus metric). Literature anchor: EnIGMA, the
-NYU-CTF SOTA agent with Claude 3.5 Sonnet, reports 13.5% on a comparable
-mix — interactive tools were its biggest single lever, which is exactly
-what fix #1 restored.
+R4 (the four client-timed-out cases rerun at 5400s) completed all four
+under full depth — 0 conversions. With every mechanical suppressor
+removed, sessions complete, interact, and exhaust real reasoning, and
+the hardest service set still does not convert: the residual gap is
+model reasoning depth plus endpoint congestion (intermittent read
+timeouts on the coding-plan channel, worked around by bounded backoff)
+and one flag-deployment mismatch (number-mashing's runner serves a
+fallback test flag, so a logic-solve cannot convert to the corpus
+metric). Literature anchor: EnIGMA, the NYU-CTF SOTA agent with Claude
+3.5 Sonnet, reports 13.5% on a comparable mix — interactive tools were
+its biggest single lever, which is exactly what fix #1 restored.
 
 ## Solved challenges (all exact, all evidenced)
 
