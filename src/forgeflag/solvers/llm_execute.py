@@ -89,7 +89,7 @@ class LLMExecuteSolver:
             vision_images = (*_image_attachments(attachments), *_work_images(Path(session) / "work"))
             try:
                 response = self.provider.generate(
-                    _instructions(allow_localhost),
+                    _instructions(allow_localhost, challenge.category),
                     _prompt(context, preview, observations, history, prior_findings, reviewer_hint),
                     **({"images": vision_images} if vision_images else {}),
                 )
@@ -106,7 +106,7 @@ class LLMExecuteSolver:
                     # history so reasoning has room to finish and emit text
                     trimmed_history = history[-2:] if empty_response_retries > 1 else history
                     response = self.provider.generate(
-                        _instructions(allow_localhost),
+                        _instructions(allow_localhost, challenge.category),
                         _prompt(context, preview, observations, trimmed_history, prior_findings, reviewer_hint)
                         + "\nIMPORTANT: your previous response contained no visible text. Respond NOW with a single ```python code block.",
                         **({"images": vision_images} if vision_images else {}),
@@ -286,7 +286,44 @@ class LLMExecuteSolver:
         return SolverResult(self.name, challenge.challenge_id, "no_flag_recovered", (finding,))
 
 
-def _instructions(allow_localhost: bool = False) -> str:
+def _category_playbook(category) -> str:
+    """D-CIPHER-style heterogeneous executor hint: one specialist methodology
+    per category instead of a single generic prompt."""
+    key = getattr(category, "value", str(category)).lower()
+    playbooks = {
+        "crypto": (
+            "CRYPTO PLAYBOOK: identify the exact primitive from the source (scheme, key size, mode, nonces); "
+            "write the honest algebraic attack (lattice/LLL via sage, Coppersmith, padding-oracle, length-extension, "
+            "small-e RSA, nonce-reuse ECDSA) before brute force; exploit structure the author left (deterministic RNG, "
+            "leaked bits, reuse across queries). Sage is available — use it for anything over integers/polynomials."
+        ),
+        "forensics": (
+            "FORENSICS PLAYBOOK: file/magic first, then binwalk carving, exiftool-style metadata, strings at all "
+            "encodings, binwalk extraction to /work; for pcaps parse with scapy (available) — follow TCP streams, "
+            "extract transferred files, reassemble; images: check LSB/append/EOF markers; archives: password reuse "
+            "from other challenge files."
+        ),
+        "reverse": (
+            "REVERSE PLAYBOOK: file → strings/imports → decompile (ghidra analyzeHeadless or r2 -AA; both installed) "
+            "→ when static is ambiguous, EXECUTE the binary under qemu with crafted stdin and observe; patch flow "
+            "with angr if constraints matter; check anti-debug (ptrace/isatty) and emulate it away."
+        ),
+        "web": (
+            "WEB PLAYBOOK: read every source file first — the bug is in application logic, not the framework; trace "
+            "the exact route that touches the flag condition; reproduce it against the live local service with "
+            "precise HTTP (raw sockets so you see headers); iterate on parameter/type confusion, auth bypass, "
+            "template/format injection the source actually permits."
+        ),
+        "pwn": (
+            "PWN PLAYBOOK: checksec → full disasm of main/target funcs → craft input against the LOCAL binary first "
+            "(execute it with subprocess and your payload on stdin), only then send the winning payload to the "
+            "service; prefer data-only attacks (overwrite a length/pointer/global) when a canary blocks the stack."
+        ),
+    }
+    return playbooks.get(key, "")
+
+
+def _instructions(allow_localhost: bool = False, category=None) -> str:
     network_policy = (
         "NETWORK: the challenge's own service is deployed locally and IS reachable — use pwntools remote() or raw sockets "
         "to the address given as CHALLENGE_TARGET (127.0.0.1, also in the env var). Interactive protocols are expected: "
@@ -312,6 +349,7 @@ def _instructions(allow_localhost: bool = False) -> str:
         "try brute-force over small keyspaces, known-plaintext attacks, and category-standard attacks. "
         "NEVER guess or invent a flag: a flag candidate must be a byte-exact string your script printed from parsed challenge data. "
         "If after all attempts you cannot recover it, print exactly NOT_RECOVERED — a wrong guess is worse than an honest failure. "
+        + _category_playbook(category) +
         "Respond with a single ```python code block and nothing else — a response without an executable block is a wasted round."
     )
 
