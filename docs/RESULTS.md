@@ -7,8 +7,8 @@ benchmark pipeline; every claim is reproducible with the commands listed.
 
 | Metric | Accuracy | Corpus | Definition |
 | --- | --- | --- | --- |
-| **Real multi-platform corpus** | **12.0%** (23/192) | GCTF quals 2021-25 ×50, DUCTF 2024 ×54, IrisCTF 2024 ×40, HTB 2024 ×17, idekCTF 2024 ×17, SekaiCTF 2024/25 ×14 | exact-flag match, all challenges |
-| **Deployable real subset** | **19.6%** (10/51) | challenges whose service source deploys locally | membership by challenge property only (non-circular); never a replacement for the corpus metric |
+| **Real multi-platform corpus** | **12.5%** (24/192) | GCTF quals 2021-25 ×50, DUCTF 2024 ×54, IrisCTF 2024 ×40, HTB 2024 ×17, idekCTF 2024 ×17, SekaiCTF 2024/25 ×14 | exact-flag match, all challenges |
+| **Deployable real subset** | **21.6%** (11/51) | challenges whose service source deploys locally | membership by challenge property only (non-circular); never a replacement for the corpus metric |
 | **Synthetic curriculum** | **97.5%** (199/204) | 6 seeded skill tiers | encoding/forensics/logic/classic/minirev 100%, cyclic-offset pwn 85% |
 
 The three metrics answer different questions and are always reported together:
@@ -29,7 +29,8 @@ capability envelope. No metric is ever presented as another.
 | v3 re-sweep + F3 full-stack re-run | post-v0.18 | 10.4% (0 new — variance reproduced existing solves only) |
 | variance-harvest pass (20 hardest, Coding Plan glm-5.3, 137 LLM calls / 633k tokens) | post-v0.18.2 | 0 new conversions — remaining failures are capability-bound, not variance-bound |
 | suppressor-hunt pass (6 fixes, 8-case service pilot R1-R3, Coding Plan glm-5.3) | post-v0.18.2 | 0 new conversions — but five mechanical suppressors found and removed (see below); deep-work ceiling now measurable without harness artifacts |
-| service-harness entry/arch fixes (suppressors #6-#7) | post-v0.18.2 | **+2 conversions: number-mashing AND vector-overflow solved via live services by glm-5.3** — corpus 10.9%→12.0% (23/192), deployable 15.7%→19.6% (10/51) |
+| service-harness entry/arch fixes (suppressors #6-#7) | post-v0.18.2 | **+3 conversions: number-mashing, vector-overflow (via live services), babyrevjohnson (full-sweep rerun)** — corpus 10.9%→12.5% (24/192), deployable 15.7%→21.6% (11/51) |
+| full 6-batch service sweep (32/51 deployable cases, all 7 suppressor fixes + category playbooks, glm-5.3 coding plan) | post-68c87d6 | 9/32 solved; kept all 8 historically-solved service cases (zero regressions), +1 new conversion (babyrevjohnson, irisctf{m0r3_th4n_0n3_l0g1c_puzzl3_h3r3} byte-exact) |
 
 ## Suppressor hunt (why glm-5.3 could not rise, mechanically)
 
@@ -104,13 +105,15 @@ badpolicies, jmp-flag, wackyrecipe, decrypt-then-eval, v-for-vieta,
 number-mashing‡, vector-overflow‡, my-array-generator†, shufflebox†,
 rusty-vault†, pressing-buttons†},
 htb2024-{Hard_Metagaming, Very_Easy_Tutorial}, irisctf2024-{corrupted-world,
-babycha, dhash, accessible-sesamum-indicum, integral-communication,
-what-the-beep, whats-a-rune}.  † = replay tier (portable author solve);
-‡ = LLM-solver conversions after the service-harness entry/arch fixes —
-glm-5.3 broke the live services and received byte-exact real flags
-(DUCTF{w0w_y0u_just_br0ke_math!!} for number-mashing's ARM math
-validation; DUCTF{y0u_pwn3d_th4t_vect0r!!} for vector-overflow's
-data-only globals attack through the socket).
+babycha, babyrevjohnson‡, dhash, accessible-sesamum-indicum,
+integral-communication, what-the-beep, whats-a-rune}.  † = replay tier
+(portable author solve); ‡ = LLM-solver conversions after the
+service-harness entry/arch fixes — glm-5.3 broke the live services and
+received byte-exact real flags (DUCTF{w0w_y0u_just_br0ke_math!!} for
+number-mashing's ARM math validation;
+DUCTF{y0u_pwn3d_th4t_vect0r!!} for vector-overflow's data-only globals
+attack through the socket; irisctf{m0r3_th4n_0n3_l0g1c_puzzl3_h3r3}
+for babyrevjohnson's multi-logic puzzle in the full sweep).
 
 ## Failure taxonomy of the 172 unsolved (measured)
 
