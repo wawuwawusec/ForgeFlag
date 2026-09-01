@@ -7,7 +7,7 @@ benchmark pipeline; every claim is reproducible with the commands listed.
 
 | Metric | Accuracy | Corpus | Definition |
 | --- | --- | --- | --- |
-| **Real multi-platform corpus** | **12.5%** (24/192) | GCTF quals 2021-25 ×50, DUCTF 2024 ×54, IrisCTF 2024 ×40, HTB 2024 ×17, idekCTF 2024 ×17, SekaiCTF 2024/25 ×14 | exact-flag match, all challenges |
+| **Real multi-platform corpus** | **13.0%** (25/192) | GCTF quals 2021-25 ×50, DUCTF 2024 ×54, IrisCTF 2024 ×40, HTB 2024 ×17, idekCTF 2024 ×17, SekaiCTF 2024/25 ×14 | exact-flag match, all challenges |
 | **Deployable real subset** | **21.6%** (11/51) | challenges whose service source deploys locally | membership by challenge property only (non-circular); never a replacement for the corpus metric |
 | **Synthetic curriculum** | **97.5%** (199/204) | 6 seeded skill tiers | encoding/forensics/logic/classic/minirev 100%, cyclic-offset pwn 85% |
 
@@ -31,6 +31,7 @@ capability envelope. No metric is ever presented as another.
 | suppressor-hunt pass (6 fixes, 8-case service pilot R1-R3, Coding Plan glm-5.3) | post-v0.18.2 | 0 new conversions — but five mechanical suppressors found and removed (see below); deep-work ceiling now measurable without harness artifacts |
 | service-harness entry/arch fixes (suppressors #6-#7) | post-v0.18.2 | **+3 conversions: number-mashing, vector-overflow (via live services), babyrevjohnson (full-sweep rerun)** — corpus 10.9%→12.5% (24/192), deployable 15.7%→21.6% (11/51) |
 | full 6-batch service sweep (32/51 deployable cases, all 7 suppressor fixes + category playbooks, glm-5.3 coding plan) | post-68c87d6 | 9/32 solved; kept all 8 historically-solved service cases (zero regressions), +1 new conversion (babyrevjohnson, irisctf{m0r3_th4n_0n3_l0g1c_puzzl3_h3r3} byte-exact) |
+| near-miss corpus sweep (110 candidates, chunks 0-6 = 56 done, glm-5.3 + all fixes + playbooks) | post-68c87d6 | **+1 conversion: gctf-2023-crypto-lcg** (CTF{C0nGr@tz_RiV35t_5h4MiR_nD_Ad13MaN_W0ulD_b_h@pPy} byte-exact, verification round's candidate enumeration caught it after 4 wrong candidates) — corpus 12.5%→13.0% (25/192) |
 
 ## Suppressor hunt (why glm-5.3 could not rise, mechanically)
 
